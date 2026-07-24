@@ -1,0 +1,3 @@
+# ローカル開発用 (wrangler dev が読み込む)。git 管理外。
+BSKY_HANDLE=your-handle.bsky.social
+BSKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
