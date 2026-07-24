@@ -27,3 +27,9 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
     }
   } as unknown as typeof IntersectionObserver;
 }
+
+// jsdom は Element.scrollTo を未実装（Timeline の applyPending が使用）
+// ※ node 環境（worker テスト）には Element 自体が無いためガード
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollTo !== 'function') {
+  Element.prototype.scrollTo = (): void => {};
+}
