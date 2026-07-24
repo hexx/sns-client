@@ -4,8 +4,8 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const OUT = join(__dirname, '..', 'app', 'public');
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const OUT = join(scriptDir, '..', 'app', 'public');
 
 // CRC32
 const crcTable = (() => {
@@ -30,7 +30,7 @@ function chunk(type, data) {
   crc.writeUInt32BE(crc32(td));
   return Buffer.concat([len, td, crc]);
 }
-function png(size, draw) {
+function png(size, drawPixel) {
   const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
@@ -42,7 +42,7 @@ function png(size, draw) {
   for (let y = 0; y < size; y++) {
     raw[o++] = 0; // filter none
     for (let x = 0; x < size; x++) {
-      const [r, g, b, a] = draw(x, y, size);
+      const [r, g, b, a] = drawPixel(x, y, size);
       raw[o++] = r;
       raw[o++] = g;
       raw[o++] = b;

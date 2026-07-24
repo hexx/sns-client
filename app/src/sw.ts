@@ -23,7 +23,7 @@ declare const self: ServiceWorkerGlobalScope;
 const VERSION = 'v1';
 const CACHE_TIMELINE = `api-timeline-${VERSION}`;
 const CACHE_IMAGES = `images-${VERSION}`;
-const DYNAMIC_CACHES = [CACHE_TIMELINE, CACHE_IMAGES];
+const DYNAMIC_CACHES = new Set([CACHE_TIMELINE, CACHE_IMAGES]);
 
 precacheAndRoute(self.__WB_MANIFEST);
 
@@ -34,7 +34,7 @@ self.addEventListener('activate', (event) => {
       Promise.all(
         keys
           .filter(
-            (k) => (k.startsWith('api-timeline-') || k.startsWith('images-')) && !DYNAMIC_CACHES.includes(k),
+            (k) => (k.startsWith('api-timeline-') || k.startsWith('images-')) && !DYNAMIC_CACHES.has(k),
           )
           .map((k) => caches.delete(k)),
       ),

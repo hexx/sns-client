@@ -71,13 +71,14 @@ export function Compose({
     setSubmitting(true);
     setError(null);
     try {
-      // 1) 画像を順にアップロード
-      const uploaded: { blob: unknown; alt: string }[] = [];
-      for (const img of draft.images) {
-        const buf = await img.file.arrayBuffer();
-        const res = await api.uploadMedia(buf, img.file.type || 'image/jpeg');
-        uploaded.push({ blob: res.blob, alt: img.alt });
-      }
+      // 1) 画像を並列アップロード（Promise.all は結果の順序を保つ）
+      const uploaded: { blob: unknown; alt: string }[] = await Promise.all(
+        draft.images.map(async (img) => {
+          const buf = await img.file.arrayBuffer();
+          const res = await api.uploadMedia(buf, img.file.type || 'image/jpeg');
+          return { blob: res.blob, alt: img.alt };
+        }),
+      );
       // 2) 投稿
       const post = await api.post({
         text: draft.text,
