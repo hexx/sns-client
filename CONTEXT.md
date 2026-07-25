@@ -53,8 +53,12 @@ _Avoid_: repost, share, retweet
 _Avoid_: renote, boost, retweet, share
 
 **reaction**:
-投稿への絵文字による反応。Misskey は複数種の絵文字反応（カスタム絵文字を含む）を持ち、モデルでは `{emoji, count}` の任意リストで保持する。Bluesky の「いいね（like）」は単一カウンタのため、総数として `likes` に集約し reaction リストは持たせない。
+投稿への絵文字による反応。Misskey は複数種の絵文字反応（カスタム絵文字を含む）を持ち、モデルでは `{emoji, count}` の任意リストで保持する。カスタム絵文字の reaction は解決済みの画像 URL を伴う。Bluesky の「いいね（like）」は単一カウンタのため、総数として `likes` に集約し reaction リストは持たせない。
 _Avoid_: favorite, いいね, like（like は Bluesky における reaction の単一カウンタ実現）
+
+**custom emoji（カスタム絵文字）**:
+Provider インスタンスが提供する、画像として描画される絵文字。Unicode 絵文字（テキスト描画）と対になる概念。各 Provider に属する名前（`:name:` 形式）で参照され、描画にはインスタンス固有の画像 URL へ解決する必要がある。本文・reaction の両方に現れる。
+_Avoid_: sticker, image emoji
 
 **LinkCard**:
 投稿に添付された外部リンクのプレビューカード。URL・タイトル・説明・サムネイル画像を持つ。`Media`（画像添付）とは別概念。

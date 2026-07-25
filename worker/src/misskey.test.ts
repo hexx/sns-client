@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
-import { mapNote, mfmToRich } from './misskey';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -198,5 +198,126 @@ describe('mapNote: チャンネル（docs/misskey-channel-display-spec.md）', (
     const p = mapNote(note({ id: 'outer', text: 'comment', channel: chX, renote: quoted }));
     expect(p.channel).toEqual(chX);
     expect(p.quote?.channel).toEqual(chY);
+  });
+});
+
+describe('localEmojiName（ADR-0006: リアクションキーの正規化）', () => {
+  it.each([
+    [':kawaii:', 'kawaii'],
+    [':kawaii@.:', 'kawaii'],
+    [':kawaii@other.host:', null],
+    ['👍', null],
+    ['::', null],
+  ])('%s → %s', (key, expected) => {
+    expect(localEmojiName(key)).toBe(expected);
+  });
+});
+
+describe('mapNote: ローカルカスタム絵文字のレジストリ解決（ADR-0006）', () => {
+  const registry = { kawaii: 'https://e/local-kawaii.png' };
+
+  it('ローカル reaction（reactionEmojis 未掲載）をレジストリで解決', () => {
+    const p = mapNote(note({ reactions: { ':kawaii:': 3 } }), registry);
+    expect(p.reactions).toEqual([{ emoji: ':kawaii:', count: 3, emojiUrl: 'https://e/local-kawaii.png' }]);
+  });
+
+  it('ローカル明示表記 :name@.: もレジストリで解決', () => {
+    const p = mapNote(note({ reactions: { ':kawaii@.:': 1 } }), registry);
+    expect(p.reactions?.[0].emojiUrl).toBe('https://e/local-kawaii.png');
+  });
+
+  it('リモート reaction は reactionEmojis を使い、レジストリの同名絵文字にはフォールバックしない', () => {
+    const p = mapNote(
+      note({
+        reactions: { ':kawaii@other.host:': 2 },
+        reactionEmojis: { 'kawaii@other.host': 'https://e/remote-kawaii.png' },
+      }),
+      registry,
+    );
+    expect(p.reactions?.[0].emojiUrl).toBe('https://e/remote-kawaii.png');
+  });
+
+  it('リモート reaction で reactionEmojis 未掲載でもレジストリ解決しない（テキスト縮退）', () => {
+    const p = mapNote(note({ reactions: { ':kawaii@other.host:': 2 } }), registry);
+    expect(p.reactions?.[0].emojiUrl).toBeUndefined();
+  });
+
+  it('レジストリに無いローカル reaction はテキスト縮退（emojiUrl 無し）', () => {
+    const p = mapNote(note({ reactions: { ':unknown:': 1 } }), registry);
+    expect(p.reactions?.[0].emojiUrl).toBeUndefined();
+  });
+
+  it('本文のローカルカスタム絵文字もレジストリで解決', () => {
+    const p = mapNote(note({ text: 'yo :kawaii:' }), registry);
+    expect(p.rich).toContainEqual({ type: 'emoji', name: 'kawaii', url: 'https://e/local-kawaii.png' });
+  });
+
+  it('ノート由来の emojis（リモート）はレジストリより優先', () => {
+    const p = mapNote(
+      note({ text: 'yo :kawaii:', emojis: [{ name: 'kawaii', url: 'https://e/note-kawaii.png' }] }),
+      registry,
+    );
+    expect(p.rich).toContainEqual({ type: 'emoji', name: 'kawaii', url: 'https://e/note-kawaii.png' });
+  });
+});
+
+function okResponse(emojis: { name: string; url: string }[]) {
+  return new Response(JSON.stringify({ emojis }), { status: 200 });
+}
+
+describe('loadEmojiRegistry（ADR-0006: /api/emojis のキャッシュ）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('name → url マップを返す', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse([{ name: 'a', url: 'https://e/a.png' }])));
+    const map = await loadEmojiRegistry({ MISSKEY_INSTANCE_URL: 'https://reg-basic.test' });
+    expect(map).toEqual({ a: 'https://e/a.png' });
+  });
+
+  it('TTL 内は再取得しない（キャッシュ）', async () => {
+    const fetchMock = vi.fn(async () => okResponse([{ name: 'a', url: 'u' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { MISSKEY_INSTANCE_URL: 'https://reg-cache.test' };
+    await loadEmojiRegistry(env);
+    await loadEmojiRegistry(env);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('TTL（30分）経過後は再取得する', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => okResponse([{ name: 'a', url: 'u' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { MISSKEY_INSTANCE_URL: 'https://reg-ttl.test' };
+    await loadEmojiRegistry(env);
+    vi.advanceTimersByTime(31 * 60 * 1000);
+    await loadEmojiRegistry(env);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('並行呼び出しは1回の fetch に合流する（シングルフライト）', async () => {
+    let resolveFetch!: (v: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((r) => (resolveFetch = r)));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { MISSKEY_INSTANCE_URL: 'https://reg-flight.test' };
+    const p1 = loadEmojiRegistry(env);
+    const p2 = loadEmojiRegistry(env);
+    resolveFetch(okResponse([{ name: 'a', url: 'u' }]));
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(r1).toEqual({ a: 'u' });
+    expect(r2).toEqual({ a: 'u' });
+  });
+
+  it('取得失敗は空マップに縮退し、キャッシュしない（次回リトライ）', async () => {
+    const fetchMock = vi.fn(async () => new Response('err', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { MISSKEY_INSTANCE_URL: 'https://reg-fail.test' };
+    expect(await loadEmojiRegistry(env)).toEqual({});
+    fetchMock.mockImplementation(async () => okResponse([{ name: 'a', url: 'u' }]));
+    expect(await loadEmojiRegistry(env)).toEqual({ a: 'u' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

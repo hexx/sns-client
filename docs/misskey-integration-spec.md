@@ -168,16 +168,31 @@ export type PostInputWire = {
 | Misskey Note | → Post | 備考 |
 |---|---|---|
 | `user` | `author` | |
-| `text`（MFM） | `rich`（`parseMfm`→RichSegment[]）＋`text`（プレーン） | ADR-0005。対応: text/link/mention/hashtag/Unicode＆custom emoji。`$[spin]` 等の凝った効果はプレーン縮退 |
+| `text`（MFM） | `rich`（`parseMfm`→RichSegment[]）＋`text`（プレーン） | ADR-0005。対応: text/link/mention/hashtag/Unicode＆custom emoji。`$[spin]` 等の凝った効果はプレーン縮退。custom emoji の URL は絵文字レジストリで解決（下記） |
 | `createdAt` | `createdAt` | |
 | `files[]`（DriveFile） | `media`（`url`/`comment`=alt、画像のみ） | |
 | `repliesCount` | `stats.replies` | |
 | `renoteCount` | `stats.reposts` | |
 | `reactions`（Σ） | `stats.likes`（総数） | |
-| `reactions`＋`reactionEmojis`＋`myReaction` | `reactions[]`（count 降順、custom は `emojiUrl`、`myReaction` 一致で `me`） | 絵文字別チップ描画用 |
+| `reactions`＋`reactionEmojis`＋`myReaction` | `reactions[]`（count 降順、custom は `emojiUrl`、`myReaction` 一致で `me`） | 絵文字別チップ描画用。`emojiUrl` は `reactionEmojis`（リモート custom のみ）→絵文字レジストリ（ローカル custom）の順で解決（下記） |
 | `visibility` / `localOnly` | `visibility` / `localOnly` | 非 public/localOnly にバッジ |
 | note id | `ref`（＝`replyId`/`renoteId` に使う自己参照） | |
 | 生データ | `source` | |
+
+**カスタム絵文字の URL 解決（BFF）:**
+
+Misskey の Note が提供する `reactionEmojis`・`emojis` は**リモートカスタム絵文字のみ**（サーバ実装の仕様。ローカル絵文字の URL は Note に載らない）。そのため BFF は、インスタンスの絵文字レジストリ `POST /api/emojis`（認証不要・ページネーション無し・ローカル絵文字を全件返却・サーバ側 `cacheSec: 3600`）を引き、`name → url` マップを**インメモリで TTL 30分キャッシュ**（シングルフライト付き・lazy 取得）して補完する。
+
+解決ルール（`Reaction.emojiUrl` と `RichSegment`（emoji）の `url` に共通）:
+
+| キー例 | 種別 | 解決順 |
+|---|---|---|
+| Unicode 絵文字 | — | 解決不要（テキスト描画） |
+| `:name:` / `:name@.:` | ローカル custom | `reactionEmojis` → レジストリ `name`（`@.` は除去） |
+| `:name@host:`（host≠`.`） | リモート custom | `reactionEmojis[name@host]` のみ。**レジストリへフォールバックしない**（同名別画像のローカル絵文字への誤解決防止） |
+| 未解決 | — | `:name:` テキスト描画へ縮退（現行挙動） |
+
+レジストリ取得失敗時はキャッシュ無し・テキスト縮退でタイムライン表示は続行する（絵文字解決は非致命）。
 
 **renote / quote の扱い（Bluesky も同時実装）:**
 
