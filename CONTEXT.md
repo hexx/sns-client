@@ -35,3 +35,7 @@ _Avoid_: comment, thread
 **quote**:
 既存の投稿を参照して自分の投稿に埋め込むこと（引用）。
 _Avoid_: repost, share, retweet
+
+**LinkCard**:
+投稿に添付された外部リンクのプレビューカード。URL・タイトル・説明・サムネイル画像を持つ。`Media`（画像添付）とは別概念。
+_Avoid_: Twitter card, OGP card, external embed, preview

@@ -4,6 +4,9 @@ export type Provider = 'bluesky' | 'mastodon'; // mixi2 は当面対象外
 
 export type Media = { type: 'image'; url: string; alt?: string };
 
+/** 投稿に添付された外部リンクのプレビューカード（高々1つ） */
+export type LinkCard = { url: string; title: string; description: string; thumbUrl?: string };
+
 export type Post = {
   id: string;
   provider: Provider;
@@ -11,6 +14,7 @@ export type Post = {
   text: string;
   createdAt: string; // ISO 8601
   media: Media[];
+  linkCard?: LinkCard;
   stats: { replies: number; reposts: number; likes: number };
   source: unknown; // 各SNSの生データ（bsky の uri/cid 等）
 };

@@ -67,10 +67,13 @@ registerRoute(
 // その他の API: キャッシュしない
 registerRoute(({ url }) => url.pathname.startsWith(API.prefix), new NetworkOnly());
 
-// 画像: SWR（自オリジン + cdn.bsky.app のみ。信頼できない第三者オリジンはキャッシュしない）
+// 画像: SWR（自オリジン + cdn.bsky.app + cardyb.bsky.app のみ。信頼できない第三者オリジンはキャッシュしない）
+// cardyb.bsky.app は Bluesky 公式のリンクカード（LinkCard）サムネイル配信ドメイン
 registerRoute(
   ({ request, url }) =>
     request.destination === 'image' &&
-    (url.origin === self.location.origin || url.hostname === 'cdn.bsky.app'),
+    (url.origin === self.location.origin ||
+      url.hostname === 'cdn.bsky.app' ||
+      url.hostname === 'cardyb.bsky.app'),
   new StaleWhileRevalidate({ cacheName: CACHE_IMAGES }),
 );
