@@ -1,7 +1,7 @@
 # SNS Client
 
 複数 SNS を1画面で扱う PWA クライアント。MVP は Bluesky（閲覧＋投稿）。
-仕様: [docs/sns-client-spec.md](docs/sns-client-spec.md)
+仕様: [docs/sns-client-spec.md](docs/sns-client-spec.md) ／ Misskey 統合: [docs/misskey-integration-spec.md](docs/misskey-integration-spec.md)
 
 単一 Cloudflare Worker が **静的 SPA 配信** と **BFF (`/api/*`)** を兼ねます（同一オリジン）。
 
@@ -15,17 +15,20 @@
 npm install
 ```
 
-### 1. シークレット設定（Bluesky 認証）
-Bluesky の **App Password** を発行し（設定 → プライバシーとセキュリティ → アプリパスワード）、
-`.dev.vars`（ローカル開発用）に記入:
+### 1. シークレット設定（Bluesky / Misskey 認証）
+Bluesky の **App Password**（設定 → プライバシーとセキュリティ → アプリパスワード）と、
+Misskey の **API トークン**（設定 → API → アクセストークン発行）を用意し、`.dev.vars`（ローカル開発用）に記入:
 
 ```bash
 # .dev.vars (git 管理外)
 BSKY_HANDLE=your-handle.bsky.social
 BSKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+MISSKEY_INSTANCE_URL=https://misskey.io
+MISSKEY_TOKEN=your-misskey-api-token
 ```
 
-本番は `wrangler secret put BSKY_HANDLE` / `wrangler secret put BSKY_APP_PASSWORD`。
+本番は `wrangler secret put BSKY_HANDLE` / `BSKY_APP_PASSWORD` / `MISSKEY_TOKEN`
+（`MISSKEY_INSTANCE_URL` は `wrangler.jsonc` の vars に既定 `https://misskey.io`）。
 
 ### 2. ローカル開発
 ```bash

@@ -8,6 +8,7 @@
  *   キャッシュしない（Cloudflare Access のログイン画面をキャッシュしないため）。
  *   オフライン時のみ precache した index.html へフォールバック。
  * - /api/timeline は network-first + キャッシュ（オフライン時に最後の取得成功分を表示）
+ * - /api/views ・ /api/providers は network-first + キャッシュ（オフラインのコールドスタートでも View/設定を得る）
  * - その他の /api（投稿/メディア/ヘルス）は NetworkOnly（書き込みは絶対キャッシュしない）
  * - 画像（自オリジン + cdn.bsky.app）は StaleWhileRevalidate
  */
@@ -22,8 +23,9 @@ declare const self: ServiceWorkerGlobalScope;
 // 動的キャッシュ名はバージョン付き。activate 時に旧バージョンのみ削除する。
 const VERSION = 'v1';
 const CACHE_TIMELINE = `api-timeline-${VERSION}`;
+const CACHE_META = `api-meta-${VERSION}`;
 const CACHE_IMAGES = `images-${VERSION}`;
-const DYNAMIC_CACHES = new Set([CACHE_TIMELINE, CACHE_IMAGES]);
+const DYNAMIC_CACHES = new Set([CACHE_TIMELINE, CACHE_META, CACHE_IMAGES]);
 
 precacheAndRoute(self.__WB_MANIFEST);
 
@@ -34,7 +36,9 @@ self.addEventListener('activate', (event) => {
       Promise.all(
         keys
           .filter(
-            (k) => (k.startsWith('api-timeline-') || k.startsWith('images-')) && !DYNAMIC_CACHES.has(k),
+            (k) =>
+              (k.startsWith('api-timeline-') || k.startsWith('api-meta-') || k.startsWith('images-')) &&
+              !DYNAMIC_CACHES.has(k),
           )
           .map((k) => caches.delete(k)),
       ),
@@ -60,6 +64,15 @@ registerRoute(
   ({ url }) => url.pathname === API.timeline,
   new NetworkFirst({
     cacheName: CACHE_TIMELINE,
+    plugins: [new CacheableResponsePlugin({ statuses: [200] })],
+  }),
+);
+
+// views / providers: network-first + キャッシュ（オフラインのコールドスタートでも取得できるように）
+registerRoute(
+  ({ url }) => url.pathname === API.views || url.pathname === API.providers,
+  new NetworkFirst({
+    cacheName: CACHE_META,
     plugins: [new CacheableResponsePlugin({ statuses: [200] })],
   }),
 );

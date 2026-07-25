@@ -19,21 +19,21 @@ const blob = { $type: 'blob', ref: { $link: 'cid' }, mimeType: 'image/png', size
 
 describe('buildPostRecord', () => {
   it('text のみ', () => {
-    expect(buildPostRecord({ text: 'hello' }, makeRt('hello'))).toEqual({ text: 'hello' });
+    expect(buildPostRecord({ provider: 'bluesky', text: 'hello' }, makeRt('hello'))).toEqual({ text: 'hello' });
   });
 
   it('facets を含む', () => {
-    const rec = buildPostRecord({ text: 'hello' }, makeRt('hello', [linkFacet]));
+    const rec = buildPostRecord({ provider: 'bluesky', text: 'hello' }, makeRt('hello', [linkFacet]));
     expect(rec.facets).toEqual([linkFacet]);
   });
 
   it('langs を含む', () => {
-    const rec = buildPostRecord({ text: 'hello', langs: ['ja'] }, makeRt('hello'));
+    const rec = buildPostRecord({ provider: 'bluesky', text: 'hello', langs: ['ja'] }, makeRt('hello'));
     expect(rec.langs).toEqual(['ja']);
   });
 
   it('画像 → embed.images', () => {
-    const rec = buildPostRecord({ text: 'hi', images: [{ blob, alt: 'alt1' }] }, makeRt('hi'));
+    const rec = buildPostRecord({ provider: 'bluesky', text: 'hi', images: [{ blob, alt: 'alt1' }] }, makeRt('hi'));
     expect(rec.embed).toEqual({
       $type: 'app.bsky.embed.images',
       images: [{ alt: 'alt1', image: blob }],
@@ -41,7 +41,7 @@ describe('buildPostRecord', () => {
   });
 
   it('引用 → embed.record', () => {
-    const rec = buildPostRecord({ text: 'hi', quote: { uri: 'at://q', cid: 'cq' } }, makeRt('hi'));
+    const rec = buildPostRecord({ provider: 'bluesky', text: 'hi', quote: { uri: 'at://q', cid: 'cq' } }, makeRt('hi'));
     expect(rec.embed).toEqual({
       $type: 'app.bsky.embed.record',
       record: { uri: 'at://q', cid: 'cq' },
@@ -50,7 +50,7 @@ describe('buildPostRecord', () => {
 
   it('画像＋引用 → embed.recordWithMedia', () => {
     const rec = buildPostRecord(
-      { text: 'hi', images: [{ blob, alt: 'a' }], quote: { uri: 'at://q', cid: 'cq' } },
+      { provider: 'bluesky', text: 'hi', images: [{ blob, alt: 'a' }], quote: { uri: 'at://q', cid: 'cq' } },
       makeRt('hi'),
     );
     expect(rec.embed).toEqual({
@@ -61,7 +61,7 @@ describe('buildPostRecord', () => {
   });
 
   it('返信 → reply.root = reply.parent', () => {
-    const rec = buildPostRecord({ text: 'hi', replyTo: { uri: 'at://r', cid: 'cr' } }, makeRt('hi'));
+    const rec = buildPostRecord({ provider: 'bluesky', text: 'hi', replyTo: { uri: 'at://r', cid: 'cr' } }, makeRt('hi'));
     expect(rec.reply).toEqual({
       root: { uri: 'at://r', cid: 'cr' },
       parent: { uri: 'at://r', cid: 'cr' },
@@ -69,7 +69,7 @@ describe('buildPostRecord', () => {
   });
 
   it('CW → labels.selfLabels', () => {
-    const rec = buildPostRecord({ text: 'hi', contentWarning: 'ネタバレ' }, makeRt('hi'));
+    const rec = buildPostRecord({ provider: 'bluesky', text: 'hi', contentWarning: 'ネタバレ' }, makeRt('hi'));
     expect(rec.labels).toEqual({
       $type: 'com.atproto.label.defs#selfLabels',
       values: [{ val: 'ネタバレ' }],
@@ -79,6 +79,7 @@ describe('buildPostRecord', () => {
   it('全部載せ（全機能の相互作用）', () => {
     const rec = buildPostRecord(
       {
+        provider: 'bluesky',
         text: 'hello https://example.com',
         langs: ['ja'],
         images: [{ blob, alt: 'a' }],
@@ -129,6 +130,7 @@ describe('mapPost', () => {
       createdAt: '2026-07-01T12:00:00Z',
       media: [],
       stats: { replies: 1, reposts: 2, likes: 3 },
+      ref: { uri: 'at://did/app.bsky.feed.post/abc', cid: 'cid1' },
       source: { uri: 'at://did/app.bsky.feed.post/abc', cid: 'cid1' },
     });
   });

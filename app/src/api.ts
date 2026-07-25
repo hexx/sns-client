@@ -1,6 +1,29 @@
 /** BFF (/api/*) を叩く薄い fetch クライアント */
 import { API } from '../../shared/constants';
-import type { Health, MediaUploadResponse, Post, PostInputWire, TimelineResponse } from '../../shared/types';
+import type {
+  Health,
+  MediaUploadResponse,
+  Post,
+  PostInputWire,
+  Provider,
+  ProviderInfo,
+  Source,
+  TimelineResponse,
+  View,
+} from '../../shared/types';
+
+/** BFF 由来のエラー（status と、認証恒久失敗フラグを保持） */
+export class ApiError extends Error {
+  status: number;
+  permanent?: boolean;
+  provider?: Provider;
+  constructor(status: number, message: string, extra?: { permanent?: boolean; provider?: Provider }) {
+    super(message);
+    this.status = status;
+    this.permanent = extra?.permanent;
+    this.provider = extra?.provider;
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -10,29 +33,39 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     let msg = `${res.status}`;
+    let permanent: boolean | undefined;
+    let provider: Provider | undefined;
     try {
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; permanent?: boolean; provider?: Provider };
       msg = body.error ?? msg;
+      permanent = body.permanent;
+      provider = body.provider;
     } catch {
       /* ignore */
     }
-    throw new Error(msg);
+    throw new ApiError(res.status, msg, { permanent, provider });
   }
   return res.json() as Promise<T>;
 }
 
+function sourceQuery(source: Source, cursor?: string): string {
+  const q = new URLSearchParams({ provider: source.provider, kind: source.kind });
+  if (source.id) q.set('id', source.id);
+  if (cursor) q.set('cursor', cursor);
+  return q.toString();
+}
+
 export const api = {
   health: () => request<Health>(API.health),
-  timeline: (cursor?: string) =>
-    request<TimelineResponse>(
-      `${API.timeline}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+  views: () => request<View[]>(API.views),
+  providers: () => request<ProviderInfo[]>(API.providers),
+  timeline: (source: Source, cursor?: string) =>
+    request<TimelineResponse>(`${API.timeline}?${sourceQuery(source, cursor)}`),
+  uploadMedia: (provider: Provider, bytes: ArrayBuffer, mimeType: string, alt: string) =>
+    request<MediaUploadResponse>(
+      `${API.media}?${new URLSearchParams({ provider, alt }).toString()}`,
+      { method: 'POST', body: bytes, headers: { 'content-type': mimeType } },
     ),
-  uploadMedia: (bytes: ArrayBuffer, mimeType: string) =>
-    request<MediaUploadResponse>(API.media, {
-      method: 'POST',
-      body: bytes,
-      headers: { 'content-type': mimeType },
-    }),
   post: (input: PostInputWire) =>
     request<Post>(API.post, { method: 'POST', body: JSON.stringify(input) }),
 };

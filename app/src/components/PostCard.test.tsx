@@ -155,3 +155,79 @@ describe('relTime（相対時刻）', () => {
     expect(screen.getByText('2日')).toBeInTheDocument();
   });
 });
+
+describe('リッチ表示（Misskey 統合）', () => {
+  it('rich セグメントを描画する（リンク/メンション/ハッシュタグ/カスタム絵文字）', () => {
+    const { container } = render(
+      <PostCard
+        post={makePost({
+          text: 'plain fallback',
+          rich: [
+            { type: 'text', text: 'see ' },
+            { type: 'link', url: 'https://x.y', text: 'site' },
+            { type: 'text', text: ' ' },
+            { type: 'mention', handle: 'bob' },
+            { type: 'text', text: ' ' },
+            { type: 'hashtag', tag: 'tag' },
+            { type: 'text', text: ' ' },
+            { type: 'emoji', name: 'kawaii', url: 'https://e/kawaii.png' },
+          ],
+        })}
+      />,
+    );
+    const link = screen.getByRole('link', { name: 'site' });
+    expect(link).toHaveAttribute('href', 'https://x.y');
+    expect(screen.getByText('@bob')).toBeInTheDocument();
+    expect(screen.getByText('#tag')).toBeInTheDocument();
+    const emoji = container.querySelector('.rt-emoji') as HTMLImageElement;
+    expect(emoji).toHaveAttribute('src', 'https://e/kawaii.png');
+    // rich 優先（プレーンフォールバックは出ない）
+    expect(screen.queryByText('plain fallback')).not.toBeInTheDocument();
+  });
+
+  it('reactions チップを描画し、❤️総数は省略する', () => {
+    const { container } = render(
+      <PostCard
+        post={makePost({
+          stats: { replies: 0, reposts: 0, likes: 7 },
+          reactions: [
+            { emoji: ':kawaii:', count: 5, emojiUrl: 'https://e/kawaii.png', me: true },
+            { emoji: '👍', count: 2 },
+          ],
+        })}
+      />,
+    );
+    const chips = container.querySelectorAll('.reaction');
+    expect(chips).toHaveLength(2);
+    expect(chips[0]).toHaveClass('me');
+    expect(container.querySelector('.reaction-emoji')).toHaveAttribute('src', 'https://e/kawaii.png');
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.queryByTitle('いいね')).not.toBeInTheDocument(); // reactions 有りで省略
+  });
+
+  it('repostedBy バッジを描画する', () => {
+    render(
+      <PostCard
+        post={makePost({ repostedBy: { handle: 'carol', displayName: 'Carol' } })}
+      />,
+    );
+    expect(screen.getByText(/Carol がリポスト/)).toBeInTheDocument();
+  });
+
+  it('引用カード（1階層）を描画する', () => {
+    const quote: Post = {
+      ...makePost({ id: 'q1', author: { handle: 'quoted', displayName: 'Quoted' }, text: 'quoted body' }),
+    };
+    render(<PostCard post={makePost({ text: 'my comment', quote })} />);
+    expect(screen.getByText('my comment')).toBeInTheDocument();
+    const quoteCard = screen.getByText('quoted body').closest('.quote-card');
+    expect(quoteCard).toBeInTheDocument();
+    expect(quoteCard).toHaveTextContent('Quoted');
+  });
+
+  it('非 public / localOnly に visibility バッジを描画する', () => {
+    render(<PostCard post={makePost({ visibility: 'followers', localOnly: true })} />);
+    expect(screen.getByText(/ローカルのみ/)).toBeInTheDocument();
+    expect(screen.getByTitle('ローカルのみ')).toBeInTheDocument();
+  });
+});

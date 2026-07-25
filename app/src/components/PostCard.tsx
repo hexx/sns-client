@@ -1,4 +1,5 @@
 import type { Post } from '../../../shared/types';
+import { RichText } from './RichText';
 
 function relTime(iso: string): string {
   const ms = new Date(iso).getTime();
@@ -22,6 +23,89 @@ function hostOf(url: string): string {
   }
 }
 
+/** 公開範囲バッジ（Misskey の非 public / localOnly のみ表示） */
+function VisibilityBadge({ post }: { post: Post }) {
+  const icon =
+    post.visibility === 'home' ? '🏠' : post.visibility === 'followers' ? '🔒' : post.visibility === 'specified' ? '✉️' : '';
+  if (!icon && !post.localOnly) return null;
+  return (
+    <span className="visibility" title={post.localOnly ? 'ローカルのみ' : post.visibility}>
+      {icon}
+      {post.localOnly ? ' ローカルのみ' : ''}
+    </span>
+  );
+}
+
+/** 投稿本文（rich があれば優先、なければプレーンテキスト） */
+function Body({ post }: { post: Post }) {
+  if (post.rich && post.rich.length > 0) return <RichText segments={post.rich} />;
+  return post.text ? <p className="text">{post.text}</p> : null;
+}
+
+function MediaGrid({ post }: { post: Post }) {
+  const media = post.media.filter((m) => m.url).slice(0, 4);
+  if (media.length === 0) return null;
+  return (
+    <div className={`media media-${media.length}`}>
+      {media.map((m, i) => (
+        <img key={i} src={m.url} alt={m.alt || ''} loading="lazy" />
+      ))}
+    </div>
+  );
+}
+
+/** 引用カード（1階層・表示のみ） */
+function QuoteCard({ post }: { post: Post }) {
+  const thumb = post.media.find((m) => m.url);
+  return (
+    <div className="quote-card">
+      <div className="quote-head">
+        {post.author.avatarUrl ? (
+          <img className="avatar avatar-sm" src={post.author.avatarUrl} alt="" loading="lazy" />
+        ) : null}
+        <span className="display-name">{post.author.displayName}</span>
+        <span className="handle">@{post.author.handle}</span>
+      </div>
+      <Body post={post} />
+      {thumb ? <img className="quote-thumb" src={thumb.url} alt={thumb.alt || ''} loading="lazy" /> : null}
+    </div>
+  );
+}
+
+function LinkCardView({ post }: { post: Post }) {
+  const lc = post.linkCard;
+  if (!lc) return null;
+  return (
+    <a className="link-card" href={lc.url} target="_blank" rel="noopener noreferrer">
+      {lc.thumbUrl && <img className="link-card-thumb" src={lc.thumbUrl} alt="" loading="lazy" />}
+      <div className="link-card-body">
+        <span className="link-card-host">{hostOf(lc.url)}</span>
+        <span className="link-card-title">{lc.title || hostOf(lc.url)}</span>
+        {lc.description && <span className="link-card-desc">{lc.description}</span>}
+      </div>
+    </a>
+  );
+}
+
+/** reactions チップ（あれば） */
+function Reactions({ post }: { post: Post }) {
+  if (!post.reactions || post.reactions.length === 0) return null;
+  return (
+    <div className="reactions">
+      {post.reactions.map((r) => (
+        <span key={r.emoji} className={`reaction${r.me ? ' me' : ''}`} title={r.emoji}>
+          {r.emojiUrl ? (
+            <img className="reaction-emoji" src={r.emojiUrl} alt={r.emoji} />
+          ) : (
+            <span className="reaction-emoji-char">{r.emoji}</span>
+          )}
+          <span className="reaction-count">{r.count}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function PostCard({
   post,
   onReply,
@@ -31,10 +115,11 @@ export function PostCard({
   onReply?: (p: Post) => void;
   onQuote?: (p: Post) => void;
 }) {
-  // 空 URL（投稿直後のフォールバック等）は除外し、最大4枚に揃える
-  const media = post.media.filter((m) => m.url).slice(0, 4);
+  const hasReactions = !!post.reactions && post.reactions.length > 0;
   return (
     <article className="card">
+      {post.repostedBy && <div className="repost-badge">🔁 {post.repostedBy.displayName} がリポスト</div>}
+
       <div className="card-head">
         {post.author.avatarUrl ? (
           <img className="avatar" src={post.author.avatarUrl} alt="" loading="lazy" />
@@ -43,49 +128,26 @@ export function PostCard({
         )}
         <div className="author">
           <span className="display-name">{post.author.displayName}</span>
-          <span className="handle">@{post.author.handle}</span>
+          <span className="handle">
+            @{post.author.handle}
+            <VisibilityBadge post={post} />
+          </span>
         </div>
         <time className="time" dateTime={post.createdAt}>
           {relTime(post.createdAt)}
         </time>
       </div>
 
-      {post.text && <p className="text">{post.text}</p>}
-
-      {media.length > 0 && (
-        <div className={`media media-${media.length}`}>
-          {media.map((m, i) => (
-            <img key={i} src={m.url} alt={m.alt || ''} loading="lazy" />
-          ))}
-        </div>
-      )}
-
-      {post.linkCard && (
-        <a
-          className="link-card"
-          href={post.linkCard.url}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {post.linkCard.thumbUrl && (
-            <img className="link-card-thumb" src={post.linkCard.thumbUrl} alt="" loading="lazy" />
-          )}
-          <div className="link-card-body">
-            <span className="link-card-host">{hostOf(post.linkCard.url)}</span>
-            <span className="link-card-title">
-              {post.linkCard.title || hostOf(post.linkCard.url)}
-            </span>
-            {post.linkCard.description && (
-              <span className="link-card-desc">{post.linkCard.description}</span>
-            )}
-          </div>
-        </a>
-      )}
+      <Body post={post} />
+      <MediaGrid post={post} />
+      {post.quote && <QuoteCard post={post.quote} />}
+      <LinkCardView post={post} />
+      <Reactions post={post} />
 
       <div className="stats">
         <span title="リプライ">💬 {post.stats.replies}</span>
         <span title="リポスト">🔁 {post.stats.reposts}</span>
-        <span title="いいね">❤️ {post.stats.likes}</span>
+        {!hasReactions && <span title="いいね">❤️ {post.stats.likes}</span>}
         <span className="actions">
           {onReply && (
             <button className="link-btn" onClick={() => onReply(post)}>
