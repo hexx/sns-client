@@ -14,6 +14,14 @@ function relTime(iso: string): string {
   return `${d}日`;
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 export function PostCard({
   post,
   onReply,
@@ -50,6 +58,28 @@ export function PostCard({
             <img key={i} src={m.url} alt={m.alt || ''} loading="lazy" />
           ))}
         </div>
+      )}
+
+      {post.linkCard && (
+        <a
+          className="link-card"
+          href={post.linkCard.url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {post.linkCard.thumbUrl && (
+            <img className="link-card-thumb" src={post.linkCard.thumbUrl} alt="" loading="lazy" />
+          )}
+          <div className="link-card-body">
+            <span className="link-card-host">{hostOf(post.linkCard.url)}</span>
+            <span className="link-card-title">
+              {post.linkCard.title || hostOf(post.linkCard.url)}
+            </span>
+            {post.linkCard.description && (
+              <span className="link-card-desc">{post.linkCard.description}</span>
+            )}
+          </div>
+        </a>
       )}
 
       <div className="stats">

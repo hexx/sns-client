@@ -78,6 +78,57 @@ describe('PostCard', () => {
   });
 });
 
+describe('LinkCard', () => {
+  const linkCard = {
+    url: 'https://example.com/article?x=1',
+    title: '記事タイトル',
+    description: '記事の説明',
+    thumbUrl: 'https://cardyb.bsky.app/v1/extract/x',
+  };
+
+  it('タイトル・説明・ホスト名・リンク属性を描画する', () => {
+    const { container } = render(<PostCard post={makePost({ linkCard })} />);
+    const anchor = screen.getByRole('link', { name: /記事タイトル/ });
+    expect(anchor).toHaveAttribute('href', 'https://example.com/article?x=1');
+    expect(anchor).toHaveAttribute('target', '_blank');
+    expect(anchor).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.getByText('example.com')).toBeInTheDocument();
+    expect(screen.getByText('記事タイトル')).toBeInTheDocument();
+    expect(screen.getByText('記事の説明')).toBeInTheDocument();
+    const thumb = container.querySelector('.link-card-thumb');
+    expect(thumb).toBeInTheDocument();
+    expect(thumb).toHaveAttribute('src', linkCard.thumbUrl);
+  });
+
+  it('タイトル空 → ホスト名をタイトルとして表示する', () => {
+    render(
+      <PostCard
+        post={makePost({ linkCard: { url: 'https://example.com/', title: '', description: '' } })}
+      />,
+    );
+    // ホスト名が host 行とタイトル行の両方に出る
+    expect(screen.getAllByText('example.com').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('記事の説明')).not.toBeInTheDocument();
+  });
+
+  it('thumbUrl 無し → サムネイルを描画しない', () => {
+    const { container } = render(
+      <PostCard
+        post={makePost({
+          linkCard: { url: 'https://example.com/', title: 't', description: 'd' },
+        })}
+      />,
+    );
+    expect(container.querySelector('.link-card')).toBeInTheDocument();
+    expect(container.querySelector('.link-card-thumb')).not.toBeInTheDocument();
+  });
+
+  it('linkCard 無し → カード要素を描画しない', () => {
+    const { container } = render(<PostCard post={makePost()} />);
+    expect(container.querySelector('.link-card')).not.toBeInTheDocument();
+  });
+});
+
 describe('relTime（相対時刻）', () => {
   it('不正な日付は「たった今」', () => {
     render(<PostCard post={makePost({ createdAt: 'not-a-date' })} />);

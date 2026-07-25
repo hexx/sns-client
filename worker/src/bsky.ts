@@ -1,5 +1,5 @@
 import { AtpAgent, RichText, type AppBskyFeedDefs, type AtpSessionData } from '@atproto/api';
-import type { Media, Post, PostInputWire, TimelineResponse } from '../../shared/types';
+import type { LinkCard, Media, Post, PostInputWire, TimelineResponse } from '../../shared/types';
 
 const SERVICE = 'https://bsky.social';
 
@@ -63,6 +63,30 @@ function extractMedia(embed: unknown): Media[] {
   return [];
 }
 
+/**
+ * LinkCard（外部リンクプレビュー）の抽出。
+ * 対象は external#view と、recordWithMedia#view の media が external のケースのみ。
+ * 引用（record#view）の引用先カードは対象外（引用描画が未実装のため）。
+ */
+function extractLinkCard(embed: unknown): LinkCard | undefined {
+  const e = embed as { $type?: string; external?: unknown; media?: unknown } | undefined;
+  if (!e) return undefined;
+  if (e.$type === 'app.bsky.embed.external#view' && e.external) {
+    const ext = e.external as { uri?: string; title?: string; description?: string; thumb?: string };
+    if (!ext.uri) return undefined;
+    return {
+      url: ext.uri,
+      title: ext.title ?? '',
+      description: ext.description ?? '',
+      ...(ext.thumb ? { thumbUrl: ext.thumb } : {}),
+    };
+  }
+  if (e.$type === 'app.bsky.embed.recordWithMedia#view' && e.media) {
+    return extractLinkCard(e.media);
+  }
+  return undefined;
+}
+
 export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
   const rec = pv.record as { text?: string } | null | undefined;
   return {
@@ -76,6 +100,7 @@ export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
     text: rec?.text ?? '',
     createdAt: pv.indexedAt,
     media: extractMedia(pv.embed),
+    linkCard: extractLinkCard(pv.embed),
     stats: {
       replies: pv.replyCount ?? 0,
       reposts: pv.repostCount ?? 0,

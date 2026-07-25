@@ -194,8 +194,107 @@ describe('mapPost のメディア抽出（extractMedia）', () => {
 
   it('未知の $type → []', () => {
     const post = mapPost(
-      makePostView({ embed: { $type: 'app.bsky.embed.external#view', external: { uri: 'https://x' } } }),
+      makePostView({ embed: { $type: 'com.example.embed#view', foo: {} } }),
     );
     expect(post.media).toEqual([]);
+  });
+});
+
+describe('mapPost の LinkCard 抽出（extractLinkCard）', () => {
+  it('external#view → linkCard にマッピング', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.external#view',
+          external: {
+            uri: 'https://example.com/article',
+            title: '記事タイトル',
+            description: '記事の説明',
+            thumb: 'https://cardyb.bsky.app/v1/extract/x',
+          },
+        },
+      }),
+    );
+    expect(post.linkCard).toEqual({
+      url: 'https://example.com/article',
+      title: '記事タイトル',
+      description: '記事の説明',
+      thumbUrl: 'https://cardyb.bsky.app/v1/extract/x',
+    });
+  });
+
+  it('thumb 無し → thumbUrl キーは付かない', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.external#view',
+          external: { uri: 'https://example.com/', title: 't', description: 'd' },
+        },
+      }),
+    );
+    expect(post.linkCard).toEqual({ url: 'https://example.com/', title: 't', description: 'd' });
+    expect(post.linkCard).not.toHaveProperty('thumbUrl');
+  });
+
+  it('title/description 欠損 → 空文字', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.external#view',
+          external: { uri: 'https://example.com/' },
+        },
+      }),
+    );
+    expect(post.linkCard).toEqual({ url: 'https://example.com/', title: '', description: '' });
+  });
+
+  it('recordWithMedia#view → media の external を抽出', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.recordWithMedia#view',
+          media: {
+            $type: 'app.bsky.embed.external#view',
+            external: { uri: 'https://example.com/q', title: 'qt', description: 'qd' },
+          },
+          record: { record: { uri: 'at://q', cid: 'cq' } },
+        },
+      }),
+    );
+    expect(post.linkCard).toEqual({ url: 'https://example.com/q', title: 'qt', description: 'qd' });
+  });
+
+  it('record#view（引用）→ 抽出しない（スコープ外）', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.record#view',
+          record: {
+            $type: 'app.bsky.embed.record#viewRecord',
+            embed: {
+              $type: 'app.bsky.embed.external#view',
+              external: { uri: 'https://example.com/nested', title: 'n', description: '' },
+            },
+          },
+        },
+      }),
+    );
+    expect(post.linkCard).toBeUndefined();
+  });
+
+  it('uri 欠損 → undefined', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.external#view',
+          external: { title: 't', description: 'd' },
+        },
+      }),
+    );
+    expect(post.linkCard).toBeUndefined();
+  });
+
+  it('embed 無し → undefined', () => {
+    expect(mapPost(makePostView()).linkCard).toBeUndefined();
   });
 });
