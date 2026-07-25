@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich } from './misskey';
+import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, getEmojiList, react, MisskeyApiError, MisskeyAuthError } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -335,5 +335,98 @@ describe('loadEmojiRegistry（ADR-0006: /api/emojis のキャッシュ）', () =
     fetchMock.mockImplementation(async () => okResponse([{ name: 'a', url: 'u' }]));
     expect(await loadEmojiRegistry(env)).toEqual({ a: 'u' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('getEmojiList（ピッカー配信: compact 化）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('name/url/aliases の compact な一覧を返す（空 aliases は省略）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            emojis: [
+              { name: 'a', url: 'https://e/a.png', aliases: ['ay', 'ei'], category: 'x', host: null },
+              { name: 'b', url: 'https://e/b.png', aliases: [], category: 'y', host: null },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const list = await getEmojiList({ MISSKEY_INSTANCE_URL: 'https://emojilist.test' });
+    expect(list).toEqual([
+      { name: 'a', url: 'https://e/a.png', aliases: ['ay', 'ei'] },
+      { name: 'b', url: 'https://e/b.png' },
+    ]);
+  });
+
+  it('loadEmojiRegistry と同じキャッシュを共有する（追加 fetch なし）', async () => {
+    const fetchMock = vi.fn(async () => okResponse([{ name: 'a', url: 'u' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { MISSKEY_INSTANCE_URL: 'https://emojishared.test' };
+    await loadEmojiRegistry(env);
+    const list = await getEmojiList(env);
+    expect(list).toEqual([{ name: 'a', url: 'u' }]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+function captureFetch(res: Response) {
+  const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => res);
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+describe('react（リアクション操作）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const env = { MISSKEY_INSTANCE_URL: 'https://react.test', MISSKEY_TOKEN: 'tok' };
+
+  it('reaction あり → notes/reactions/create（noteId/reaction を送信）', async () => {
+    const fetchMock = captureFetch(new Response(null, { status: 204 }));
+    await react(env, 'n1', ':kawaii:');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://react.test/api/notes/reactions/create',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ i: 'tok', noteId: 'n1', reaction: ':kawaii:' });
+  });
+
+  it('reaction なし → notes/reactions/delete', async () => {
+    const fetchMock = captureFetch(new Response(null, { status: 204 }));
+    await react(env, 'n1');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://react.test/api/notes/reactions/delete',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ i: 'tok', noteId: 'n1' });
+  });
+
+  it('業務エラー → MisskeyApiError(409) に Misskey の code を載せる', async () => {
+    captureFetch(
+      new Response(JSON.stringify({ error: { code: 'ALREADY_REACTED', message: 'x', id: '51c42bb4' } }), { status: 400 }),
+    );
+    await expect(react(env, 'n1', '👍')).rejects.toMatchObject({ status: 409, code: 'ALREADY_REACTED' });
+  });
+
+  it('認証エラー（401/403）→ status=401 に正規化（MisskeyApiError ではない）', async () => {
+    captureFetch(new Response('no', { status: 403 }));
+    await expect(react(env, 'n1', '👍')).rejects.toMatchObject({ status: 401 });
+    await expect(react(env, 'n1', '👍')).rejects.not.toBeInstanceOf(MisskeyApiError);
+  });
+
+  it('トークン無し → MisskeyAuthError', async () => {
+    await expect(react({ MISSKEY_INSTANCE_URL: 'https://react.test' }, 'n1', '👍')).rejects.toBeInstanceOf(
+      MisskeyAuthError,
+    );
   });
 });

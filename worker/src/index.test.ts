@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
 import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, resetSession, uploadMedia as bskyUpload } from './bsky';
-import { MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getTimeline as misskeyTimeline, uploadMedia as misskeyUpload } from './misskey';
+import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, react as misskeyReact, uploadMedia as misskeyUpload } from './misskey';
 
 // モジュール境界でモック（instanceof のため AuthError 系は実物を維持）
 vi.mock('./bsky', async (importOriginal) => {
@@ -23,6 +23,8 @@ vi.mock('./misskey', async (importOriginal) => {
     uploadMedia: vi.fn(),
     createPost: vi.fn(),
     getComposeCharLimit: vi.fn(),
+    react: vi.fn(),
+    getEmojiList: vi.fn(),
   };
 });
 
@@ -173,6 +175,82 @@ describe('media / post dispatch', () => {
       makeEnv(),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+function reactionRequest(body: unknown): Request {
+  return new Request('https://x/api/reactions', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+describe('reactions / emojis dispatch', () => {
+  it('reaction あり → create、{reaction} をエコー（200）', async () => {
+    vi.mocked(misskeyReact).mockResolvedValue(undefined);
+    const res = await worker.fetch(reactionRequest({ provider: 'misskey', postId: 'n1', reaction: ':kawaii:' }), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ reaction: ':kawaii:' });
+    expect(misskeyReact).toHaveBeenCalledWith(expect.anything(), 'n1', ':kawaii:');
+  });
+
+  it('reaction なし → delete、{} を返す（200）', async () => {
+    vi.mocked(misskeyReact).mockResolvedValue(undefined);
+    const res = await worker.fetch(reactionRequest({ provider: 'misskey', postId: 'n1' }), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+    expect(misskeyReact).toHaveBeenCalledWith(expect.anything(), 'n1', undefined);
+  });
+
+  it('provider=bluesky → 400 unsupported（Misskey のみ）', async () => {
+    const res = await worker.fetch(reactionRequest({ provider: 'bluesky', postId: 'p1', reaction: 'x' }), makeEnv());
+    expect(res.status).toBe(400);
+    expect(misskeyReact).not.toHaveBeenCalled();
+  });
+
+  it('postId 空 → 400', async () => {
+    const res = await worker.fetch(reactionRequest({ provider: 'misskey', postId: '' }), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('reaction が空文字 → 400', async () => {
+    const res = await worker.fetch(reactionRequest({ provider: 'misskey', postId: 'n1', reaction: '' }), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('ボディ不正（JSON 壊れ）→ 400', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/reactions', { method: 'POST', body: '{', headers: { 'content-type': 'application/json' } }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('MisskeyApiError → 409 ＋ code を転送', async () => {
+    vi.mocked(misskeyReact).mockRejectedValue(new MisskeyApiError(409, 'misskey create 400', 'ALREADY_REACTED'));
+    const res = await worker.fetch(reactionRequest({ provider: 'misskey', postId: 'n1', reaction: '👍' }), makeEnv());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'ALREADY_REACTED' });
+  });
+
+  it('misskey 認証系エラー → 401 permanent', async () => {
+    vi.mocked(misskeyReact).mockRejectedValue({ status: 401 });
+    const res = await worker.fetch(reactionRequest({ provider: 'misskey', postId: 'n1', reaction: '👍' }), makeEnv());
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { permanent: boolean }).permanent).toBe(true);
+  });
+
+  it('emojis: provider=misskey → compact な一覧（200）', async () => {
+    vi.mocked(misskeyEmojis).mockResolvedValue([{ name: 'a', url: 'u' }]);
+    const res = await worker.fetch(new Request('https://x/api/emojis?provider=misskey'), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([{ name: 'a', url: 'u' }]);
+  });
+
+  it('emojis: provider 無し/他 → 400', async () => {
+    expect((await worker.fetch(new Request('https://x/api/emojis'), makeEnv())).status).toBe(400);
+    expect((await worker.fetch(new Request('https://x/api/emojis?provider=bluesky'), makeEnv())).status).toBe(400);
   });
 });
 

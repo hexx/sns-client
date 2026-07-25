@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { PostCard } from './PostCard';
+import { resetEmojiCache } from './ReactionPicker';
+import { api } from '../api';
 import type { Post } from '../../../shared/types';
+
+vi.mock('../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api')>();
+  return { ...actual, api: { ...actual.api, emojis: vi.fn() } };
+});
 
 const NOW = new Date('2026-07-01T12:00:00Z');
 
@@ -229,6 +237,80 @@ describe('リッチ表示（Misskey 統合）', () => {
     render(<PostCard post={makePost({ visibility: 'followers', localOnly: true })} />);
     expect(screen.getByText(/ローカルのみ/)).toBeInTheDocument();
     expect(screen.getByTitle('ローカルのみ')).toBeInTheDocument();
+  });
+});
+
+describe('リアクション操作（Misskey、docs/misskey-reaction-action-spec.md）', () => {
+  function mkPost(overrides: Partial<Post> = {}): Post {
+    return makePost({ provider: 'misskey', ref: 'n1', ...overrides });
+  }
+
+  beforeEach(() => {
+    vi.useRealTimers(); // userEvent は fake timers と相性が悪いため、このブロックだけ実タイマーにする
+    resetEmojiCache();
+    vi.mocked(api.emojis).mockResolvedValue([{ name: 'kawaii', url: 'https://e/kawaii.png', aliases: ['kw'] }]);
+  });
+
+  it('Misskey＋onReact 有り: チップはボタン化し「＋」を描画する', () => {
+    const { container } = render(
+      <PostCard post={mkPost({ reactions: [{ emoji: '👍', count: 2 }] })} onReact={() => {}} />,
+    );
+    expect(container.querySelectorAll('button.reaction')).toHaveLength(2); // チップ1＋「＋」
+    expect(screen.getByRole('button', { name: 'リアクションを追加' })).toBeInTheDocument();
+  });
+
+  it('reactions 無しでも Misskey なら「＋」を描画する', () => {
+    render(<PostCard post={mkPost()} onReact={() => {}} />);
+    expect(screen.getByRole('button', { name: 'リアクションを追加' })).toBeInTheDocument();
+  });
+
+  it('他人のチップクリック → 付与（onReact(post, emoji, url)）', async () => {
+    const onReact = vi.fn();
+    render(<PostCard post={mkPost({ reactions: [{ emoji: '👍', count: 2 }] })} onReact={onReact} />);
+    await userEvent.click(screen.getByTitle('👍'));
+    expect(onReact).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }), '👍', undefined);
+  });
+
+  it('自分のチップ（me）クリック → 解除（onReact(post)）', async () => {
+    const onReact = vi.fn();
+    render(
+      <PostCard post={mkPost({ reactions: [{ emoji: ':kawaii:', count: 1, me: true, emojiUrl: 'u' }] })} onReact={onReact} />,
+    );
+    await userEvent.click(screen.getByTitle(':kawaii:'));
+    expect(onReact).toHaveBeenCalledTimes(1);
+    expect(onReact.mock.calls[0]).toHaveLength(1); // 解除は reaction 引数無し
+    expect(onReact.mock.calls[0][0]).toEqual(expect.objectContaining({ id: 'p1' }));
+  });
+
+  it('ピッカーからカスタム絵文字を選ぶ → 付与（:name: と url）', async () => {
+    const onReact = vi.fn();
+    render(<PostCard post={mkPost()} onReact={onReact} />);
+    await userEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }));
+    await waitFor(() => expect(screen.getByTitle(':kawaii:')).toBeInTheDocument());
+    await userEvent.click(screen.getByTitle(':kawaii:'));
+    expect(onReact).toHaveBeenCalledWith(expect.anything(), ':kawaii:', 'https://e/kawaii.png');
+  });
+
+  it('ピッカーの Unicode パレットから選ぶ → 付与（文字のみ）', async () => {
+    const onReact = vi.fn();
+    render(<PostCard post={mkPost()} onReact={onReact} />);
+    await userEvent.click(screen.getByRole('button', { name: 'リアクションを追加' }));
+    await userEvent.click(screen.getByTitle('👍'));
+    expect(onReact).toHaveBeenCalledWith(expect.anything(), '👍', undefined);
+  });
+
+  it('Bluesky 投稿には反応 UI を一切描画しない（onReact 有りでも）', () => {
+    const { container } = render(
+      <PostCard post={makePost({ reactions: [{ emoji: '👍', count: 1 }] })} onReact={() => {}} />,
+    );
+    expect(container.querySelectorAll('button.reaction')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: 'リアクションを追加' })).not.toBeInTheDocument();
+  });
+
+  it('onReact 無しの Misskey 投稿は表示のみ（ボタン化しない）', () => {
+    const { container } = render(<PostCard post={mkPost({ reactions: [{ emoji: '👍', count: 1 }] })} />);
+    expect(container.querySelectorAll('button.reaction')).toHaveLength(0);
+    expect(container.querySelectorAll('.reaction')).toHaveLength(1); // span チップ
   });
 });
 

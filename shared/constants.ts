@@ -7,4 +7,6 @@ export const API = {
   timeline: '/api/timeline',
   media: '/api/media',
   post: '/api/post',
+  reactions: '/api/reactions',
+  emojis: '/api/emojis',
 } as const;

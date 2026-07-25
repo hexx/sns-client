@@ -70,6 +70,13 @@ export type PostInputWire = {
 
 export type MediaUploadResponse = { blob: unknown };
 
+/** ピッカー用のローカルカスタム絵文字（BFF がレジストリを compact 化して配信。ADR-0006 キャッシュ再利用） */
+export type EmojiInfo = { name: string; url: string; aliases?: string[] };
+
+/** リアクション操作リクエスト（ブラウザ → BFF）。reaction あり→付与/置換、なし→解除（docs/misskey-reaction-action-spec.md） */
+export type ReactionRequest = { provider: Provider; postId: string; reaction?: string };
+export type ReactionResponse = { reaction?: string };
+
 /** プロバイダの compose 設定（カウンタの単位と上限） */
 export type ComposeConfig = {
   charLimit: number;
