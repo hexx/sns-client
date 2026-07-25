@@ -231,3 +231,44 @@ describe('リッチ表示（Misskey 統合）', () => {
     expect(screen.getByTitle('ローカルのみ')).toBeInTheDocument();
   });
 });
+
+describe('チャンネルチップ（Misskey、docs/misskey-channel-display-spec.md）', () => {
+  it('channel 有り → 時刻の隣に名前・title 属性付きで描画する', () => {
+    const { container } = render(
+      <PostCard post={makePost({ channel: { id: 'chX', name: 'ゲーム部' } })} />,
+    );
+    const chip = container.querySelector('.channel-chip');
+    expect(chip).toBeInTheDocument();
+    expect(chip).toHaveAttribute('title', 'ゲーム部');
+    expect(chip).toHaveTextContent('📺');
+    expect(chip).toHaveTextContent('ゲーム部');
+  });
+
+  it('channel 無し → チップ要素を描画しない', () => {
+    const { container } = render(<PostCard post={makePost()} />);
+    expect(container.querySelector('.channel-chip')).not.toBeInTheDocument();
+  });
+
+  it('repostedBy 有り＋channel 有り → チップを描画する（外部renoteの回帰）', () => {
+    const { container } = render(
+      <PostCard
+        post={makePost({
+          repostedBy: { handle: 'carol', displayName: 'Carol' },
+          channel: { id: 'chX', name: 'ゲーム部' },
+        })}
+      />,
+    );
+    expect(screen.getByText(/Carol がリポスト/)).toBeInTheDocument();
+    expect(container.querySelector('.channel-chip')).toHaveTextContent('ゲーム部');
+  });
+
+  it('quote.channel 有り → QuoteCard 内にはチップを描画しない', () => {
+    const quote: Post = {
+      ...makePost({ id: 'q1', text: 'quoted body', channel: { id: 'chY', name: '音楽部' } }),
+    };
+    const { container } = render(<PostCard post={makePost({ text: 'comment', quote })} />);
+    const quoteCard = container.querySelector('.quote-card');
+    expect(quoteCard).toBeInTheDocument();
+    expect(quoteCard?.querySelector('.channel-chip')).not.toBeInTheDocument();
+  });
+});

@@ -48,6 +48,7 @@ export type Post = {
   reactions?: Reaction[]; // 絵文字別内訳（Misskey のみ）
   visibility?: Visibility; // 任意（Misskey）
   localOnly?: boolean; // 任意（Misskey）
+  channel?: { id: string; name: string }; // 任意（Misskey）。投稿が所属するチャンネル
   ref?: unknown; // プロバイダ固有の自己参照（bsky={uri,cid} / misskey=noteId）
   source: unknown; // 各SNSの生データ退避
 };

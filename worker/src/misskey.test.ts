@@ -160,3 +160,43 @@ describe('mapNote', () => {
     expect(p.quote?.quote).toBeUndefined();
   });
 });
+
+describe('mapNote: チャンネル（docs/misskey-channel-display-spec.md）', () => {
+  const chX = { id: 'chX', name: 'ゲーム部' };
+
+  it('チャンネル付きノート → {id, name} のみ映射（余剰フィールドは破棄）', () => {
+    const p = mapNote(note({ channel: { ...chX, color: '#ff0000', isSensitive: false } }));
+    expect(p.channel).toEqual(chX);
+  });
+
+  it('チャンネル無しノート → channel フィールドは存在しない', () => {
+    expect(mapNote(note()).channel).toBeUndefined();
+  });
+
+  it('純粋renote・ケースA（外側無し・内側 X）→ 内側の X（外部renoteのフォールバック）', () => {
+    const inner = note({ id: 'orig', text: 'original', channel: chX });
+    const p = mapNote(note({ id: 'rn', text: null, renote: inner }));
+    expect(p.channel).toEqual(chX);
+    expect(p.repostedBy).toBeDefined();
+  });
+
+  it('純粋renote・ケースB（外側 X・内側 X）→ X', () => {
+    const inner = note({ id: 'orig', text: 'original', channel: chX });
+    const p = mapNote(note({ id: 'rn', text: null, channel: chX, renote: inner }));
+    expect(p.channel).toEqual(chX);
+  });
+
+  it('純粋renote・ケースC（外側 X・内側無し）→ 外側優先で X', () => {
+    const inner = note({ id: 'orig', text: 'original' });
+    const p = mapNote(note({ id: 'rn', text: null, channel: chX, renote: inner }));
+    expect(p.channel).toEqual(chX);
+  });
+
+  it('引用（外側 X・引用先 Y）→ 外側 X かつ quote.channel は Y', () => {
+    const chY = { id: 'chY', name: '音楽部' };
+    const quoted = note({ id: 'q1', text: 'quoted', channel: chY });
+    const p = mapNote(note({ id: 'outer', text: 'comment', channel: chX, renote: quoted }));
+    expect(p.channel).toEqual(chX);
+    expect(p.quote?.channel).toEqual(chY);
+  });
+});
