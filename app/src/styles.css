@@ -423,3 +423,147 @@ body,
   color: #ff6b6b;
   font-weight: 700;
 }
+
+/* --- View 切替タブ --- */
+.view-tabs {
+  display: flex;
+  gap: 6px;
+}
+.view-tab {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.view-tab.active {
+  color: var(--text);
+  background: var(--card);
+  border-color: var(--border);
+}
+
+/* --- リッチテキスト --- */
+.rt-link {
+  color: var(--accent, #4a9eff);
+  word-break: break-all;
+}
+.rt-mention {
+  color: var(--accent, #4a9eff);
+}
+.rt-hashtag {
+  color: var(--accent, #4a9eff);
+}
+.rt-emoji {
+  height: 1.4em;
+  vertical-align: -0.3em;
+}
+
+/* --- リポストバッジ --- */
+.repost-badge {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 0 4px 4px;
+}
+
+/* --- 公開範囲バッジ --- */
+.visibility {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* --- 引用カード --- */
+.quote-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-top: 6px;
+}
+.quote-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.quote-head .display-name {
+  font-size: 13px;
+}
+.quote-head .handle {
+  font-size: 12px;
+  color: var(--muted);
+}
+.quote-card .text {
+  font-size: 13px;
+  margin: 2px 0;
+}
+.quote-thumb {
+  max-width: 100%;
+  max-height: 160px;
+  border-radius: 8px;
+  margin-top: 4px;
+}
+.avatar-sm {
+  width: 18px;
+  height: 18px;
+}
+
+/* --- reactions チップ --- */
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 13px;
+}
+.reaction.me {
+  border-color: var(--accent, #4a9eff);
+  background: var(--card); /* color-mix 非対応ブラウザ向けのフォールバック */
+  background: color-mix(in srgb, var(--accent, #4a9eff) 15%, var(--card));
+}
+.reaction-emoji {
+  height: 1.2em;
+}
+.reaction-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- compose: ターゲット/visibility --- */
+.target-select,
+.target-fixed {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  font-size: 13px;
+}
+.target-fixed {
+  border: none;
+  color: var(--muted);
+}
+.compose-visibility {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+.local-only {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}

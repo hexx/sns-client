@@ -23,6 +23,7 @@
 ### 将来（指針、未確定詳細）
 - **Phase 1.5:** Bluesky のメンション（`resolveHandle` による DID 解決）。
 - **Phase 2:** Mastodon プロバイダ統合、カスタムフィード/リスト、プッシュ通知（Workers cron ＋ Web Push）、バックグラウンド同期投稿。
+  - **Misskey 統合（misskey.io 閲覧＋投稿・統合タイムライン）**: [misskey-integration-spec.md](./misskey-integration-spec.md) に確定仕様（grilling 全16問合意、ADR-0004/0005）。
 - **対象外（当面）:** mixi2 統合（API 非公開・招待制のため。将来再検討）。
 
 ### 非対象（MVP）

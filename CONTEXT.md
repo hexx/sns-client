@@ -9,16 +9,24 @@ SNS 横断で統一された「1つの投稿」のドメインモデル。UI は
 _Avoid_: status, toot, record
 
 **Provider**:
-投稿の由来となる SNS の種別（`bluesky` / `mastodon`）。
-_Avoid_: source, network, service
+投稿の由来となる SNS の種別（`bluesky` / `misskey` / `mastodon`）。
+_Avoid_: network, service
+
+**Source**:
+1つの Provider に属する、投稿の時系列ストリーム1つ。home（ホーム）や、Bluesky の feed、Misskey の antenna などの種別（kind）と、必要に応じて ID を持つ。Timeline は1つ以上の Source を合成して作られる。
+_Avoid_: feed, antenna, list, channel（これらは特定の Provider における Source の実現形態であり、総称ではない）
+
+**View**:
+利用者が閲覧する1つの画面の定義。1つ以上の Source の集合で表され、クライアントがこの定義に従って各 Source を fetch・時系列合成し、Timeline として描画する。統合ホームも「フィード＋アンテナ」も等しく View の一实例。
+_Avoid_: column, tab, feed, timeline（Timeline は描画結果、View はそのソース構成の定義）
 
 **Media**:
 投稿に添付された画像。表示用の URL と alt（説明）を持つ。
 _Avoid_: attachment, blob, asset
 
 **Timeline**:
-時系列に並んだ投稿一覧。無限スクロールで継ぎ足し、新着は自動挿入せずピルで知らせる。
-_Avoid_: feed, home, list
+1つの View に属し、その View を構成する Source 群の投稿を時系列に合成して描画した一覧。無限スクロールで継ぎ足し、新着は自動挿入せずピルで知らせる。
+_Avoid_: feed, home, list, view
 
 **grapheme**:
 投稿長の计数単位。文字数（コードポイント）ではなくグラフェムで数え、絵文字や結合文字を1単位とする。
@@ -35,6 +43,14 @@ _Avoid_: comment, thread
 **quote**:
 既存の投稿を参照して自分の投稿に埋め込むこと（引用）。
 _Avoid_: repost, share, retweet
+
+**repost**:
+既存の投稿を、本文を添えずに自分のフォロワーへ再共有すること。Misskey の renote、Bluesky の repost を指す統一用語。モデルでは「誰が再共有したか」を `repostedBy` で表す。本文を添えて再共有すれば quote（引用）であり別概念。
+_Avoid_: renote, boost, retweet, share
+
+**reaction**:
+投稿への絵文字による反応。Misskey は複数種の絵文字反応（カスタム絵文字を含む）を持ち、モデルでは `{emoji, count}` の任意リストで保持する。Bluesky の「いいね（like）」は単一カウンタのため、総数として `likes` に集約し reaction リストは持たせない。
+_Avoid_: favorite, いいね, like（like は Bluesky における reaction の単一カウンタ実現）
 
 **LinkCard**:
 投稿に添付された外部リンクのプレビューカード。URL・タイトル・説明・サムネイル画像を持つ。`Media`（画像添付）とは別概念。

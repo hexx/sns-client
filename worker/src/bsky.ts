@@ -106,6 +106,7 @@ export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
       reposts: pv.repostCount ?? 0,
       likes: pv.likeCount ?? 0,
     },
+    ref: { uri: pv.uri, cid: pv.cid },
     source: { uri: pv.uri, cid: pv.cid },
   };
 }
@@ -151,8 +152,9 @@ export function buildPostRecord(input: PostInputWire, rt: RichText): Record<stri
         images: images.map((i) => ({ alt: i.alt ?? '', image: i.blob })),
       }
     : null;
-  const quoteEmbed = input.quote
-    ? { $type: 'app.bsky.embed.record', record: { uri: input.quote.uri, cid: input.quote.cid } }
+  const quoteRef = input.quote as { uri: string; cid: string } | undefined;
+  const quoteEmbed = quoteRef
+    ? { $type: 'app.bsky.embed.record', record: { uri: quoteRef.uri, cid: quoteRef.cid } }
     : null;
 
   if (imagesEmbed && quoteEmbed) {
@@ -163,9 +165,10 @@ export function buildPostRecord(input: PostInputWire, rt: RichText): Record<stri
     record.embed = quoteEmbed;
   }
 
-  if (input.replyTo) {
+  const replyRef = input.replyTo as { uri: string; cid: string } | undefined;
+  if (replyRef) {
     // MVP: 返信対象を root かつ parent とする（トップレベル投稿への返信で正しい）
-    const ref = { uri: input.replyTo.uri, cid: input.replyTo.cid };
+    const ref = { uri: replyRef.uri, cid: replyRef.cid };
     record.reply = { root: ref, parent: ref };
   }
 

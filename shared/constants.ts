@@ -2,6 +2,8 @@
 export const API = {
   prefix: '/api/',
   health: '/api/health',
+  views: '/api/views',
+  providers: '/api/providers',
   timeline: '/api/timeline',
   media: '/api/media',
   post: '/api/post',

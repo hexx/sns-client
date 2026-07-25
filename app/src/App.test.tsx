@@ -3,16 +3,23 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { api } from './api';
-import type { Post } from '../../shared/types';
+import type { Post, ProviderInfo, View } from '../../shared/types';
 
 vi.mock('./api', () => ({
   api: {
     health: vi.fn(),
+    views: vi.fn(),
+    providers: vi.fn(),
     timeline: vi.fn(),
     uploadMedia: vi.fn(),
     post: vi.fn(),
   },
 }));
+
+const VIEWS: View[] = [{ id: 'home', name: 'ホーム', sources: [{ provider: 'bluesky', kind: 'home' }] }];
+const PROVIDERS: ProviderInfo[] = [
+  { provider: 'bluesky', configured: true, compose: { charLimit: 300, unit: 'grapheme' } },
+];
 
 function makePost(overrides: Partial<Post> = {}): Post {
   return {
@@ -29,20 +36,32 @@ function makePost(overrides: Partial<Post> = {}): Post {
 }
 
 beforeEach(() => {
+  vi.mocked(api.views).mockResolvedValue(VIEWS);
+  vi.mocked(api.providers).mockResolvedValue(PROVIDERS);
   vi.mocked(api.timeline).mockResolvedValue({ posts: [], nextCursor: null });
 });
 
 describe('App の wiring', () => {
   it('初期状態：Timeline は表示・Compose は非表示', async () => {
     render(<App />);
-    expect(await screen.findByText('SNS Client')).toBeInTheDocument();
+    expect(await screen.findByText('ホーム')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('いまどうしてる？')).not.toBeInTheDocument();
+  });
+
+  it('views/providers 読込失敗でエラーバナーと再試行を出す', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.views).mockRejectedValueOnce(new Error('down'));
+    render(<App />);
+    expect(await screen.findByText(/設定の読み込みに失敗しました/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '再試行' }));
+    expect(await screen.findByText('ホーム')).toBeInTheDocument();
   });
 
   it('FAB で Compose が開き、閉じるボタンで閉じる', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText('SNS Client');
+    await screen.findByText('ホーム');
 
     await user.click(screen.getByRole('button', { name: '投稿' }));
     expect(screen.getByPlaceholderText('いまどうしてる？')).toBeInTheDocument();
