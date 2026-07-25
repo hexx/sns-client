@@ -94,6 +94,66 @@ function emojiMap(e: MkNote['emojis']): Record<string, string> {
   return e;
 }
 
+// --- ローカルカスタム絵文字レジストリ（ADR-0006） ---
+// Misskey の Note が返す reactionEmojis/emojis にはリモートカスタム絵文字しか載らないため、
+// ローカル絵文字の URL はインスタンスの絵文字レジストリ POST /api/emojis（認証不要・全件返却）から解決する。
+
+const EMOJI_TTL_MS = 30 * 60 * 1000;
+let emojiCache: { instance: string; at: number; map: Record<string, string> } | undefined;
+const emojiInflight = new Map<string, Promise<Record<string, string>>>();
+
+/**
+ * インスタンスのローカルカスタム絵文字レジストリ（name → url）を取得する。
+ * インメモリ TTL（30分）キャッシュ＋シングルフライト。初回のみ lazy 取得。
+ * 取得失敗時は空マップを返して縮退（絵文字はテキスト表示、タイムラインは続行＝非致命）。
+ */
+export async function loadEmojiRegistry(env: MisskeyEnv): Promise<Record<string, string>> {
+  const instance = instanceOf(env);
+  if (emojiCache && emojiCache.instance === instance && Date.now() - emojiCache.at < EMOJI_TTL_MS) {
+    return emojiCache.map;
+  }
+  const inflight = emojiInflight.get(instance);
+  if (inflight) return inflight;
+  const promise = (async () => {
+    try {
+      const res = await fetch(`${instance}/api/emojis`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      if (!res.ok) throw new Error(`misskey emojis ${res.status}`);
+      const data = (await res.json()) as { emojis?: { name: string; url: string }[] };
+      const map: Record<string, string> = {};
+      for (const e of data.emojis ?? []) map[e.name] = e.url;
+      emojiCache = { instance, at: Date.now(), map };
+      return map;
+    } catch (err) {
+      console.error('misskey emoji registry fetch failed', err);
+      return {};
+    } finally {
+      emojiInflight.delete(instance);
+    }
+  })();
+  emojiInflight.set(instance, promise);
+  return promise;
+}
+
+/**
+ * リアクションキーをローカルカスタム絵文字名へ正規化する。
+ * - `:name:` → `name`
+ * - `:name@.:` → `name`（ローカル明示表記）
+ * - `:name@host:`（host≠`.`）→ null（リモート。同名別画像のローカル絵文字への誤解決を防ぐため対象外）
+ * - Unicode 絵文字等 → null
+ */
+export function localEmojiName(key: string): string | null {
+  if (!key.startsWith(':') || !key.endsWith(':') || key.length <= 2) return null;
+  const inner = key.slice(1, -1);
+  const at = inner.lastIndexOf('@');
+  if (at < 0) return inner;
+  if (inner.slice(at + 1) !== '.') return null;
+  return inner.slice(0, at) || null;
+}
+
 // --- MFM → 統一 RichSegment（対応: text/link/mention/hashtag/emoji。装飾はプレーン縮退） ---
 function plainOf(nodes: MfmNode[]): string {
   // mfm-js の toString は MfmNode[] を受ける（構造互換）
@@ -185,7 +245,7 @@ function mediaOf(files: MkFile[] | undefined): Media[] {
     .map((f) => ({ type: 'image' as const, url: f.url || f.thumbnailUrl || '', alt: f.comment || '' }));
 }
 
-function reactionsOf(note: MkNote): { reactions?: Reaction[]; likes: number } {
+function reactionsOf(note: MkNote, registry: Record<string, string>): { reactions?: Reaction[]; likes: number } {
   const r = note.reactions ?? {};
   const entries = Object.entries(r).filter(([, c]) => c > 0);
   const likes = entries.reduce((s, [, c]) => s + c, 0);
@@ -198,6 +258,11 @@ function reactionsOf(note: MkNote): { reactions?: Reaction[]; likes: number } {
       const name = custom ? key.slice(1, -1) : key;
       const reaction: Reaction = { emoji: key, count };
       if (custom && emojis[name]) reaction.emojiUrl = emojis[name];
+      else if (custom) {
+        // reactionEmojis 未掲載（＝ローカルカスタム絵文字）はレジストリで補完（ADR-0006）
+        const local = localEmojiName(key);
+        if (local && registry[local]) reaction.emojiUrl = registry[local];
+      }
       if (note.myReaction === key) reaction.me = true;
       return reaction;
     });
@@ -205,10 +270,11 @@ function reactionsOf(note: MkNote): { reactions?: Reaction[]; likes: number } {
 }
 
 /** ノート自身のフィールドを Post に映射する（renote/quote は扱わない） */
-function basePost(note: MkNote): Post {
+function basePost(note: MkNote, registry: Record<string, string>): Post {
   const text = note.text ?? '';
-  const { rich, plain } = text ? mfmToRich(text, emojiMap(note.emojis)) : { rich: undefined, plain: '' };
-  const { reactions, likes } = reactionsOf(note);
+  // 本文絵文字: ノート由来（リモート）を優先し、ローカルはレジストリで補完（ADR-0006）
+  const { rich, plain } = text ? mfmToRich(text, { ...registry, ...emojiMap(note.emojis) }) : { rich: undefined, plain: '' };
+  const { reactions, likes } = reactionsOf(note, registry);
   const post: Post = {
     id: note.id,
     provider: 'misskey',
@@ -237,9 +303,9 @@ function isPureRenote(note: MkNote): boolean {
  * - 純粋renote: 内包ノートを表示主体にし、repostedBy に renote した人を載せる（id は renote 活動、ref は元ノート）。
  * - 引用renote: 本文＋ quote（1階層のみ）。
  */
-export function mapNote(note: MkNote): Post {
+export function mapNote(note: MkNote, registry: Record<string, string> = {}): Post {
   if (isPureRenote(note) && note.renote) {
-    const inner = basePost(note.renote);
+    const inner = basePost(note.renote, registry);
     const post: Post = {
       ...inner,
       id: note.id, // renote 活動ごとに一意（dedup されすぎない）
@@ -252,10 +318,10 @@ export function mapNote(note: MkNote): Post {
     if (note.channel) post.channel = { id: note.channel.id, name: note.channel.name };
     return post;
   }
-  const post = basePost(note);
+  const post = basePost(note, registry);
   if (note.renote && !isPureRenote(note)) {
     // 本文付き引用、またはテキスト無しでもメディア付きの引用を拾う（1階層、ネスト引用は落とす）
-    post.quote = basePost(note.renote);
+    post.quote = basePost(note.renote, registry);
   }
   return post;
 }
@@ -266,7 +332,8 @@ export async function getTimeline(env: MisskeyEnv, cursor?: string): Promise<Tim
   const params: Record<string, unknown> = { limit: LIMIT };
   if (cursor) params.untilId = cursor;
   const notes = await mkApi<MkNote[]>(env, 'notes/timeline', params);
-  const posts = notes.map(mapNote);
+  const registry = await loadEmojiRegistry(env);
+  const posts = notes.map((n) => mapNote(n, registry));
   return { posts, nextCursor: notes.length > 0 ? notes[notes.length - 1].id : null };
 }
 
@@ -304,7 +371,8 @@ export async function createPost(env: MisskeyEnv, input: PostInputWire): Promise
   if (input.replyTo) params.replyId = input.replyTo as string;
   if (input.quote) params.renoteId = input.quote as string; // 引用 = 本文付き renote
   const res = await mkApi<{ createdNote: MkNote }>(env, 'notes/create', params);
-  return mapNote(res.createdNote);
+  const registry = await loadEmojiRegistry(env);
+  return mapNote(res.createdNote, registry);
 }
 
 // --- インスタンス設定（compose の文字上限） ---
