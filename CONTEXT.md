@@ -1,4 +1,4 @@
-# Super SNS Client
+# SNS Client
 
 複数 SNS を1画面で扱うクライアントのドメイン。個々の SNS（Bluesky 等）の差異を吸収し、統一されたモデルで投稿を扱う。MVP の対象は Bluesky。
 

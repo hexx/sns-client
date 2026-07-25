@@ -1,4 +1,4 @@
-# スーパーSNSクライアント 仕様書（MVP）
+# SNSクライアント 仕様書（MVP）
 
 > 複数 SNS を1つにまとめる PWA クライアント（構想: Mastodon / Bluesky / mixi2）。
 > 本ドキュメントは **MVP（Bluesky 対応）** の確定仕様と、将来フェーズの指針を定める。

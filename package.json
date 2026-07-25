@@ -1,5 +1,5 @@
 {
-  "name": "super-sns-client",
+  "name": "sns-client",
   "version": "0.1.0",
   "private": true,
   "type": "module",

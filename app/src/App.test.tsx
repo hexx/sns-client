@@ -35,14 +35,14 @@ beforeEach(() => {
 describe('App の wiring', () => {
   it('初期状態：Timeline は表示・Compose は非表示', async () => {
     render(<App />);
-    expect(await screen.findByText('Super SNS')).toBeInTheDocument();
+    expect(await screen.findByText('SNS Client')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('いまどうしてる？')).not.toBeInTheDocument();
   });
 
   it('FAB で Compose が開き、閉じるボタンで閉じる', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText('Super SNS');
+    await screen.findByText('SNS Client');
 
     await user.click(screen.getByRole('button', { name: '投稿' }));
     expect(screen.getByPlaceholderText('いまどうしてる？')).toBeInTheDocument();

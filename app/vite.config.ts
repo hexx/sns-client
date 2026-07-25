@@ -13,8 +13,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
       manifest: {
-        name: 'Super SNS Client',
-        short_name: 'SuperSNS',
+        name: 'SNS Client',
+        short_name: 'SNS',
         description: '複数 SNS を1画面で扱う PWA クライアント（MVP: Bluesky）',
         theme_color: '#0b0f14',
         background_color: '#0b0f14',

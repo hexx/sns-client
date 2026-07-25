@@ -161,7 +161,7 @@ export function Timeline({
   return (
     <div className="timeline-root">
       <header className="topbar">
-        <h1>Super SNS</h1>
+        <h1>SNS Client</h1>
         <button className="refresh-btn" onClick={() => void refresh()} disabled={refreshing}>
           {refreshing ? '更新中…' : '更新'}
         </button>
