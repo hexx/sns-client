@@ -20,6 +20,10 @@ _Avoid_: feed, antenna, list, channel（これらは特定の Provider におけ
 利用者が閲覧する1つの画面の定義。1つ以上の Source の集合で表され、クライアントがこの定義に従って各 Source を fetch・時系列合成し、Timeline として描画する。統合ホームも「フィード＋アンテナ」も等しく View の一实例。
 _Avoid_: column, tab, feed, timeline（Timeline は描画結果、View はそのソース構成の定義）
 
+**Channel**:
+投稿が所属する Misskey チャンネル（ノートが投下されるコミュニティ）。Post は `{id, name}` を保持し、UI は名前を表示して通常投稿と見分ける。Source の実現形態としての channel（チャンネルタイムラインというストリーム）とは別概念。
+_Avoid_: group, community, circle
+
 **Media**:
 投稿に添付された画像。表示用の URL と alt（説明）を持つ。
 _Avoid_: attachment, blob, asset

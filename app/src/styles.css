@@ -475,6 +475,26 @@ body,
   color: var(--muted);
 }
 
+/* --- チャンネルチップ（Misskey。card-head 時刻の隣） --- */
+.channel-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 12em;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  background: color-mix(in srgb, var(--accent, #4a9eff) 12%, var(--card));
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.channel-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* --- 引用カード --- */
 .quote-card {
   border: 1px solid var(--border);

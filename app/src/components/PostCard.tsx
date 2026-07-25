@@ -136,6 +136,11 @@ export function PostCard({
         <time className="time" dateTime={post.createdAt}>
           {relTime(post.createdAt)}
         </time>
+        {post.channel && (
+          <span className="channel-chip" title={post.channel.name}>
+            📺 <span className="channel-name">{post.channel.name}</span>
+          </span>
+        )}
       </div>
 
       <Body post={post} />

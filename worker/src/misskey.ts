@@ -58,6 +58,7 @@ type MkNote = {
   reactionEmojis?: Record<string, string>;
   emojis?: Record<string, string> | { name: string; url: string }[];
   myReaction?: string | null;
+  channel?: { id: string; name: string } | null; // 所属チャンネル（使うのは id/name のみ）
 };
 type MfmNode = { type: string; props?: Record<string, unknown>; children?: MfmNode[] };
 
@@ -223,6 +224,7 @@ function basePost(note: MkNote): Post {
   if (reactions) post.reactions = reactions;
   if (note.visibility && note.visibility !== 'public') post.visibility = note.visibility;
   if (note.localOnly) post.localOnly = true;
+  if (note.channel) post.channel = { id: note.channel.id, name: note.channel.name };
   return post;
 }
 
@@ -238,13 +240,17 @@ function isPureRenote(note: MkNote): boolean {
 export function mapNote(note: MkNote): Post {
   if (isPureRenote(note) && note.renote) {
     const inner = basePost(note.renote);
-    return {
+    const post: Post = {
       ...inner,
       id: note.id, // renote 活動ごとに一意（dedup されすぎない）
       createdAt: note.createdAt, // フィードに現れた時刻（マージ順序の歪みを避ける）
       repostedBy: authorOf(note.user),
       source: note,
     };
+    // チャンネルは外側（renote 活動）優先、無ければ内側（コンテンツの出身）。
+    // 「なぜこの投稿が TL に現れたか」を説明するため（docs/misskey-channel-display-spec.md）。
+    if (note.channel) post.channel = { id: note.channel.id, name: note.channel.name };
+    return post;
   }
   const post = basePost(note);
   if (note.renote && !isPureRenote(note)) {
