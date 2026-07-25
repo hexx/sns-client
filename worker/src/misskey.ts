@@ -100,7 +100,7 @@ function emojiMap(e: MkNote['emojis']): Record<string, string> {
 
 const EMOJI_TTL_MS = 30 * 60 * 1000;
 let emojiCache: { instance: string; at: number; map: Record<string, string> } | undefined;
-let emojiInflight: { instance: string; promise: Promise<Record<string, string>> } | undefined;
+const emojiInflight = new Map<string, Promise<Record<string, string>>>();
 
 /**
  * インスタンスのローカルカスタム絵文字レジストリ（name → url）を取得する。
@@ -112,7 +112,8 @@ export async function loadEmojiRegistry(env: MisskeyEnv): Promise<Record<string,
   if (emojiCache && emojiCache.instance === instance && Date.now() - emojiCache.at < EMOJI_TTL_MS) {
     return emojiCache.map;
   }
-  if (emojiInflight && emojiInflight.instance === instance) return emojiInflight.promise;
+  const inflight = emojiInflight.get(instance);
+  if (inflight) return inflight;
   const promise = (async () => {
     try {
       const res = await fetch(`${instance}/api/emojis`, {
@@ -126,13 +127,14 @@ export async function loadEmojiRegistry(env: MisskeyEnv): Promise<Record<string,
       for (const e of data.emojis ?? []) map[e.name] = e.url;
       emojiCache = { instance, at: Date.now(), map };
       return map;
-    } catch {
+    } catch (err) {
+      console.error('misskey emoji registry fetch failed', err);
       return {};
     } finally {
-      if (emojiInflight?.instance === instance) emojiInflight = undefined;
+      emojiInflight.delete(instance);
     }
   })();
-  emojiInflight = { instance, promise };
+  emojiInflight.set(instance, promise);
   return promise;
 }
 

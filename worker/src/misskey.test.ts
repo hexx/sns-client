@@ -311,6 +311,22 @@ describe('loadEmojiRegistry（ADR-0006: /api/emojis のキャッシュ）', () =
     expect(r2).toEqual({ a: 'u' });
   });
 
+  it('異なるインスタンスへの並行呼び出しはインスタンスごとに1回ずつ fetch する', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith('https://reg-multi-a.test')) return okResponse([{ name: 'a', url: 'https://e/a.png' }]);
+      return okResponse([{ name: 'b', url: 'https://e/b.png' }]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const [rA, rB] = await Promise.all([
+      loadEmojiRegistry({ MISSKEY_INSTANCE_URL: 'https://reg-multi-a.test' }),
+      loadEmojiRegistry({ MISSKEY_INSTANCE_URL: 'https://reg-multi-b.test' }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(rA).toEqual({ a: 'https://e/a.png' });
+    expect(rB).toEqual({ b: 'https://e/b.png' });
+  });
+
   it('取得失敗は空マップに縮退し、キャッシュしない（次回リトライ）', async () => {
     const fetchMock = vi.fn(async () => new Response('err', { status: 500 }));
     vi.stubGlobal('fetch', fetchMock);
