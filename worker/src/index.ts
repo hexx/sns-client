@@ -1,5 +1,5 @@
 /**
- * super-sns-client Worker (BFF + Static Assets)
+ * sns-client Worker (BFF + Static Assets)
  *
  * /api/* を BFF で処理し、それ以外は静的アセット(SPA)へフォールバック。
  */
@@ -51,7 +51,7 @@ export default {
       const secretsReady = Boolean(env.BSKY_HANDLE && env.BSKY_APP_PASSWORD);
       return json({
         ok: true,
-        service: 'super-sns-client',
+        service: 'sns-client',
         session: secretsReady ? 'configured' : 'missing-secrets',
         time: new Date().toISOString(),
       });

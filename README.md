@@ -1,7 +1,7 @@
-# Super SNS Client
+# SNS Client
 
 複数 SNS を1画面で扱う PWA クライアント。MVP は Bluesky（閲覧＋投稿）。
-仕様: [docs/super-sns-client-spec.md](docs/super-sns-client-spec.md)
+仕様: [docs/sns-client-spec.md](docs/sns-client-spec.md)
 
 単一 Cloudflare Worker が **静的 SPA 配信** と **BFF (`/api/*`)** を兼ねます（同一オリジン）。
 
@@ -38,7 +38,7 @@ http://localhost:5173 を開く。
 ```bash
 npm run deploy       # vite build → wrangler deploy
 ```
-デプロイ先: `https://super-sns-client.<your-subdomain>.workers.dev`
+デプロイ先: `https://sns-client.<your-subdomain>.workers.dev`
 
 ## Cloudflare Access（Zero Trust）で保護
 アプリ側に認証コードは不要。ダッシュボードで設定:
