@@ -15,6 +15,7 @@ export default defineConfig({
       manifest: {
         name: 'SNS Client',
         short_name: 'SNS',
+        lang: 'ja',
         description: '複数 SNS を1画面で扱う PWA クライアント（MVP: Bluesky）',
         theme_color: '#0b0f14',
         background_color: '#0b0f14',

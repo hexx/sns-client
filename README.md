@@ -74,5 +74,5 @@ wrangler.jsonc  assets(run_worker_first) + Worker 設定
   - ナビゲーションは **network-first（キャッシュしない）** → Cloudflare Access のログイン画面をキャッシュしない。オフライン時のみ precache シェルへ。
   - `/api/timeline` は network-first + キャッシュ（200 のみ）→ オフライン時に最後の取得成功分を表示
   - その他の `/api`（投稿/メディア）は NetworkOnly、画像は StaleWhileRevalidate
-- アイコンは `scripts/gen-icons.mjs` で生成（placeholder。差し替え可）。
+- アイコンのデザインソースは `app/public/icon.svg`（唯一のソース）。PNG は `npm run icons`（`scripts/render-icons.mjs`）で再生成してコミットする。ビルドはアイコンに触れない。仕様: [docs/app-icon-spec.md](docs/app-icon-spec.md)
 - スマホでは HTTPS（`*.workers.dev`）でアクセスし「ホーム画面に追加」でインストール。
