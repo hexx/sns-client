@@ -171,8 +171,6 @@ export function PostCard({
   onReact?: (p: Post, reaction?: string, emojiUrl?: string) => void;
 }) {
   const hasReactions = !!post.reactions && post.reactions.length > 0;
-  // リアクション操作は Misskey のみ（Bluesky には反応 UI を一切描画しない）
-  const reactable = post.provider === 'misskey' && !!onReact;
   return (
     <article className="card">
       {post.repostedBy && <div className="repost-badge">🔁 {post.repostedBy.displayName} がリポスト</div>}
@@ -204,7 +202,11 @@ export function PostCard({
       <MediaGrid post={post} />
       {post.quote && <QuoteCard post={post.quote} />}
       <LinkCardView post={post} />
-      {reactable ? <ReactionBar post={post} onReact={onReact} /> : <Reactions post={post} />}
+      {post.provider === 'misskey' && onReact ? (
+        <ReactionBar post={post} onReact={onReact} />
+      ) : (
+        <Reactions post={post} />
+      )}
 
       <div className="stats">
         <span title="リプライ">💬 {post.stats.replies}</span>

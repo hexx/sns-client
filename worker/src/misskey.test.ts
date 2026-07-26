@@ -418,6 +418,13 @@ describe('react（リアクション操作）', () => {
     await expect(react(env, 'n1', '👍')).rejects.toMatchObject({ status: 409, code: 'ALREADY_REACTED' });
   });
 
+  it('code 無しの失敗（5xx 等）→ 素の Error（MisskeyApiError にしない、run() が 502 化）', async () => {
+    captureFetch(new Response('internal error', { status: 500 }));
+    const err = await react(env, 'n1', '👍').catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(MisskeyApiError);
+  });
+
   it('認証エラー（401/403）→ status=401 に正規化（MisskeyApiError ではない）', async () => {
     captureFetch(new Response('no', { status: 403 }));
     await expect(react(env, 'n1', '👍')).rejects.toMatchObject({ status: 401 });

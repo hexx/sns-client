@@ -77,7 +77,7 @@ export function Timeline({
   const toggleReaction = useCallback(
     async (post: Post, reaction?: string, emojiUrl?: string) => {
       const id = pid(post);
-      if (reactionInflight.current.has(id)) return;
+      if (typeof post.ref !== 'string' || reactionInflight.current.has(id)) return;
       const snapshot = statesRef.current;
       reactionInflight.current.add(id);
       setStates((prev) =>
@@ -87,7 +87,7 @@ export function Timeline({
         })),
       );
       try {
-        await api.react(post.ref as string, reaction);
+        await api.react(post.ref, reaction);
       } catch {
         setStates(snapshot); // ロールバック
         setToast('リアクションに失敗しました');

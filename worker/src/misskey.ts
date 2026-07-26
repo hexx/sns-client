@@ -436,7 +436,10 @@ export async function react(env: MisskeyEnv, noteId: string, reaction?: string):
     } catch {
       /* ignore */
     }
-    throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, code);
+    // Misskey の業務エラー（code 付き）→ 409。code 無し（5xx 等のシステム障害）は
+    // 素の Error のまま投げ、run() の catch-all で 502 にする（409 で隠蔽しない）。
+    if (code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, code);
+    throw new Error(`misskey ${endpoint} ${res.status}`);
   }
 }
 

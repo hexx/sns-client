@@ -629,6 +629,10 @@ button.reaction:hover {
   font-size: 12px;
   padding: 4px;
 }
+.picker-more {
+  flex-basis: 100%;
+  text-align: center;
+}
 
 /* --- トースト --- */
 .toast {

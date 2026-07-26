@@ -10,6 +10,9 @@ import type { EmojiInfo } from '../../../shared/types';
 /** 小規模キュレーション Unicode パレット（「とりあえず 👍」の保険。具体的な顔ぶれは実装詳細） */
 export const UNICODE_PALETTE = ['👍', '❤️', '😆', '🎉', '🤔', '👀', '🥺', '😢', '😡', '🙏', '🔥', '😇'];
 
+/** カスタム絵文字の初期描画件数（数千件レジストリの DOM 爆発を防ぐ段階描画） */
+const PAGE = 100;
+
 let emojiListCache: EmojiInfo[] | null = null;
 let emojiListInflight: Promise<EmojiInfo[]> | null = null;
 
@@ -47,6 +50,7 @@ export function ReactionPicker({
   const [query, setQuery] = useState('');
   const [emojis, setEmojis] = useState<EmojiInfo[] | null>(emojiListCache);
   const [error, setError] = useState<string | null>(null);
+  const [visible, setVisible] = useState(PAGE);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,8 +75,8 @@ export function ReactionPicker({
       (e) => e.name.toLowerCase().includes(q) || (e.aliases ?? []).some((a) => a.toLowerCase().includes(q)),
     );
   }, [emojis, q]);
-
-  const unicodeHits = q ? UNICODE_PALETTE.filter((c) => c.includes(query.trim())) : UNICODE_PALETTE;
+  // 検索中は絞り込み結果を全件、無検索時は段階描画（DOM 节点の爆発を防ぐ）
+  const shown = q ? filtered : filtered.slice(0, visible);
 
   return (
     <div className="picker" role="dialog" aria-label="リアクション絵文字">
@@ -89,25 +93,30 @@ export function ReactionPicker({
           閉じる
         </button>
       </div>
-      {unicodeHits.length > 0 && (
-        <div className="picker-grid">
-          {unicodeHits.map((c) => (
-            <button key={c} className="picker-emoji" title={c} onClick={() => onSelect(c)}>
-              {c}
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="picker-grid">
+        {UNICODE_PALETTE.map((c) => (
+          <button key={c} className="picker-emoji" title={c} onClick={() => onSelect(c)}>
+            {c}
+          </button>
+        ))}
+      </div>
       {error ? (
         <p className="picker-error">{error}</p>
+      ) : !emojis ? (
+        <p className="picker-empty">絵文字を読み込み中…</p>
       ) : (
         <div className="picker-grid picker-grid-custom">
-          {filtered.map((e) => (
+          {shown.map((e) => (
             <button key={e.name} className="picker-emoji" title={`:${e.name}:`} onClick={() => onSelect(`:${e.name}:`, e.url)}>
               <img src={e.url} alt={`:${e.name}:`} loading="lazy" />
             </button>
           ))}
-          {emojis && filtered.length === 0 && <span className="picker-empty">該当なし</span>}
+          {filtered.length === 0 && <span className="picker-empty">該当なし</span>}
+          {!q && visible < filtered.length && (
+            <button className="link-btn picker-more" onClick={() => setVisible((v) => v + PAGE)}>
+              さらに表示（残り {filtered.length - visible}）
+            </button>
+          )}
         </div>
       )}
     </div>
