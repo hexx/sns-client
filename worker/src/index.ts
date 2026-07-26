@@ -178,7 +178,12 @@ export default {
       }
       const err = validateViews(body);
       if (err) return json({ error: err }, { status: 400 });
-      await env.VIEWS.put(VIEWS_KV_KEY, JSON.stringify(body));
+      try {
+        await env.VIEWS.put(VIEWS_KV_KEY, JSON.stringify(body));
+      } catch (e) {
+        console.error('[api/views] KV put failed', e);
+        return json({ error: 'failed to persist views' }, { status: 502 });
+      }
       return json(body);
     }
 
@@ -242,7 +247,8 @@ export default {
     }
 
     if (url.pathname === API.post && request.method === 'POST') {
-      const input = (await request.json()) as PostInputWire;
+      const input = (await request.json().catch(() => null)) as PostInputWire | null;
+      if (!input) return json({ error: 'invalid json' }, { status: 400 });
       if (!isProvider(input.provider)) return json({ error: 'invalid provider' }, { status: 400 });
       if (input.provider === 'bluesky') {
         return run('api/post:bluesky', input.provider, () => bskyPost(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD, input), 201);
@@ -313,6 +319,7 @@ export default {
       });
     }
 
+    // リポスト解除は Bluesky のみ（Misskey リノート解除は v1 未対応。docs/deck-view-spec.md §8）
     if (url.pathname === API.reposts && request.method === 'DELETE') {
       const body = (await request.json().catch(() => null)) as UnrepostRequest | null;
       if (!body || typeof body.recordUri !== 'string' || body.recordUri.length === 0) {

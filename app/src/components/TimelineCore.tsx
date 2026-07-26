@@ -57,6 +57,8 @@ export const TimelineCore = forwardRef<
     interactive?: boolean;
     /** 帰属バッジの生成（sourceKey と provider から「Misskey · 技術リスト」のような文字列） */
     badgeFor?: (sourceKey: string, provider: Provider) => string | undefined;
+    /** 手動更新の開始/終了通知（モバイルの更新ボタン表示用） */
+    onRefreshingChange?: (refreshing: boolean) => void;
     /** タッチの pull-to-refresh を有効化（モバイル向け。デッキでは無効） */
     pullToRefresh?: boolean;
     /** オフラインバナーを表示（モバイル向け。デッキでは各カラムが持つと冗長なため無効） */
@@ -64,7 +66,18 @@ export const TimelineCore = forwardRef<
     className?: string;
   }
 >(function TimelineCore(
-  { sources, justPosted, onReply, onQuote, interactive, badgeFor, pullToRefresh, showOfflineBanner, className },
+  {
+    sources,
+    justPosted,
+    onReply,
+    onQuote,
+    interactive,
+    badgeFor,
+    onRefreshingChange,
+    pullToRefresh,
+    showOfflineBanner,
+    className,
+  },
   ref,
 ) {
   const [states, setStates] = useState<SourceState[]>(() => initStates(sources));
@@ -81,19 +94,27 @@ export const TimelineCore = forwardRef<
   const touchStartY = useRef<number | null>(null);
   const reactionInflight = useRef<Set<string>>(new Set());
   const engageInflight = useRef<Set<string>>(new Set());
+  const loadingKeys = useRef<Set<string>>(new Set());
+  const refreshingRef = useRef(false);
   const lastPollAt = useRef<Map<string, number>>(new Map());
 
   const patch = useCallback((key: string, fn: (s: SourceState) => SourceState) => {
     setStates((prev) => prev.map((s) => (keyOf(s.source) === key ? fn(s) : s)));
   }, []);
 
+  /** 1投稿を全 Source 状態から横断パッチする */
+  const patchPost = useCallback((id: string, fn: (p: Post) => Post) => {
+    setStates((prev) => prev.map((s) => ({ ...s, posts: s.posts.map((p) => (pid(p) === id ? fn(p) : p)) })));
+  }, []);
+
   // --- リアクションの楽観更新（docs/misskey-reaction-action-spec.md） ---
-  // クリック直後にローカルパッチ、失敗時はスナップショットへロールバック＋トースト。1投稿 in-flight 1件。
+  // クリック直後にローカルパッチ、失敗時は当該投稿をロールバック＋トースト。1投稿 in-flight 1件。
   const toggleReaction = useCallback(
     async (post: Post, reaction?: string, emojiUrl?: string) => {
       const id = pid(post);
       if (typeof post.ref !== 'string' || reactionInflight.current.has(id)) return;
-      const snapshot = statesRef.current;
+      // 失敗時は当該投稿だけを更新前に戻す（全状態スナップショットだと並行するポーリング等を上書きするため）
+      const original = post;
       reactionInflight.current.add(id);
       setStates((prev) =>
         prev.map((s) => ({
@@ -104,13 +125,13 @@ export const TimelineCore = forwardRef<
       try {
         await api.react(post.ref, reaction);
       } catch {
-        setStates(snapshot); // ロールバック
+        patchPost(id, () => original); // ロールバック
         setToast('リアクションに失敗しました');
       } finally {
         reactionInflight.current.delete(id);
       }
     },
-    [],
+    [patchPost],
   );
 
   useEffect(() => {
@@ -118,11 +139,6 @@ export const TimelineCore = forwardRef<
     const t = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(t);
   }, [toast]);
-
-  /** 1投稿を全 Source 状態から横断パッチする */
-  const patchPost = useCallback((id: string, fn: (p: Post) => Post) => {
-    setStates((prev) => prev.map((s) => ({ ...s, posts: s.posts.map((p) => (pid(p) === id ? fn(p) : p)) })));
-  }, []);
 
   // --- Like トグル（Bluesky。楽観更新 + 失敗時ロールバック） ---
   const toggleLike = useCallback(
@@ -132,7 +148,7 @@ export const TimelineCore = forwardRef<
       const id = pid(post);
       if (!postRef?.uri || !postRef?.cid || engageInflight.current.has(id)) return;
       engageInflight.current.add(id);
-      const snapshot = statesRef.current;
+      const original = post;
       const liked = Boolean(post.viewer?.likeUri);
       patchPost(id, (p) => withLike(p, !liked, liked ? undefined : `pending:${id}`));
       try {
@@ -143,7 +159,7 @@ export const TimelineCore = forwardRef<
           if (res.recordUri) patchPost(id, (p) => ({ ...p, viewer: { ...p.viewer, likeUri: res.recordUri } }));
         }
       } catch {
-        setStates(snapshot);
+        patchPost(id, () => original);
         setToast('いいねに失敗しました');
       } finally {
         engageInflight.current.delete(id);
@@ -164,7 +180,7 @@ export const TimelineCore = forwardRef<
           engageInflight.current.delete(id);
           return;
         }
-        const snapshot = statesRef.current;
+        const original = post;
         const reposted = Boolean(post.viewer?.repostUri);
         patchPost(id, (p) => withRepost(p, !reposted, reposted ? undefined : `pending:${id}`));
         try {
@@ -175,7 +191,7 @@ export const TimelineCore = forwardRef<
             if (res.recordUri) patchPost(id, (p) => ({ ...p, viewer: { ...p.viewer, repostUri: res.recordUri } }));
           }
         } catch {
-          setStates(snapshot);
+          patchPost(id, () => original);
           setToast('リポストに失敗しました');
         } finally {
           engageInflight.current.delete(id);
@@ -282,7 +298,9 @@ export const TimelineCore = forwardRef<
     }
     if (!bestKey) return;
     const st = statesRef.current.find((s) => keyOf(s.source) === bestKey);
-    if (!st || st.loadingMore) return;
+    // statesRef は再描画まで更新されないため、ref で in-flight を管理し連打競合を防ぐ
+    if (!st || loadingKeys.current.has(bestKey)) return;
+    loadingKeys.current.add(bestKey);
     patch(bestKey, (s) => ({ ...s, loadingMore: true }));
     try {
       const data = await api.timeline(st.source, st.cursor ?? undefined);
@@ -297,6 +315,8 @@ export const TimelineCore = forwardRef<
     } catch (e) {
       patch(bestKey, (s) => ({ ...s, loadingMore: false }));
       handleSourceError(bestKey, e);
+    } finally {
+      loadingKeys.current.delete(bestKey);
     }
   }, [patch, handleSourceError]);
 
@@ -360,8 +380,11 @@ export const TimelineCore = forwardRef<
 
   // --- 手動更新 / pull-to-refresh ---
   const refresh = useCallback(async () => {
-    if (refreshing) return;
+    // 状態は再描画まで反映されないため ref でガード（PTR と imperative handle の同時発火競合を防ぐ）
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
     setRefreshing(true);
+    onRefreshingChange?.(true);
     await Promise.allSettled(
       statesRef.current
         .filter((s) => !s.authFailed)
@@ -382,8 +405,10 @@ export const TimelineCore = forwardRef<
           }
         }),
     );
+    refreshingRef.current = false;
     setRefreshing(false);
-  }, [refreshing, patch, handleSourceError]);
+    onRefreshingChange?.(false);
+  }, [patch, handleSourceError, onRefreshingChange]);
 
   useImperativeHandle(ref, () => ({ refresh }), [refresh]);
 
@@ -416,14 +441,18 @@ export const TimelineCore = forwardRef<
     touchStartY.current = null;
   };
 
-  // --- 全 Source を時系列で合成（dedup 付き。初出 Source も保持し帰属バッジに使う） ---
+  // --- 全 Source を時系列で合成（dedup 付き。帰属バッジ用の Source も保持） ---
+  // 同一投稿が複数 Source に現れる場合は home より list/antenna/feed を優先する（由来が具体的になるため）
   const merged = useMemo(() => {
-    const map = new Map<string, { post: Post; skey: string }>();
+    const map = new Map<string, { post: Post; skey: string; kind: string }>();
     for (const s of states) {
       const sk = keyOf(s.source);
       for (const p of s.posts) {
         const k = pid(p);
-        if (!map.has(k)) map.set(k, { post: p, skey: sk });
+        const prev = map.get(k);
+        if (!prev || (prev.kind === 'home' && s.source.kind !== 'home')) {
+          map.set(k, { post: p, skey: sk, kind: s.source.kind });
+        }
       }
     }
     return [...map.values()].toSorted(

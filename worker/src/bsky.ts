@@ -2,6 +2,8 @@ import { AtpAgent, RichText, type AppBskyFeedDefs, type AtpSessionData } from '@
 import type { LinkCard, Media, Post, PostInputWire, Source, SourceOption, TimelineResponse } from '../../shared/types';
 
 const SERVICE = 'https://bsky.social';
+const COL_LIKE = 'app.bsky.feed.like';
+const COL_REPOST = 'app.bsky.feed.repost';
 
 // --- セッション管理（単一ユーザー、モジュールスコープキャッシュ） ---
 let agent: AtpAgent | undefined;
@@ -107,10 +109,17 @@ export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
       likes: pv.likeCount ?? 0,
     },
     ref: { uri: pv.uri, cid: pv.cid },
-    viewer: pv.viewer?.like || pv.viewer?.repost
-      ? { ...(pv.viewer.like ? { likeUri: pv.viewer.like } : {}), ...(pv.viewer.repost ? { repostUri: pv.viewer.repost } : {}) }
-      : undefined,
+    viewer: buildViewer(pv.viewer),
     source: { uri: pv.uri, cid: pv.cid },
+  };
+}
+
+/** 自分の操作状態（like/repost レコード URI）を Post.viewer へ整形する。操作無しなら undefined */
+function buildViewer(viewer: { like?: string; repost?: string } | undefined): Post['viewer'] {
+  if (!viewer?.like && !viewer?.repost) return undefined;
+  return {
+    ...(viewer.like ? { likeUri: viewer.like } : {}),
+    ...(viewer.repost ? { repostUri: viewer.repost } : {}),
   };
 }
 
@@ -247,7 +256,7 @@ export async function likePost(
   uri: string,
   cid: string,
 ): Promise<string> {
-  return createRecord(handle, appPassword, 'app.bsky.feed.like', { subject: { uri, cid } });
+  return createRecord(handle, appPassword, COL_LIKE, { subject: { uri, cid } });
 }
 
 /** Like を解除する（自分の like レコード URI 指定） */
@@ -256,7 +265,7 @@ export async function unlikePost(
   appPassword: string | undefined,
   recordUri: string,
 ): Promise<void> {
-  return deleteRecord(handle, appPassword, 'app.bsky.feed.like', recordUri);
+  return deleteRecord(handle, appPassword, COL_LIKE, recordUri);
 }
 
 /** Repost を作成し、自分の repost レコード URI を返す */
@@ -266,7 +275,7 @@ export async function repostPost(
   uri: string,
   cid: string,
 ): Promise<string> {
-  return createRecord(handle, appPassword, 'app.bsky.feed.repost', { subject: { uri, cid } });
+  return createRecord(handle, appPassword, COL_REPOST, { subject: { uri, cid } });
 }
 
 /** Repost を解除する（自分の repost レコード URI 指定） */
@@ -275,7 +284,7 @@ export async function unrepostPost(
   appPassword: string | undefined,
   recordUri: string,
 ): Promise<void> {
-  return deleteRecord(handle, appPassword, 'app.bsky.feed.repost', recordUri);
+  return deleteRecord(handle, appPassword, COL_REPOST, recordUri);
 }
 
 /** 画像をアップロードし blob 参照を返す */

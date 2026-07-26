@@ -242,6 +242,7 @@ export function Deck({
 
       {editing && (
         <ColumnEditor
+          key={editing.view.id}
           initial={editing.view}
           catalog={catalog}
           catalogError={catalogError}

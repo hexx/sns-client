@@ -477,7 +477,7 @@ export async function react(env: MisskeyEnv, noteId: string, reaction?: string):
 
 // --- リノート操作（docs/deck-view-spec.md §6。v1 は作成のみ・解除は未対応） ---
 
-/** ノートを本文無しでリノートする。二重リノートは Misskey 側で REPOST_ALREADY 業務エラー（409 転送） */
+/** ノートを本文無しでリノートする。二重リノート等の業務エラーは mkApi 経由で status 付き Error → run() が 502 転送（v1 はコード抽出しない） */
 export async function renote(env: MisskeyEnv, noteId: string): Promise<void> {
   await mkApi<{ createdNote: MkNote }>(env, 'notes/create', { renoteId: noteId, visibility: 'public' });
 }

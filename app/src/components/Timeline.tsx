@@ -2,7 +2,7 @@
  * Timeline: モバイル（狭い画面）向けの殻。トップバー（View 切替タブ＋更新）と FAB を持ち、
  * 本体は TimelineCore に委譲する（docs/deck-view-spec.md §7 のレスポンシブ切替）。
  */
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { TimelineCore, type TimelineCoreHandle } from './TimelineCore';
 import type { Post, View } from '../../../shared/types';
 
@@ -24,6 +24,7 @@ export function Timeline({
   justPosted: Post | null;
 }) {
   const coreRef = useRef<TimelineCoreHandle>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   return (
     <div className="timeline-root">
@@ -39,8 +40,8 @@ export function Timeline({
             </button>
           ))}
         </div>
-        <button className="refresh-btn" onClick={() => void coreRef.current?.refresh()}>
-          更新
+        <button className="refresh-btn" onClick={() => void coreRef.current?.refresh()} disabled={refreshing}>
+          {refreshing ? '更新中…' : '更新'}
         </button>
       </header>
 
@@ -50,6 +51,7 @@ export function Timeline({
         justPosted={justPosted}
         onReply={onReply}
         onQuote={onQuote}
+        onRefreshingChange={setRefreshing}
         pullToRefresh
         showOfflineBanner
       />
