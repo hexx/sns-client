@@ -30,6 +30,135 @@ body,
   margin: 0 auto;
 }
 
+/* TimelineCore: モバイルでは timeline-root 内を埋め、デッキではカラム内を埋める */
+.timeline-core {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* --- デッキ UI（デスクトップ、docs/deck-view-spec.md §7） --- */
+.deck {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  height: 100dvh;
+  padding: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.deck-col {
+  flex: 0 0 360px;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.deck-col-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.deck-col-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.deck-col-head button {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.deck-col-head button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.deck-col-head button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.deck-col .new-pill {
+  top: 8px;
+}
+.deck-col .card {
+  padding: 10px 12px;
+}
+.deck-add {
+  flex: 0 0 320px;
+  align-self: flex-start;
+  height: 120px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+.deck-add:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* --- ソースピッカー（カラム編集ダイアログ） --- */
+.source-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.source-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin: 0;
+}
+.source-group legend {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 4px;
+}
+.source-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.source-kind {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.source-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .topbar {
   display: flex;
   align-items: center;

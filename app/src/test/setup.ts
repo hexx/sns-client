@@ -28,6 +28,21 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
   } as unknown as typeof IntersectionObserver;
 }
 
+// jsdom は matchMedia を未実装（App のデッキ切替が使用。既定 matches=false = モバイル経路）
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  window.matchMedia = (query: string): MediaQueryList =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList;
+}
+
 // jsdom は Element.scrollTo を未実装（Timeline の applyPending が使用）
 // ※ node 環境（worker テスト）には Element 自体が無いためガード
 if (typeof Element !== 'undefined' && typeof Element.prototype.scrollTo !== 'function') {
