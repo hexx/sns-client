@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Timeline } from './Timeline';
 import { api } from '../api';
@@ -17,6 +17,8 @@ vi.mock('../api', async (importOriginal) => {
       timeline: vi.fn(),
       uploadMedia: vi.fn(),
       post: vi.fn(),
+      react: vi.fn(),
+      emojis: vi.fn(),
     },
   };
 });
@@ -193,5 +195,50 @@ describe('Timeline（複数 Source 合成）', () => {
     render(<Timeline view={mergedView} views={[mergedView]} {...handlers} justPosted={null} />);
     expect(await screen.findByText('bsky-ok')).toBeInTheDocument();
     expect(await screen.findByText(/misskey: misskey down/)).toBeInTheDocument();
+  });
+});
+
+describe('リアクション楽観更新（docs/misskey-reaction-action-spec.md）', () => {
+  const mkView: View = { id: 'home', name: 'ホーム', sources: [{ provider: 'misskey', kind: 'home' }] };
+
+  function mkPost(over: Partial<Post> = {}): Post {
+    return makePost({ id: 'm1', provider: 'misskey', ref: 'note-1', ...over });
+  }
+
+  it('「＋」→ピッカー選択で楽観付与し、ref を target に API へ送る', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.timeline).mockResolvedValue({ posts: [mkPost({ text: 'mk-post' })], nextCursor: null });
+    vi.mocked(api.react).mockResolvedValue({ reaction: '👍' });
+    vi.mocked(api.emojis).mockResolvedValue([]);
+    render(<Timeline view={mkView} views={[mkView]} {...handlers} justPosted={null} />);
+    expect(await screen.findByText('mk-post')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'リアクションを追加' }));
+    await user.click(screen.getByTitle('👍')); // Unicode パレット
+
+    expect(await screen.findByText('1')).toBeInTheDocument(); // 楽観で count 表示
+    expect(api.react).toHaveBeenCalledWith('note-1', '👍');
+  });
+
+  it('失敗時はロールバックしトーストを出す', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.timeline).mockResolvedValue({
+      posts: [mkPost({ text: 'mk-post', reactions: [{ emoji: '👍', count: 2 }], stats: { replies: 0, reposts: 0, likes: 2 } })],
+      nextCursor: null,
+    });
+    // 拒否をテスト側から制御する（楽観状態の表明より先に沈下する競合を避ける）
+    let rejectReact!: (e: Error) => void;
+    vi.mocked(api.react).mockReturnValue(new Promise((_resolve, reject) => (rejectReact = reject)));
+    render(<Timeline view={mkView} views={[mkView]} {...handlers} justPosted={null} />);
+    expect(await screen.findByText('2')).toBeInTheDocument();
+
+    await user.click(screen.getByTitle('👍')); // 相乗り → 楽観で 3
+    expect(await screen.findByText('3')).toBeInTheDocument();
+
+    // 失敗を確定 → 元へ戻る＋トースト
+    await act(async () => rejectReact(new Error('ALREADY_REACTED')));
+    expect(await screen.findByText('リアクションに失敗しました')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('2')).toBeInTheDocument());
+    expect(screen.queryByText('3')).not.toBeInTheDocument();
   });
 });

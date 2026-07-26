@@ -6,6 +6,7 @@
 import { parse, toString } from 'mfm-js';
 import type {
   Author,
+  EmojiInfo,
   Media,
   Post,
   PostInputWire,
@@ -19,6 +20,17 @@ const DEFAULT_INSTANCE = 'https://misskey.io';
 const LIMIT = 30;
 
 export class MisskeyAuthError extends Error {}
+
+/** Misskey API が返した業務エラー（ALREADY_REACTED 等）。code を保持し、BFF は 409 でクライアントへ転送する */
+export class MisskeyApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
 
 export interface MisskeyEnv {
   MISSKEY_INSTANCE_URL?: string;
@@ -99,18 +111,20 @@ function emojiMap(e: MkNote['emojis']): Record<string, string> {
 // ローカル絵文字の URL はインスタンスの絵文字レジストリ POST /api/emojis（認証不要・全件返却）から解決する。
 
 const EMOJI_TTL_MS = 30 * 60 * 1000;
-let emojiCache: { instance: string; at: number; map: Record<string, string> } | undefined;
-const emojiInflight = new Map<string, Promise<Record<string, string>>>();
+type EmojiData = { map: Record<string, string>; list: EmojiInfo[] };
+let emojiCache: { instance: string; at: number; data: EmojiData } | undefined;
+const emojiInflight = new Map<string, Promise<EmojiData>>();
 
 /**
- * インスタンスのローカルカスタム絵文字レジストリ（name → url）を取得する。
+ * インスタンスのローカルカスタム絵文字レジストリを取得する。
  * インメモリ TTL（30分）キャッシュ＋シングルフライト。初回のみ lazy 取得。
- * 取得失敗時は空マップを返して縮退（絵文字はテキスト表示、タイムラインは続行＝非致命）。
+ * `map`（name → url）は pack 時の URL 解決に、`list`（compact な EmojiInfo[]）はピッカー配信に使う。
+ * 取得失敗時は空データで縮退（絵文字はテキスト表示、タイムラインは続行＝非致命）。
  */
-export async function loadEmojiRegistry(env: MisskeyEnv): Promise<Record<string, string>> {
+async function loadEmojiData(env: MisskeyEnv): Promise<EmojiData> {
   const instance = instanceOf(env);
   if (emojiCache && emojiCache.instance === instance && Date.now() - emojiCache.at < EMOJI_TTL_MS) {
-    return emojiCache.map;
+    return emojiCache.data;
   }
   const inflight = emojiInflight.get(instance);
   if (inflight) return inflight;
@@ -122,20 +136,37 @@ export async function loadEmojiRegistry(env: MisskeyEnv): Promise<Record<string,
         body: '{}',
       });
       if (!res.ok) throw new Error(`misskey emojis ${res.status}`);
-      const data = (await res.json()) as { emojis?: { name: string; url: string }[] };
+      const data = (await res.json()) as { emojis?: { name: string; url: string; aliases?: string[] }[] };
       const map: Record<string, string> = {};
-      for (const e of data.emojis ?? []) map[e.name] = e.url;
-      emojiCache = { instance, at: Date.now(), map };
-      return map;
+      const list: EmojiInfo[] = [];
+      for (const e of data.emojis ?? []) {
+        map[e.name] = e.url;
+        const info: EmojiInfo = { name: e.name, url: e.url };
+        if (e.aliases && e.aliases.length > 0) info.aliases = e.aliases;
+        list.push(info);
+      }
+      const result = { map, list };
+      emojiCache = { instance, at: Date.now(), data: result };
+      return result;
     } catch (err) {
       console.error('misskey emoji registry fetch failed', err);
-      return {};
+      return { map: {}, list: [] };
     } finally {
       emojiInflight.delete(instance);
     }
   })();
   emojiInflight.set(instance, promise);
   return promise;
+}
+
+/** 絵文字レジストリの name → url マップ（pack 時の URL 解決用。ADR-0006） */
+export async function loadEmojiRegistry(env: MisskeyEnv): Promise<Record<string, string>> {
+  return (await loadEmojiData(env)).map;
+}
+
+/** 絵文字レジストリの compact な一覧（ピッカー配信用。生レジストリのフィールド過多を絞る） */
+export async function getEmojiList(env: MisskeyEnv): Promise<EmojiInfo[]> {
+  return (await loadEmojiData(env)).list;
 }
 
 /**
@@ -373,6 +404,43 @@ export async function createPost(env: MisskeyEnv, input: PostInputWire): Promise
   const res = await mkApi<{ createdNote: MkNote }>(env, 'notes/create', params);
   const registry = await loadEmojiRegistry(env);
   return mapNote(res.createdNote, registry);
+}
+
+// --- リアクション操作（docs/misskey-reaction-action-spec.md） ---
+
+/**
+ * ノートへリアクションを付与/置換（reaction あり）または解除（reaction なし）。
+ * Misskey は1ユーザー1反応で、別絵文字の create はサーバ側で置換される（delete→create 不要）。
+ * 業務エラー（ALREADY_REACTED 等）は MisskeyApiError(409, code)、認証エラーは status=401 に正規化する。
+ */
+export async function react(env: MisskeyEnv, noteId: string, reaction?: string): Promise<void> {
+  if (!env.MISSKEY_TOKEN) throw new MisskeyAuthError('missing-secrets');
+  const endpoint = reaction ? 'notes/reactions/create' : 'notes/reactions/delete';
+  const params: Record<string, unknown> = { noteId };
+  if (reaction) params.reaction = reaction;
+  const res = await fetch(`${instanceOf(env)}/api/${endpoint}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ i: env.MISSKEY_TOKEN, ...params }),
+  });
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
+      e.status = 401;
+      throw e;
+    }
+    let code: string | undefined;
+    try {
+      const body = (await res.json()) as { error?: { code?: string } };
+      code = body?.error?.code;
+    } catch {
+      /* ignore */
+    }
+    // Misskey の業務エラー（code 付き）→ 409。code 無し（5xx 等のシステム障害）は
+    // 素の Error のまま投げ、run() の catch-all で 502 にする（409 で隠蔽しない）。
+    if (code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, code);
+    throw new Error(`misskey ${endpoint} ${res.status}`);
+  }
 }
 
 // --- インスタンス設定（compose の文字上限） ---

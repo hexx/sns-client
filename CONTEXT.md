@@ -53,7 +53,7 @@ _Avoid_: repost, share, retweet
 _Avoid_: renote, boost, retweet, share
 
 **reaction**:
-投稿への絵文字による反応。Misskey は複数種の絵文字反応（カスタム絵文字を含む）を持ち、モデルでは `{emoji, count}` の任意リストで保持する。カスタム絵文字の reaction は解決済みの画像 URL を伴う。Bluesky の「いいね（like）」は単一カウンタのため、総数として `likes` に集約し reaction リストは持たせない。
+投稿への絵文字による反応。Misskey は複数種の絵文字反応（カスタム絵文字を含む）を持ち、モデルでは `{emoji, count}` の任意リストで保持する。カスタム絵文字の reaction は解決済みの画像 URL を伴う。Bluesky の「いいね（like）」は単一カウンタのため、総数として `likes` に集約し reaction リストは持たせない。Misskey では1ユーザーの反応は1投稿につき常に1つ（`me` は高々1つの絵文字に付く）。同じ絵文字を再度選ぶと解除、異なる絵文字を選ぶと置換になる。
 _Avoid_: favorite, いいね, like（like は Bluesky における reaction の単一カウンタ実現）
 
 **custom emoji（カスタム絵文字）**:

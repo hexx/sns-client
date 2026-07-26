@@ -5,13 +5,16 @@
  * timeline/media/post はプロバイダ（bluesky/misskey）ごとに dispatch する。
  */
 import { API } from '../../shared/constants';
-import type { PostInputWire, Provider, ProviderInfo, View } from '../../shared/types';
+import type { PostInputWire, Provider, ProviderInfo, ReactionRequest, View } from '../../shared/types';
 import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, resetSession, uploadMedia as bskyUpload } from './bsky';
 import {
+  MisskeyApiError,
   MisskeyAuthError,
   createPost as misskeyPost,
   getComposeCharLimit,
+  getEmojiList as misskeyEmojis,
   getTimeline as misskeyTimeline,
+  react as misskeyReact,
   uploadMedia as misskeyUpload,
   type MisskeyEnv,
 } from './misskey';
@@ -65,6 +68,7 @@ async function run(label: string, provider: Provider, fn: () => Promise<unknown>
     return json(await fn(), { status: okStatus });
   } catch (e) {
     if (e instanceof BskyAuthError || e instanceof MisskeyAuthError) return json({ error: e.message }, { status: 503 });
+    if (e instanceof MisskeyApiError) return json({ error: e.code ?? 'misskey-error' }, { status: e.status });
     if (isAuthError(e)) {
       if (provider === 'bluesky') {
         resetSession();
@@ -146,6 +150,29 @@ export default {
         return run('api/post:bluesky', input.provider, () => bskyPost(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD, input), 201);
       }
       return run('api/post:misskey', input.provider, () => misskeyPost(env, input), 201);
+    }
+
+    if (url.pathname === API.reactions && request.method === 'POST') {
+      const body = (await request.json().catch(() => null)) as ReactionRequest | null;
+      // リアクション操作は Misskey のみ（Bluesky の like は対象外。docs/misskey-reaction-action-spec.md）
+      if (!body || body.provider !== 'misskey') return json({ error: 'unsupported provider' }, { status: 400 });
+      if (typeof body.postId !== 'string' || body.postId.length === 0) {
+        return json({ error: 'invalid postId' }, { status: 400 });
+      }
+      if (body.reaction !== undefined && (typeof body.reaction !== 'string' || body.reaction.length === 0)) {
+        return json({ error: 'invalid reaction' }, { status: 400 });
+      }
+      const { postId, reaction } = body;
+      return run('api/reactions:misskey', 'misskey', async () => {
+        await misskeyReact(env, postId, reaction);
+        return reaction ? { reaction } : {};
+      });
+    }
+
+    if (url.pathname === API.emojis && request.method === 'GET') {
+      const provider = url.searchParams.get('provider');
+      if (provider !== 'misskey') return json({ error: 'unsupported provider' }, { status: 400 });
+      return run('api/emojis:misskey', 'misskey', () => misskeyEmojis(env));
     }
 
     if (url.pathname.startsWith(API.prefix)) {

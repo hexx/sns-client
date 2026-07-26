@@ -547,6 +547,18 @@ body,
   padding: 2px 8px;
   font-size: 13px;
 }
+/* Misskey 用：チップはボタン（操作可能）。非 Misskey は span のため影響なし */
+button.reaction {
+  cursor: pointer;
+  color: inherit;
+  font-family: inherit;
+}
+button.reaction:hover {
+  border-color: var(--accent, #4a9eff);
+}
+.reaction-add {
+  color: var(--muted);
+}
 .reaction.me {
   border-color: var(--accent, #4a9eff);
   background: var(--card); /* color-mix 非対応ブラウザ向けのフォールバック */
@@ -558,6 +570,82 @@ body,
 .reaction-count {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* --- リアクションピッカー --- */
+.picker {
+  flex-basis: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  margin-top: 4px;
+}
+.picker-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.picker-search {
+  flex: 1;
+  min-width: 0;
+}
+.picker-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.picker-grid-custom {
+  max-height: 180px;
+  overflow-y: auto;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.picker-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+}
+.picker-emoji:hover {
+  background: var(--border);
+}
+.picker-emoji img {
+  max-width: 24px;
+  max-height: 24px;
+}
+.picker-empty,
+.picker-error {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px;
+}
+.picker-more {
+  flex-basis: 100%;
+  text-align: center;
+}
+
+/* --- トースト --- */
+.toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 16px;
+  z-index: 50;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
 }
 
 /* --- compose: ターゲット/visibility --- */

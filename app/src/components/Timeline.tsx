@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
+import { applyReaction } from '../lib/reactions';
 import type { Post, Source, View } from '../../../shared/types';
 import { PostCard } from './PostCard';
 
@@ -57,6 +58,7 @@ export function Timeline({
   const [refreshing, setRefreshing] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [pull, setPull] = useState(0);
+  const [toast, setToast] = useState<string | null>(null);
 
   const seenIds = useRef<Set<string>>(new Set());
   const statesRef = useRef(states);
@@ -64,10 +66,43 @@ export function Timeline({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const touchStartY = useRef<number | null>(null);
+  const reactionInflight = useRef<Set<string>>(new Set());
 
   const patch = useCallback((key: string, fn: (s: SourceState) => SourceState) => {
     setStates((prev) => prev.map((s) => (keyOf(s.source) === key ? fn(s) : s)));
   }, []);
+
+  // --- リアクションの楽観更新（docs/misskey-reaction-action-spec.md） ---
+  // クリック直後にローカルパッチ、失敗時はスナップショットへロールバック＋トースト。1投稿 in-flight 1件。
+  const toggleReaction = useCallback(
+    async (post: Post, reaction?: string, emojiUrl?: string) => {
+      const id = pid(post);
+      if (typeof post.ref !== 'string' || reactionInflight.current.has(id)) return;
+      const snapshot = statesRef.current;
+      reactionInflight.current.add(id);
+      setStates((prev) =>
+        prev.map((s) => ({
+          ...s,
+          posts: s.posts.map((p) => (pid(p) === id ? applyReaction(p, reaction, emojiUrl) : p)),
+        })),
+      );
+      try {
+        await api.react(post.ref, reaction);
+      } catch {
+        setStates(snapshot); // ロールバック
+        setToast('リアクションに失敗しました');
+      } finally {
+        reactionInflight.current.delete(id);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const handleSourceError = useCallback(
     (key: string, e: unknown) => {
@@ -340,7 +375,7 @@ export function Timeline({
         )}
 
         {merged.map((p) => (
-          <PostCard key={pid(p)} post={p} onReply={onReply} onQuote={onQuote} />
+          <PostCard key={pid(p)} post={p} onReply={onReply} onQuote={onQuote} onReact={toggleReaction} />
         ))}
 
         {merged.length === 0 && errored.length === 0 && <p className="empty">読み込み中…</p>}
@@ -353,6 +388,8 @@ export function Timeline({
       <button className="fab" onClick={onCompose} aria-label="投稿">
         ✏️
       </button>
+
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }

@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { Post } from '../../../shared/types';
+import { ReactionPicker } from './ReactionPicker';
 import { RichText } from './RichText';
 
 function relTime(iso: string): string {
@@ -87,7 +89,7 @@ function LinkCardView({ post }: { post: Post }) {
   );
 }
 
-/** reactions チップ（あれば） */
+/** reactions チップ（表示のみ。非 Misskey / onReact 無しの場合） */
 function Reactions({ post }: { post: Post }) {
   if (!post.reactions || post.reactions.length === 0) return null;
   return (
@@ -106,14 +108,67 @@ function Reactions({ post }: { post: Post }) {
   );
 }
 
+/**
+ * Misskey 用リアクションバー（操作可能。docs/misskey-reaction-action-spec.md）。
+ * チップクリック＝トグル（自分の反応→解除、他→付与/置換）、「＋」でピッカー。
+ */
+function ReactionBar({
+  post,
+  onReact,
+}: {
+  post: Post;
+  onReact: (p: Post, reaction?: string, emojiUrl?: string) => void;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  return (
+    <div className="reactions">
+      {(post.reactions ?? []).map((r) => (
+        <button
+          key={r.emoji}
+          type="button"
+          className={`reaction${r.me ? ' me' : ''}`}
+          title={r.emoji}
+          onClick={() => (r.me ? onReact(post) : onReact(post, r.emoji, r.emojiUrl))}
+        >
+          {r.emojiUrl ? (
+            <img className="reaction-emoji" src={r.emojiUrl} alt={r.emoji} />
+          ) : (
+            <span className="reaction-emoji-char">{r.emoji}</span>
+          )}
+          <span className="reaction-count">{r.count}</span>
+        </button>
+      ))}
+      <button
+        type="button"
+        className="reaction reaction-add"
+        aria-label="リアクションを追加"
+        onClick={() => setPickerOpen((v) => !v)}
+      >
+        ＋
+      </button>
+      {pickerOpen && (
+        <ReactionPicker
+          onSelect={(reaction, emojiUrl) => {
+            setPickerOpen(false);
+            onReact(post, reaction, emojiUrl);
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 export function PostCard({
   post,
   onReply,
   onQuote,
+  onReact,
 }: {
   post: Post;
   onReply?: (p: Post) => void;
   onQuote?: (p: Post) => void;
+  onReact?: (p: Post, reaction?: string, emojiUrl?: string) => void;
 }) {
   const hasReactions = !!post.reactions && post.reactions.length > 0;
   return (
@@ -147,7 +202,11 @@ export function PostCard({
       <MediaGrid post={post} />
       {post.quote && <QuoteCard post={post.quote} />}
       <LinkCardView post={post} />
-      <Reactions post={post} />
+      {post.provider === 'misskey' && onReact ? (
+        <ReactionBar post={post} onReact={onReact} />
+      ) : (
+        <Reactions post={post} />
+      )}
 
       <div className="stats">
         <span title="リプライ">💬 {post.stats.replies}</span>

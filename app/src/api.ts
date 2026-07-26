@@ -1,12 +1,14 @@
 /** BFF (/api/*) を叩く薄い fetch クライアント */
 import { API } from '../../shared/constants';
 import type {
+  EmojiInfo,
   Health,
   MediaUploadResponse,
   Post,
   PostInputWire,
   Provider,
   ProviderInfo,
+  ReactionResponse,
   Source,
   TimelineResponse,
   View,
@@ -68,4 +70,13 @@ export const api = {
     ),
   post: (input: PostInputWire) =>
     request<Post>(API.post, { method: 'POST', body: JSON.stringify(input) }),
+  /** リアクションの付与/置換（reaction あり）または解除（reaction なし）。Misskey のみ */
+  react: (postId: string, reaction?: string) =>
+    request<ReactionResponse>(API.reactions, {
+      method: 'POST',
+      body: JSON.stringify(reaction ? { provider: 'misskey', postId, reaction } : { provider: 'misskey', postId }),
+    }),
+  /** ピッカー用のローカルカスタム絵文字一覧（Misskey のみ） */
+  emojis: (provider: Provider = 'misskey') =>
+    request<EmojiInfo[]>(`${API.emojis}?${new URLSearchParams({ provider }).toString()}`),
 };
