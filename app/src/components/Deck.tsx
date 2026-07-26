@@ -3,10 +3,10 @@
  * View ごとに固定幅カラムを横並びにし、カラムの追加・編集・削除・並び替えを UI から行って
  * BFF（KV）に保存する。各カラムのタイムライン本体は TimelineCore を再利用。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { TimelineCore } from './TimelineCore';
-import type { Source, SourceCatalogEntry, SourceOption, View } from '../../../shared/types';
+import type { Provider, Source, SourceCatalogEntry, SourceOption, View } from '../../../shared/types';
 
 function sourceKey(s: Source): string {
   return `${s.provider}:${s.kind}:${s.id ?? ''}`;
@@ -119,7 +119,39 @@ export function Deck({
   const [editing, setEditing] = useState<{ view: View; isNew: boolean } | null>(null);
   const [catalog, setCatalog] = useState<SourceCatalogEntry[]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [labels, setLabels] = useState<SourceCatalogEntry[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState<View | null>(null);
+
+  // 帰属バッジ用のソース名カタログ（マウント時に1度。失敗時はバッジをプロバイダ名のみに縮退）
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .sources()
+      .then((c) => {
+        if (!cancelled) setLabels(c);
+      })
+      .catch((e) => {
+        console.error('[deck] sources catalog failed', e);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const labelOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const entry of labels) for (const opt of entry.options) m.set(sourceKey(opt.source), opt.name);
+    return m;
+  }, [labels]);
+
+  const badgeFor = useCallback(
+    (skey: string, provider: Provider): string => {
+      const name = labelOf.get(skey);
+      const p = PROVIDER_LABEL[provider] ?? provider;
+      return name ? `${p} · ${name}` : p;
+    },
+    [labelOf],
+  );
 
   // ピッカーカタログは編集ダイアログを開いたときに取得（キャッシュしない。リスト変更を反映するため）
   const editorOpen = editing !== null;
@@ -189,7 +221,7 @@ export function Deck({
             </button>
           </header>
           {view.sources.length > 0 ? (
-            <TimelineCore sources={view.sources} />
+            <TimelineCore sources={view.sources} interactive badgeFor={badgeFor} />
           ) : (
             <p className="empty">ソースがありません（⚙ から追加）</p>
           )}

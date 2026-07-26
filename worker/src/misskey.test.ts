@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, getEmojiList, getTimeline, listSources, react, MisskeyApiError, MisskeyAuthError } from './misskey';
+import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, getEmojiList, getTimeline, listSources, react, renote, MisskeyApiError, MisskeyAuthError } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -487,6 +487,22 @@ describe('getTimeline（Source 種別 dispatch）', () => {
     await expect(
       getTimeline({ MISSKEY_INSTANCE_URL: 'https://tl-noid.test', MISSKEY_TOKEN: 't' }, { provider: 'misskey', kind: 'list' }),
     ).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('renote（docs/deck-view-spec.md §6）', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('notes/create に renoteId を送る', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ createdNote: note() }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renote({ MISSKEY_INSTANCE_URL: 'https://renote.test', MISSKEY_TOKEN: 't' }, 'n9');
+    const call = calls.find((c) => c.url.endsWith('/api/notes/create'));
+    expect(call?.body).toMatchObject({ renoteId: 'n9', visibility: 'public' });
   });
 });
 

@@ -164,13 +164,24 @@ export function PostCard({
   onReply,
   onQuote,
   onReact,
+  onLike,
+  onRepost,
+  badge,
 }: {
   post: Post;
   onReply?: (p: Post) => void;
   onQuote?: (p: Post) => void;
   onReact?: (p: Post, reaction?: string, emojiUrl?: string) => void;
+  /** Bluesky Like のトグル（docs/deck-view-spec.md §6） */
+  onLike?: (p: Post) => void;
+  /** リポスト（bsky=トグル / misskey=作成のみ） */
+  onRepost?: (p: Post) => void;
+  /** 帰属バッジ（プラットフォーム名 + 由来ソース名。デッキ表示用） */
+  badge?: string;
 }) {
   const hasReactions = !!post.reactions && post.reactions.length > 0;
+  const liked = Boolean(post.viewer?.likeUri);
+  const reposted = Boolean(post.viewer?.repostUri);
   return (
     <article className="card">
       {post.repostedBy && <div className="repost-badge">🔁 {post.repostedBy.displayName} がリポスト</div>}
@@ -191,6 +202,7 @@ export function PostCard({
         <time className="time" dateTime={post.createdAt}>
           {relTime(post.createdAt)}
         </time>
+        {badge && <span className="provider-badge">{badge}</span>}
         {post.channel && (
           <span className="channel-chip" title={post.channel.name}>
             📺 <span className="channel-name">{post.channel.name}</span>
@@ -210,8 +222,31 @@ export function PostCard({
 
       <div className="stats">
         <span title="リプライ">💬 {post.stats.replies}</span>
-        <span title="リポスト">🔁 {post.stats.reposts}</span>
-        {!hasReactions && <span title="いいね">❤️ {post.stats.likes}</span>}
+        {onRepost ? (
+          <button
+            type="button"
+            className={`stat-btn${reposted ? ' active' : ''}`}
+            title={post.provider === 'misskey' ? 'リノート' : 'リポスト'}
+            onClick={() => onRepost(post)}
+          >
+            🔁 {post.stats.reposts}
+          </button>
+        ) : (
+          <span title="リポスト">🔁 {post.stats.reposts}</span>
+        )}
+        {!hasReactions &&
+          (onLike && post.provider === 'bluesky' ? (
+            <button
+              type="button"
+              className={`stat-btn${liked ? ' active' : ''}`}
+              title="いいね"
+              onClick={() => onLike(post)}
+            >
+              ❤️ {post.stats.likes}
+            </button>
+          ) : (
+            <span title="いいね">❤️ {post.stats.likes}</span>
+          ))}
         <span className="actions">
           {onReply && (
             <button className="link-btn" onClick={() => onReply(post)}>

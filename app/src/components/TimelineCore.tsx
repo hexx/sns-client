@@ -6,6 +6,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { applyReaction } from '../lib/reactions';
+import { withLike, withRenoteIncrement, withRepost } from '../lib/engagements';
 import type { Post, Provider, Source } from '../../../shared/types';
 import { PostCard } from './PostCard';
 
@@ -52,13 +53,20 @@ export const TimelineCore = forwardRef<
     justPosted?: Post | null;
     onReply?: (p: Post) => void;
     onQuote?: (p: Post) => void;
+    /** Like/リポストボタンを有効化（デッキ向け。docs/deck-view-spec.md §6） */
+    interactive?: boolean;
+    /** 帰属バッジの生成（sourceKey と provider から「Misskey · 技術リスト」のような文字列） */
+    badgeFor?: (sourceKey: string, provider: Provider) => string | undefined;
     /** タッチの pull-to-refresh を有効化（モバイル向け。デッキでは無効） */
     pullToRefresh?: boolean;
     /** オフラインバナーを表示（モバイル向け。デッキでは各カラムが持つと冗長なため無効） */
     showOfflineBanner?: boolean;
     className?: string;
   }
->(function TimelineCore({ sources, justPosted, onReply, onQuote, pullToRefresh, showOfflineBanner, className }, ref) {
+>(function TimelineCore(
+  { sources, justPosted, onReply, onQuote, interactive, badgeFor, pullToRefresh, showOfflineBanner, className },
+  ref,
+) {
   const [states, setStates] = useState<SourceState[]>(() => initStates(sources));
   const [refreshing, setRefreshing] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
@@ -72,6 +80,7 @@ export const TimelineCore = forwardRef<
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const touchStartY = useRef<number | null>(null);
   const reactionInflight = useRef<Set<string>>(new Set());
+  const engageInflight = useRef<Set<string>>(new Set());
   const lastPollAt = useRef<Map<string, number>>(new Map());
 
   const patch = useCallback((key: string, fn: (s: SourceState) => SourceState) => {
@@ -109,6 +118,86 @@ export const TimelineCore = forwardRef<
     const t = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  /** 1投稿を全 Source 状態から横断パッチする */
+  const patchPost = useCallback((id: string, fn: (p: Post) => Post) => {
+    setStates((prev) => prev.map((s) => ({ ...s, posts: s.posts.map((p) => (pid(p) === id ? fn(p) : p)) })));
+  }, []);
+
+  // --- Like トグル（Bluesky。楽観更新 + 失敗時ロールバック） ---
+  const toggleLike = useCallback(
+    async (post: Post) => {
+      if (post.provider !== 'bluesky') return;
+      const postRef = post.ref as { uri?: string; cid?: string } | undefined;
+      const id = pid(post);
+      if (!postRef?.uri || !postRef?.cid || engageInflight.current.has(id)) return;
+      engageInflight.current.add(id);
+      const snapshot = statesRef.current;
+      const liked = Boolean(post.viewer?.likeUri);
+      patchPost(id, (p) => withLike(p, !liked, liked ? undefined : `pending:${id}`));
+      try {
+        if (liked) {
+          await api.unlike(post.viewer?.likeUri as string);
+        } else {
+          const res = await api.like(postRef.uri, postRef.cid);
+          if (res.recordUri) patchPost(id, (p) => ({ ...p, viewer: { ...p.viewer, likeUri: res.recordUri } }));
+        }
+      } catch {
+        setStates(snapshot);
+        setToast('いいねに失敗しました');
+      } finally {
+        engageInflight.current.delete(id);
+      }
+    },
+    [patchPost],
+  );
+
+  // --- リポスト（bsky=トグル / misskey=作成のみ。docs/deck-view-spec.md §6） ---
+  const toggleRepost = useCallback(
+    async (post: Post) => {
+      const id = pid(post);
+      if (engageInflight.current.has(id)) return;
+      engageInflight.current.add(id);
+      if (post.provider === 'bluesky') {
+        const postRef = post.ref as { uri?: string; cid?: string } | undefined;
+        if (!postRef?.uri || !postRef?.cid) {
+          engageInflight.current.delete(id);
+          return;
+        }
+        const snapshot = statesRef.current;
+        const reposted = Boolean(post.viewer?.repostUri);
+        patchPost(id, (p) => withRepost(p, !reposted, reposted ? undefined : `pending:${id}`));
+        try {
+          if (reposted) {
+            await api.unrepost(post.viewer?.repostUri as string);
+          } else {
+            const res = await api.repost('bluesky', postRef);
+            if (res.recordUri) patchPost(id, (p) => ({ ...p, viewer: { ...p.viewer, repostUri: res.recordUri } }));
+          }
+        } catch {
+          setStates(snapshot);
+          setToast('リポストに失敗しました');
+        } finally {
+          engageInflight.current.delete(id);
+        }
+        return;
+      }
+      if (post.provider === 'misskey' && typeof post.ref === 'string') {
+        try {
+          await api.repost('misskey', post.ref);
+          patchPost(id, withRenoteIncrement);
+          setToast('リノートしました');
+        } catch {
+          setToast('リノートに失敗しました');
+        } finally {
+          engageInflight.current.delete(id);
+        }
+      } else {
+        engageInflight.current.delete(id);
+      }
+    },
+    [patchPost],
+  );
 
   const handleSourceError = useCallback(
     (key: string, e: unknown) => {
@@ -327,12 +416,18 @@ export const TimelineCore = forwardRef<
     touchStartY.current = null;
   };
 
-  // --- 全 Source を時系列で合成（dedup 付き） ---
+  // --- 全 Source を時系列で合成（dedup 付き。初出 Source も保持し帰属バッジに使う） ---
   const merged = useMemo(() => {
-    const map = new Map<string, Post>();
-    for (const s of states) for (const p of s.posts) if (!map.has(pid(p))) map.set(pid(p), p);
+    const map = new Map<string, { post: Post; skey: string }>();
+    for (const s of states) {
+      const sk = keyOf(s.source);
+      for (const p of s.posts) {
+        const k = pid(p);
+        if (!map.has(k)) map.set(k, { post: p, skey: sk });
+      }
+    }
     return [...map.values()].toSorted(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      (a, b) => new Date(b.post.createdAt).getTime() - new Date(a.post.createdAt).getTime(),
     );
   }, [states]);
 
@@ -370,8 +465,17 @@ export const TimelineCore = forwardRef<
           </div>
         )}
 
-        {merged.map((p) => (
-          <PostCard key={pid(p)} post={p} onReply={onReply} onQuote={onQuote} onReact={toggleReaction} />
+        {merged.map(({ post, skey }) => (
+          <PostCard
+            key={pid(post)}
+            post={post}
+            onReply={onReply}
+            onQuote={onQuote}
+            onReact={toggleReaction}
+            onLike={interactive ? () => void toggleLike(post) : undefined}
+            onRepost={interactive ? () => void toggleRepost(post) : undefined}
+            badge={badgeFor?.(skey, post.provider)}
+          />
         ))}
 
         {merged.length === 0 && errored.length === 0 && <p className="empty">読み込み中…</p>}

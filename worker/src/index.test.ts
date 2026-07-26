@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
-import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, listSources as bskySources, resetSession, uploadMedia as bskyUpload } from './bsky';
-import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, listSources as misskeySources, react as misskeyReact, uploadMedia as misskeyUpload } from './misskey';
+import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, likePost as bskyLike, listSources as bskySources, repostPost as bskyRepost, resetSession, unlikePost as bskyUnlike, unrepostPost as bskyUnrepost, uploadMedia as bskyUpload } from './bsky';
+import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, listSources as misskeySources, react as misskeyReact, renote as misskeyRenote, uploadMedia as misskeyUpload } from './misskey';
 
 // モジュール境界でモック（instanceof のため AuthError 系は実物を維持）
 vi.mock('./bsky', async (importOriginal) => {
@@ -14,6 +14,10 @@ vi.mock('./bsky', async (importOriginal) => {
     createPost: vi.fn(),
     resetSession: vi.fn(),
     listSources: vi.fn(),
+    likePost: vi.fn(),
+    unlikePost: vi.fn(),
+    repostPost: vi.fn(),
+    unrepostPost: vi.fn(),
   };
 });
 vi.mock('./misskey', async (importOriginal) => {
@@ -27,6 +31,7 @@ vi.mock('./misskey', async (importOriginal) => {
     react: vi.fn(),
     getEmojiList: vi.fn(),
     listSources: vi.fn(),
+    renote: vi.fn(),
   };
 });
 
@@ -407,6 +412,79 @@ describe('エラーハンドリング（プロバイダ対応）', () => {
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=misskey'), makeEnv());
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: 'Internal server error' });
+  });
+
+  it('POST /api/likes → bskyLike に dispatch し recordUri を返す', async () => {
+    vi.mocked(bskyLike).mockResolvedValue('at://did/app.bsky.feed.like/r1');
+    const res = await worker.fetch(
+      new Request('https://x/api/likes', { method: 'POST', body: JSON.stringify({ uri: 'at://p', cid: 'c1' }) }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recordUri: 'at://did/app.bsky.feed.like/r1' });
+    expect(bskyLike).toHaveBeenCalledWith('h', 'p', 'at://p', 'c1');
+  });
+
+  it('POST /api/likes 不正ボディ → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/likes', { method: 'POST', body: '{}' }), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('DELETE /api/likes → bskyUnlike に dispatch', async () => {
+    vi.mocked(bskyUnlike).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/likes', { method: 'DELETE', body: JSON.stringify({ recordUri: 'at://like/r1' }) }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(bskyUnlike).toHaveBeenCalledWith('h', 'p', 'at://like/r1');
+  });
+
+  it('POST /api/reposts provider=bluesky → bskyRepost', async () => {
+    vi.mocked(bskyRepost).mockResolvedValue('at://did/app.bsky.feed.repost/r1');
+    const res = await worker.fetch(
+      new Request('https://x/api/reposts', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'bluesky', ref: { uri: 'at://p', cid: 'c1' } }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recordUri: 'at://did/app.bsky.feed.repost/r1' });
+  });
+
+  it('POST /api/reposts provider=misskey → misskeyRenote（noteId 透過）', async () => {
+    vi.mocked(misskeyRenote).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/reposts', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'misskey', ref: 'note-1' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyRenote).toHaveBeenCalledWith(expect.anything(), 'note-1');
+  });
+
+  it('POST /api/reposts misskey で ref が文字列でない → 400', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/reposts', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'misskey', ref: { uri: 'x' } }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('DELETE /api/reposts → bskyUnrepost', async () => {
+    vi.mocked(bskyUnrepost).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/reposts', { method: 'DELETE', body: JSON.stringify({ recordUri: 'at://repost/r1' }) }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(bskyUnrepost).toHaveBeenCalledWith('h', 'p', 'at://repost/r1');
   });
 
   it('未知の /api/* → 501', async () => {

@@ -9,6 +9,8 @@ export const API = {
   media: '/api/media',
   post: '/api/post',
   reactions: '/api/reactions',
+  likes: '/api/likes',
+  reposts: '/api/reposts',
   emojis: '/api/emojis',
 } as const;
 

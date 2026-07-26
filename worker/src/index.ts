@@ -5,8 +5,32 @@
  * timeline/media/post はプロバイダ（bluesky/misskey）ごとに dispatch する。
  */
 import { API, VIEWS_KV_KEY } from '../../shared/constants';
-import type { PostInputWire, Provider, ProviderInfo, ReactionRequest, Source, SourceCatalogEntry, SourceOption, View } from '../../shared/types';
-import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, listSources as bskySources, resetSession, uploadMedia as bskyUpload } from './bsky';
+import type {
+  LikeRequest,
+  PostInputWire,
+  Provider,
+  ProviderInfo,
+  ReactionRequest,
+  RepostRequest,
+  Source,
+  SourceCatalogEntry,
+  SourceOption,
+  UnrepostRequest,
+  UnlikeRequest,
+  View,
+} from '../../shared/types';
+import {
+  BskyAuthError,
+  createPost as bskyPost,
+  getTimeline as bskyTimeline,
+  likePost as bskyLike,
+  listSources as bskySources,
+  repostPost as bskyRepost,
+  resetSession,
+  unlikePost as bskyUnlike,
+  unrepostPost as bskyUnrepost,
+  uploadMedia as bskyUpload,
+} from './bsky';
 import {
   MisskeyApiError,
   MisskeyAuthError,
@@ -16,6 +40,7 @@ import {
   getTimeline as misskeyTimeline,
   listSources as misskeySources,
   react as misskeyReact,
+  renote as misskeyRenote,
   uploadMedia as misskeyUpload,
   type MisskeyEnv,
 } from './misskey';
@@ -227,7 +252,7 @@ export default {
 
     if (url.pathname === API.reactions && request.method === 'POST') {
       const body = (await request.json().catch(() => null)) as ReactionRequest | null;
-      // リアクション操作は Misskey のみ（Bluesky の like は対象外。docs/misskey-reaction-action-spec.md）
+      // リアクション操作は Misskey のみ（Bluesky の like は /api/likes。docs/misskey-reaction-action-spec.md）
       if (!body || body.provider !== 'misskey') return json({ error: 'unsupported provider' }, { status: 400 });
       if (typeof body.postId !== 'string' || body.postId.length === 0) {
         return json({ error: 'invalid postId' }, { status: 400 });
@@ -239,6 +264,64 @@ export default {
       return run('api/reactions:misskey', 'misskey', async () => {
         await misskeyReact(env, postId, reaction);
         return reaction ? { reaction } : {};
+      });
+    }
+
+    // --- Like（Bluesky のみ。viewer の like レコード URI でトグル。docs/deck-view-spec.md §6） ---
+    if (url.pathname === API.likes && request.method === 'POST') {
+      const body = (await request.json().catch(() => null)) as LikeRequest | null;
+      if (!body || typeof body.uri !== 'string' || typeof body.cid !== 'string') {
+        return json({ error: 'invalid body' }, { status: 400 });
+      }
+      const { uri, cid } = body;
+      return run('api/likes:bluesky', 'bluesky', async () => ({ recordUri: await bskyLike(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD, uri, cid) }));
+    }
+
+    if (url.pathname === API.likes && request.method === 'DELETE') {
+      const body = (await request.json().catch(() => null)) as UnlikeRequest | null;
+      if (!body || typeof body.recordUri !== 'string' || body.recordUri.length === 0) {
+        return json({ error: 'invalid body' }, { status: 400 });
+      }
+      const { recordUri } = body;
+      return run('api/likes:bluesky:delete', 'bluesky', async () => {
+        await bskyUnlike(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD, recordUri);
+        return {};
+      });
+    }
+
+    // --- リポスト（bsky=トグル / misskey=作成のみ。ref はプロバイダ固有の opaque 参照） ---
+    if (url.pathname === API.reposts && request.method === 'POST') {
+      const body = (await request.json().catch(() => null)) as RepostRequest | null;
+      if (!body || !isProvider(body.provider)) return json({ error: 'invalid provider' }, { status: 400 });
+      if (body.provider === 'bluesky') {
+        const ref = body.ref as { uri?: string; cid?: string } | null;
+        if (!ref || typeof ref.uri !== 'string' || typeof ref.cid !== 'string') {
+          return json({ error: 'invalid ref' }, { status: 400 });
+        }
+        const { uri, cid } = ref;
+        return run('api/reposts:bluesky', 'bluesky', async () => ({
+          recordUri: await bskyRepost(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD, uri, cid),
+        }));
+      }
+      if (typeof body.ref !== 'string' || body.ref.length === 0) {
+        return json({ error: 'invalid ref' }, { status: 400 });
+      }
+      const noteId = body.ref;
+      return run('api/reposts:misskey', 'misskey', async () => {
+        await misskeyRenote(env, noteId);
+        return {};
+      });
+    }
+
+    if (url.pathname === API.reposts && request.method === 'DELETE') {
+      const body = (await request.json().catch(() => null)) as UnrepostRequest | null;
+      if (!body || typeof body.recordUri !== 'string' || body.recordUri.length === 0) {
+        return json({ error: 'invalid body' }, { status: 400 });
+      }
+      const { recordUri } = body;
+      return run('api/reposts:bluesky:delete', 'bluesky', async () => {
+        await bskyUnrepost(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD, recordUri);
+        return {};
       });
     }
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PostCard } from './PostCard';
 import { resetEmojiCache } from './ReactionPicker';
@@ -352,5 +352,47 @@ describe('チャンネルチップ（Misskey、docs/misskey-channel-display-spec
     const quoteCard = container.querySelector('.quote-card');
     expect(quoteCard).toBeInTheDocument();
     expect(quoteCard?.querySelector('.channel-chip')).not.toBeInTheDocument();
+  });
+});
+
+describe('PostCard の操作ボタン（docs/deck-view-spec.md §6）', () => {
+  it('onLike/onRepost 無し → stats はテキストのまま', () => {
+    render(<PostCard post={makePost()} />);
+    expect(screen.queryByRole('button', { name: /❤️/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /🔁/ })).not.toBeInTheDocument();
+  });
+
+  it('Bluesky: onLike 有り → いいねボタンになり、クリックで発火', () => {
+    const onLike = vi.fn();
+    const post = makePost({ ref: { uri: 'at://p1', cid: 'c1' } });
+    render(<PostCard post={post} onLike={onLike} />);
+    fireEvent.click(screen.getByRole('button', { name: /❤️ 3/ }));
+    expect(onLike).toHaveBeenCalledWith(post);
+  });
+
+  it('Bluesky: viewer.likeUri 有り → active クラス', () => {
+    render(
+      <PostCard
+        post={makePost({ viewer: { likeUri: 'at://like/1' } })}
+        onLike={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /❤️/ }).className).toContain('active');
+  });
+
+  it('Misskey: onRepost 有り → リノートボタン（いいねボタンは出ない）', () => {
+    const onRepost = vi.fn();
+    const post = makePost({ provider: 'misskey', ref: 'note-1' });
+    render(<PostCard post={post} onLike={() => {}} onRepost={onRepost} />);
+    expect(screen.queryByRole('button', { name: /❤️/ })).not.toBeInTheDocument();
+    const btn = screen.getByRole('button', { name: /🔁 2/ });
+    expect(btn).toHaveAttribute('title', 'リノート');
+    fireEvent.click(btn);
+    expect(onRepost).toHaveBeenCalledWith(post);
+  });
+
+  it('帰属バッジを描画する', () => {
+    render(<PostCard post={makePost()} badge="Misskey · 技術リスト" />);
+    expect(screen.getByText('Misskey · 技術リスト')).toBeInTheDocument();
   });
 });

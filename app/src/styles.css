@@ -590,6 +590,38 @@ body,
   vertical-align: -0.3em;
 }
 
+/* --- 帰属バッジ（デッキ: プラットフォーム名 + 由来ソース名） --- */
+.provider-badge {
+  flex: 0 0 auto;
+  max-width: 12em;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- 操作ボタン付き stats（デッキの Like/Repost） --- */
+.stat-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.stat-btn:hover {
+  color: var(--text);
+}
+.stat-btn.active {
+  color: var(--accent);
+}
+
 /* --- リポストバッジ --- */
 .repost-badge {
   color: var(--muted);

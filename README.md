@@ -76,9 +76,9 @@ wrangler.jsonc  assets(run_worker_first) + Worker 設定
 - [x] **M3** 投稿（グラフェム/facets/画像/リプライ/引用/CW）
 - [x] **M4** PWA 化＋オフライン＋耐障害性
 - [x] **M5** Source 種別拡張（Misskey list/antenna・Bluesky list/feed の BFF 取得＋`/api/sources` カタログ）（[deck-view-spec](./docs/deck-view-spec.md)）
-- [ ] **M6** カスタム View（KV 保存＋`PUT /api/views` 編集 API）
-- [ ] **M7** デッキ UI（横並びカラム・レスポンシブ切替・ソースピッカー）
-- [ ] **M8** カラム内操作（Bluesky Like/Repost・Misskey Renote）＋帰属表示
+- [x] **M6** カスタム View（KV 保存＋`PUT /api/views` 編集 API）
+- [x] **M7** デッキ UI（横並びカラム・レスポンシブ切替・ソースピッカー）
+- [x] **M8** カラム内操作（Bluesky Like/Repost トグル・Misskey Renote 作成）＋帰属バッジ
 
 ## PWA メモ
 - カスタム Service Worker（`app/src/sw.ts`, injectManifest）:
