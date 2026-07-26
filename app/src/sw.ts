@@ -11,7 +11,13 @@
  * - /api/views ・ /api/providers は network-first + キャッシュ（オフラインのコールドスタートでも View/設定を得る）
  * - その他の /api（投稿/メディア/ヘルス）は NetworkOnly（書き込みは絶対キャッシュしない）
  * - 画像（自オリジン + cdn.bsky.app）は StaleWhileRevalidate
+ *
+ * 更新伝播（docs/pwa-sw-update-fix-spec.md）:
+ * - skipWaiting() + clientsClaim() で新 SW を即活性化し、既存クライアントの制御を即取得する。
+ *   injectManifest 方式ではこれらが自動注入されないため明示的に呼ぶ（autoUpdate の controllerchange
+ *   リロードは活性化を前提とする。skipWaiting 無しでは旧 SW が居座り端末が旧ビルドに固定される）。
  */
+import { clientsClaim } from 'workbox-core';
 import { precacheAndRoute, matchPrecache } from 'workbox-precaching';
 import { registerRoute } from 'workbox-routing';
 import { NetworkFirst, NetworkOnly, StaleWhileRevalidate } from 'workbox-strategies';
@@ -20,8 +26,13 @@ import { API } from '../../shared/constants';
 
 declare const self: ServiceWorkerGlobalScope;
 
+// 新 SW を即活性化＋既存クライアントの制御を即取得（更新の即時伝播）
+self.skipWaiting();
+clientsClaim();
+
 // 動的キャッシュ名はバージョン付き。activate 時に旧バージョンのみ削除する。
-const VERSION = 'v1';
+// v2: skipWaiting 導入に伴い bump。旧 v1 の timeline/meta/images キャッシュを activate 時に purge する。
+const VERSION = 'v2';
 const CACHE_TIMELINE = `api-timeline-${VERSION}`;
 const CACHE_META = `api-meta-${VERSION}`;
 const CACHE_IMAGES = `images-${VERSION}`;
