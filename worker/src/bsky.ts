@@ -1,5 +1,5 @@
 import { AtpAgent, RichText, type AppBskyFeedDefs, type AtpSessionData } from '@atproto/api';
-import type { LinkCard, Media, Post, PostInputWire, TimelineResponse } from '../../shared/types';
+import type { LinkCard, Media, Post, PostInputWire, Source, SourceOption, TimelineResponse } from '../../shared/types';
 
 const SERVICE = 'https://bsky.social';
 
@@ -113,17 +113,90 @@ export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
 
 // --- BFF 処理本体 ---
 
+/**
+ * Source 種別（home / list / feed）を Bluesky のフィード API へ dispatch する。
+ * list = app.bsky.feed.getListFeed (list AT-URI)、feed = app.bsky.feed.getFeed (generator AT-URI)。
+ * 3者とも応答形は { feed: [{post}], cursor } で共通。
+ */
 export async function getTimeline(
   handle: string | undefined,
   appPassword: string | undefined,
+  source: Source,
   cursor?: string,
 ): Promise<TimelineResponse> {
   const a = await getAgent(handle, appPassword);
-  const res = await a.getTimeline({ cursor, limit: 30 });
+  let res: { data: { feed: { post: AppBskyFeedDefs.PostView }[]; cursor?: string } };
+  if (source.kind === 'list') {
+    if (!source.id) throw new Error('list source requires id');
+    res = await a.app.bsky.feed.getListFeed({ list: source.id, cursor, limit: 30 });
+  } else if (source.kind === 'feed') {
+    if (!source.id) throw new Error('feed source requires id');
+    res = await a.app.bsky.feed.getFeed({ feed: source.id, cursor, limit: 30 });
+  } else {
+    res = await a.getTimeline({ cursor, limit: 30 });
+  }
   return {
     posts: res.data.feed.map((f) => mapPost(f.post)),
     nextCursor: res.data.cursor ?? null,
   };
+}
+
+/**
+ * ピッカー用の選択可能 Source 一覧（ホーム + 自作リスト + saved feeds/pinned lists）。
+ * - 自作リスト: app.bsky.graph.getLists(actor=self)
+ * - saved feeds / ピン留めリスト（フォロー中リストを含む）: actor preferences の savedFeedsPrefV2 を
+ *   getList / getFeedGenerator で hydrate して名前を得る。部分失敗は当該項目をスキップ。
+ */
+export async function listSources(
+  handle: string | undefined,
+  appPassword: string | undefined,
+): Promise<SourceOption[]> {
+  const a = await getAgent(handle, appPassword);
+  const options: SourceOption[] = [{ source: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }];
+
+  const did = a.session?.did;
+  if (did) {
+    try {
+      const res = await a.app.bsky.graph.getLists({ actor: did, limit: 100 });
+      for (const l of res.data.lists) {
+        options.push({ source: { provider: 'bluesky', kind: 'list', id: l.uri }, name: l.name });
+      }
+    } catch (e) {
+      console.error('[bsky] getLists failed', e);
+    }
+  }
+
+  try {
+    const prefs = await a.app.bsky.actor.getPreferences();
+    const saved = prefs.data.preferences.find(
+      (p): p is { $type: string; items: { type: string; value: string }[] } =>
+        p.$type === 'app.bsky.actor.defs#savedFeedsPrefV2',
+    );
+    const seen = new Set(options.map((o) => o.source.id).filter(Boolean));
+    const items = (saved?.items ?? []).filter((it) => (it.type === 'list' || it.type === 'feed') && !seen.has(it.value));
+    await Promise.all(
+      items.map(async (it) => {
+        try {
+          if (it.type === 'list') {
+            const r = await a.app.bsky.graph.getList({ list: it.value, limit: 1 });
+            options.push({ source: { provider: 'bluesky', kind: 'list', id: it.value }, name: r.data.list.name });
+          } else {
+            const r = await a.app.bsky.feed.getFeedGenerator({ feed: it.value });
+            options.push({
+              source: { provider: 'bluesky', kind: 'feed', id: it.value },
+              name: r.data.view.displayName,
+            });
+          }
+        } catch (e) {
+          console.error(`[bsky] hydrate ${it.type} failed`, e);
+        }
+      }),
+    );
+  } catch (e) {
+    console.error('[bsky] getPreferences failed', e);
+  }
+
+  return options;
 }
 
 /** 画像をアップロードし blob 参照を返す */

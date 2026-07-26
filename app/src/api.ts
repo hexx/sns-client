@@ -10,6 +10,7 @@ import type {
   ProviderInfo,
   ReactionResponse,
   Source,
+  SourceCatalogEntry,
   TimelineResponse,
   View,
 } from '../../shared/types';
@@ -60,6 +61,8 @@ function sourceQuery(source: Source, cursor?: string): string {
 export const api = {
   health: () => request<Health>(API.health),
   views: () => request<View[]>(API.views),
+  /** ピッカー用の選択可能 Source 一覧（プロバイダ別。部分失敗は error フラグで返る） */
+  sources: () => request<SourceCatalogEntry[]>(API.sources),
   providers: () => request<ProviderInfo[]>(API.providers),
   timeline: (source: Source, cursor?: string) =>
     request<TimelineResponse>(`${API.timeline}?${sourceQuery(source, cursor)}`),

@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
-import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, resetSession, uploadMedia as bskyUpload } from './bsky';
-import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, react as misskeyReact, uploadMedia as misskeyUpload } from './misskey';
+import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, listSources as bskySources, resetSession, uploadMedia as bskyUpload } from './bsky';
+import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, listSources as misskeySources, react as misskeyReact, uploadMedia as misskeyUpload } from './misskey';
 
 // モジュール境界でモック（instanceof のため AuthError 系は実物を維持）
 vi.mock('./bsky', async (importOriginal) => {
@@ -13,6 +13,7 @@ vi.mock('./bsky', async (importOriginal) => {
     uploadMedia: vi.fn(),
     createPost: vi.fn(),
     resetSession: vi.fn(),
+    listSources: vi.fn(),
   };
 });
 vi.mock('./misskey', async (importOriginal) => {
@@ -25,6 +26,7 @@ vi.mock('./misskey', async (importOriginal) => {
     getComposeCharLimit: vi.fn(),
     react: vi.fn(),
     getEmojiList: vi.fn(),
+    listSources: vi.fn(),
   };
 });
 
@@ -83,8 +85,51 @@ describe('timeline dispatch', () => {
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=bluesky&cursor=abc'), makeEnv());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ posts: [], nextCursor: 'c' });
-    expect(bskyTimeline).toHaveBeenCalledWith('h', 'p', 'abc');
+    expect(bskyTimeline).toHaveBeenCalledWith('h', 'p', { provider: 'bluesky', kind: 'home' }, 'abc');
     expect(misskeyTimeline).not.toHaveBeenCalled();
+  });
+
+  it('kind=list&id → source に id を載せて dispatch', async () => {
+    vi.mocked(misskeyTimeline).mockResolvedValue({ posts: [], nextCursor: null });
+    const res = await worker.fetch(
+      new Request('https://x/api/timeline?provider=misskey&kind=list&id=L1'),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyTimeline).toHaveBeenCalledWith(expect.anything(), { provider: 'misskey', kind: 'list', id: 'L1' }, undefined);
+  });
+
+  it('kind 不正 → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/timeline?provider=misskey&kind=feed'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('kind=list で id 無し → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/timeline?provider=bluesky&kind=list'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('sources catalog', () => {
+  it('両プロバイダの Source 一覧を返す', async () => {
+    vi.mocked(bskySources).mockResolvedValue([{ source: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }]);
+    vi.mocked(misskeySources).mockResolvedValue([{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }]);
+    const res = await worker.fetch(new Request('https://x/api/sources'), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([
+      { provider: 'bluesky', options: [{ source: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }] },
+      { provider: 'misskey', options: [{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }] },
+    ]);
+  });
+
+  it('片方失敗しても他方は返る（error フラグ付き）', async () => {
+    vi.mocked(bskySources).mockRejectedValue(new Error('boom'));
+    vi.mocked(misskeySources).mockResolvedValue([{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }]);
+    const res = await worker.fetch(new Request('https://x/api/sources'), makeEnv());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { provider: string; options: unknown[]; error?: boolean }[];
+    expect(body[0]).toEqual({ provider: 'bluesky', options: [], error: true });
+    expect(body[1].options).toHaveLength(1);
   });
 
   it('provider=misskey → misskeyTimeline', async () => {
@@ -100,6 +145,7 @@ describe('timeline dispatch', () => {
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=mixi'), makeEnv());
     expect(res.status).toBe(400);
   });
+
 
   it('provider=mastodon（型上予約のみ・未実装）→ 400', async () => {
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=mastodon'), makeEnv());

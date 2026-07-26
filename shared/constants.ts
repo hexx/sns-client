@@ -3,6 +3,7 @@ export const API = {
   prefix: '/api/',
   health: '/api/health',
   views: '/api/views',
+  sources: '/api/sources',
   providers: '/api/providers',
   timeline: '/api/timeline',
   media: '/api/media',

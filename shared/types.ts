@@ -13,6 +13,12 @@ export type Source = { provider: Provider; kind: string; id?: string };
 /** 表示画面の定義。1つ以上の Source の集合（クライアントが時系列合成する） */
 export type View = { id: string; name: string; sources: Source[] };
 
+/** ピッカー用の選択可能 Source（人間可読名付き）。/api/sources が配信する */
+export type SourceOption = { source: Source; name: string };
+
+/** /api/sources のプロバイダ別エントリ。片方失敗しても他方を返せるよう error を持つ */
+export type SourceCatalogEntry = { provider: Provider; options: SourceOption[]; error?: boolean };
+
 export type Author = { handle: string; displayName: string; avatarUrl?: string };
 
 /** 統一インラインリッチテキスト（ADR-0005）。BFF が MFM/facets から生成 */

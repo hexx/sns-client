@@ -5,8 +5,8 @@
  * timeline/media/post はプロバイダ（bluesky/misskey）ごとに dispatch する。
  */
 import { API } from '../../shared/constants';
-import type { PostInputWire, Provider, ProviderInfo, ReactionRequest, View } from '../../shared/types';
-import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, resetSession, uploadMedia as bskyUpload } from './bsky';
+import type { PostInputWire, Provider, ProviderInfo, ReactionRequest, SourceCatalogEntry, SourceOption, View } from '../../shared/types';
+import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, listSources as bskySources, resetSession, uploadMedia as bskyUpload } from './bsky';
 import {
   MisskeyApiError,
   MisskeyAuthError,
@@ -14,6 +14,7 @@ import {
   getComposeCharLimit,
   getEmojiList as misskeyEmojis,
   getTimeline as misskeyTimeline,
+  listSources as misskeySources,
   react as misskeyReact,
   uploadMedia as misskeyUpload,
   type MisskeyEnv,
@@ -24,6 +25,22 @@ export interface Env extends MisskeyEnv {
   BSKY_HANDLE?: string;
   BSKY_APP_PASSWORD?: string;
 }
+
+/** /api/sources: 片方のプロバイダが失敗しても他方は返す（部分障害耐性、ADR-0004 方針） */
+async function collectSources(provider: Provider, fn: () => Promise<SourceOption[]>): Promise<SourceCatalogEntry> {
+  try {
+    return { provider, options: await fn() };
+  } catch (e) {
+    console.error(`[api/sources:${provider}]`, e);
+    return { provider, options: [], error: true };
+  }
+}
+
+/** プロバイダごとに許容する Source kind（docs/deck-view-spec.md §3） */
+const KINDS: Record<string, string[]> = {
+  bluesky: ['home', 'list', 'feed'],
+  misskey: ['home', 'list', 'antenna'],
+};
 
 /** 固定プリセットの View 定義（ADR-0004: BFF が単一ソースとして配信） */
 const VIEWS: View[] = [
@@ -120,11 +137,26 @@ export default {
     if (url.pathname === API.timeline && request.method === 'GET') {
       const provider = url.searchParams.get('provider');
       if (!isProvider(provider)) return json({ error: 'invalid provider' }, { status: 400 });
+      const kind = url.searchParams.get('kind') ?? 'home';
+      if (!KINDS[provider].includes(kind)) return json({ error: 'invalid kind' }, { status: 400 });
+      const id = url.searchParams.get('id') ?? undefined;
+      if (kind !== 'home' && !id) return json({ error: 'id required' }, { status: 400 });
+      const source = { provider, kind, ...(id ? { id } : {}) };
       const cursor = url.searchParams.get('cursor') ?? undefined;
       if (provider === 'bluesky') {
-        return run('api/timeline:bluesky', provider, () => bskyTimeline(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD, cursor));
+        return run('api/timeline:bluesky', provider, () =>
+          bskyTimeline(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD, source, cursor),
+        );
       }
-      return run('api/timeline:misskey', provider, () => misskeyTimeline(env, cursor));
+      return run('api/timeline:misskey', provider, () => misskeyTimeline(env, source, cursor));
+    }
+
+    if (url.pathname === API.sources && request.method === 'GET') {
+      const entries = await Promise.all([
+        collectSources('bluesky', () => bskySources(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD)),
+        collectSources('misskey', () => misskeySources(env)),
+      ]);
+      return json(entries);
     }
 
     if (url.pathname === API.media && request.method === 'POST') {

@@ -12,6 +12,8 @@ import type {
   PostInputWire,
   Reaction,
   RichSegment,
+  Source,
+  SourceOption,
   TimelineResponse,
   Visibility,
 } from '../../shared/types';
@@ -359,13 +361,43 @@ export function mapNote(note: MkNote, registry: Record<string, string> = {}): Po
 
 // --- BFF 処理本体 ---
 
-export async function getTimeline(env: MisskeyEnv, cursor?: string): Promise<TimelineResponse> {
+/**
+ * Source 種別（home / list / antenna）を Misskey のタイムライン API へ dispatch する。
+ * list = notes/user-list-timeline (listId)、antenna = antennas/notes (antennaId)。
+ * ページングは共通で untilId（Source 種別に依存しない）。
+ */
+export async function getTimeline(env: MisskeyEnv, source: Source, cursor?: string): Promise<TimelineResponse> {
   const params: Record<string, unknown> = { limit: LIMIT };
   if (cursor) params.untilId = cursor;
-  const notes = await mkApi<MkNote[]>(env, 'notes/timeline', params);
+  let endpoint = 'notes/timeline';
+  if (source.kind === 'list') {
+    if (!source.id) throw new MisskeyApiError(400, 'list source requires id');
+    endpoint = 'notes/user-list-timeline';
+    params.listId = source.id;
+  } else if (source.kind === 'antenna') {
+    if (!source.id) throw new MisskeyApiError(400, 'antenna source requires id');
+    endpoint = 'antennas/notes';
+    params.antennaId = source.id;
+  }
+  const notes = await mkApi<MkNote[]>(env, endpoint, params);
   const registry = await loadEmojiRegistry(env);
   const posts = notes.map((n) => mapNote(n, registry));
   return { posts, nextCursor: notes.length > 0 ? notes[notes.length - 1].id : null };
+}
+
+/**
+ * ピッカー用の選択可能 Source 一覧（ホーム + ユーザーリスト + アンテナ）。
+ * users/lists/list と antennas/list を並列取得し、人間可読名を添えて返す。
+ */
+export async function listSources(env: MisskeyEnv): Promise<SourceOption[]> {
+  const options: SourceOption[] = [{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }];
+  const [lists, antennas] = await Promise.all([
+    mkApi<{ id: string; name: string }[]>(env, 'users/lists/list'),
+    mkApi<{ id: string; name: string }[]>(env, 'antennas/list'),
+  ]);
+  for (const l of lists) options.push({ source: { provider: 'misskey', kind: 'list', id: l.id }, name: l.name });
+  for (const a of antennas) options.push({ source: { provider: 'misskey', kind: 'antenna', id: a.id }, name: a.name });
+  return options;
 }
 
 /** 画像をドライブへアップロードし、fileId を opaque 参照として返す */
