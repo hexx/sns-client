@@ -11,3 +11,6 @@ export const API = {
   reactions: '/api/reactions',
   emojis: '/api/emojis',
 } as const;
+
+/** KV: カスタム View 定義（View[] の JSON）を保存するキー */
+export const VIEWS_KV_KEY = 'views';

@@ -33,6 +33,7 @@ vi.mock('./misskey', async (importOriginal) => {
 function makeEnv(assetsFetch = vi.fn()): Env {
   return {
     ASSETS: { fetch: assetsFetch } as unknown as Env['ASSETS'],
+    VIEWS: { get: vi.fn(), put: vi.fn() } as unknown as Env['VIEWS'],
     BSKY_HANDLE: 'h',
     BSKY_APP_PASSWORD: 'p',
     MISSKEY_INSTANCE_URL: 'https://misskey.io',
@@ -76,6 +77,79 @@ describe('health / views / providers', () => {
     const res = await worker.fetch(new Request('https://x/api/providers'), env);
     const list = (await res.json()) as { provider: string; configured: boolean }[];
     expect(list.find((p) => p.provider === 'misskey')!.configured).toBe(false);
+  });
+});
+
+describe('views（KV カスタム View）', () => {
+  function envWithKv(getImpl: () => unknown = () => null) {
+    const kv = { get: vi.fn(async () => getImpl()), put: vi.fn(async () => {}) };
+    const env: Env = { ...makeEnv(), VIEWS: kv as unknown as Env['VIEWS'] };
+    return { env, kv };
+  }
+
+  it('KV 未設定 → プリセット', async () => {
+    const { env } = envWithKv(() => null);
+    const res = await worker.fetch(new Request('https://x/api/views'), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([{ id: 'home', name: 'ホーム', sources: expect.any(Array) }]);
+  });
+
+  it('KV に保存済み → そちらを優先', async () => {
+    const stored = [{ id: 'v1', name: '技術', sources: [{ provider: 'misskey', kind: 'list', id: 'L1' }] }];
+    const { env } = envWithKv(() => stored);
+    const res = await worker.fetch(new Request('https://x/api/views'), env);
+    expect(await res.json()).toEqual(stored);
+  });
+
+  it('KV 障害 → プリセットへフォールバック', async () => {
+    const kv = { get: vi.fn(async () => { throw new Error('kv down'); }), put: vi.fn(async () => {}) };
+    const env: Env = { ...makeEnv(), VIEWS: kv as unknown as Env['VIEWS'] };
+    const res = await worker.fetch(new Request('https://x/api/views'), env);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { id: string }[])[0].id).toBe('home');
+  });
+
+  it('VIEWS バインド無し → プリセット（段階ロールアウト互換）', async () => {
+    const env = makeEnv();
+    delete (env as { VIEWS?: unknown }).VIEWS;
+    const res = await worker.fetch(new Request('https://x/api/views'), env);
+    expect(res.status).toBe(200);
+  });
+
+  it('PUT: 有効な View[] → KV に保存してエコー', async () => {
+    const { env, kv } = envWithKv();
+    const views = [
+      { id: 'v1', name: '技術', sources: [{ provider: 'misskey', kind: 'list', id: 'L1' }, { provider: 'bluesky', kind: 'home' }] },
+    ];
+    const res = await worker.fetch(
+      new Request('https://x/api/views', { method: 'PUT', body: JSON.stringify(views) }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(views);
+    expect(kv.put).toHaveBeenCalledWith('views', JSON.stringify(views));
+  });
+
+  it.each([
+    ['配列でない', JSON.stringify({ id: 'v1' })],
+    ['id 無し', JSON.stringify([{ name: 'x', sources: [{ provider: 'bluesky', kind: 'home' }] }])],
+    ['id 重複', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'bluesky', kind: 'home' }] }, { id: 'a', name: 'y', sources: [{ provider: 'bluesky', kind: 'home' }] }])],
+    ['sources 空', JSON.stringify([{ id: 'a', name: 'x', sources: [] }])],
+    ['kind 不正', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'misskey', kind: 'feed' }] }])],
+    ['id 必須の kind で id 無し', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'bluesky', kind: 'list' }] }])],
+  ])('PUT 不正 → 400（%s）', async (_label, body) => {
+    const res = await worker.fetch(new Request('https://x/api/views', { method: 'PUT', body }), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('PUT: VIEWS 未バインド → 503', async () => {
+    const env = makeEnv();
+    delete (env as { VIEWS?: unknown }).VIEWS;
+    const res = await worker.fetch(
+      new Request('https://x/api/views', { method: 'PUT', body: '[]' }),
+      env,
+    );
+    expect(res.status).toBe(503);
   });
 });
 

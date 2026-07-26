@@ -4,8 +4,8 @@
  * /api/* を BFF で処理し、それ以外は静的アセット(SPA)へフォールバック。
  * timeline/media/post はプロバイダ（bluesky/misskey）ごとに dispatch する。
  */
-import { API } from '../../shared/constants';
-import type { PostInputWire, Provider, ProviderInfo, ReactionRequest, SourceCatalogEntry, SourceOption, View } from '../../shared/types';
+import { API, VIEWS_KV_KEY } from '../../shared/constants';
+import type { PostInputWire, Provider, ProviderInfo, ReactionRequest, Source, SourceCatalogEntry, SourceOption, View } from '../../shared/types';
 import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, listSources as bskySources, resetSession, uploadMedia as bskyUpload } from './bsky';
 import {
   MisskeyApiError,
@@ -22,6 +22,7 @@ import {
 
 export interface Env extends MisskeyEnv {
   ASSETS: Fetcher;
+  VIEWS?: KVNamespace; // カスタム View 定義の保存先（未バインド時はプリセット配信のみ）
   BSKY_HANDLE?: string;
   BSKY_APP_PASSWORD?: string;
 }
@@ -42,8 +43,8 @@ const KINDS: Record<string, string[]> = {
   misskey: ['home', 'list', 'antenna'],
 };
 
-/** 固定プリセットの View 定義（ADR-0004: BFF が単一ソースとして配信） */
-const VIEWS: View[] = [
+/** 固定プリセットの View 定義（KV 未設定時のフォールバック。ADR-0004） */
+const VIEWS_PRESET: View[] = [
   {
     id: 'home',
     name: 'ホーム',
@@ -59,6 +60,25 @@ function json(body: unknown, init?: ResponseInit): Response {
     ...init,
     headers: { 'content-type': 'application/json; charset=utf-8', ...init?.headers },
   });
+}
+
+/** PUT /api/views の検証。問題なければ null、あればエラー文言を返す */
+function validateViews(body: unknown): string | null {
+  if (!Array.isArray(body)) return 'body must be an array of views';
+  const ids = new Set<string>();
+  for (const v of body as View[]) {
+    if (typeof v?.id !== 'string' || v.id.length === 0) return 'view.id required';
+    if (ids.has(v.id)) return `duplicate view.id: ${v.id}`;
+    ids.add(v.id);
+    if (typeof v.name !== 'string' || v.name.length === 0) return 'view.name required';
+    if (!Array.isArray(v.sources) || v.sources.length === 0) return 'view.sources must not be empty';
+    for (const s of v.sources as Source[]) {
+      if (!isProvider(s?.provider)) return 'invalid source.provider';
+      if (!KINDS[s.provider].includes(s.kind)) return `invalid source.kind: ${s.kind}`;
+      if (s.kind !== 'home' && (typeof s.id !== 'string' || s.id.length === 0)) return 'source.id required';
+    }
+  }
+  return null;
 }
 
 /** 再ログインを促すべき認証系エラーか */
@@ -113,7 +133,28 @@ export default {
     }
 
     if (url.pathname === API.views && request.method === 'GET') {
-      return json(VIEWS);
+      // KV のカスタム View を優先。未設定・読み取り失敗はプリセットへフォールバック
+      try {
+        const stored = await env.VIEWS?.get(VIEWS_KV_KEY, 'json');
+        if (Array.isArray(stored)) return json(stored);
+      } catch (e) {
+        console.error('[api/views] KV get failed; fallback to preset', e);
+      }
+      return json(VIEWS_PRESET);
+    }
+
+    if (url.pathname === API.views && request.method === 'PUT') {
+      if (!env.VIEWS) return json({ error: 'views storage not configured' }, { status: 503 });
+      let body: unknown;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: 'invalid json' }, { status: 400 });
+      }
+      const err = validateViews(body);
+      if (err) return json({ error: err }, { status: 400 });
+      await env.VIEWS.put(VIEWS_KV_KEY, JSON.stringify(body));
+      return json(body);
     }
 
     if (url.pathname === API.providers && request.method === 'GET') {

@@ -30,6 +30,14 @@ MISSKEY_TOKEN=your-misskey-api-token
 本番は `wrangler secret put BSKY_HANDLE` / `BSKY_APP_PASSWORD` / `MISSKEY_TOKEN`
 （`MISSKEY_INSTANCE_URL` は `wrangler.jsonc` の vars に既定 `https://misskey.io`）。
 
+カスタム View 用の KV namespace を作成し、`wrangler.jsonc` の `REPLACE_WITH_KV_NAMESPACE_ID` を置き換え:
+
+```bash
+npx wrangler kv namespace create VIEWS   # 出力の id を wrangler.jsonc へ
+```
+
+（ローカル dev はエミュレーションで動作。KV 未バインドでもプリセット View の配信のみ動作する）
+
 ### 2. ローカル開発
 ```bash
 npm run dev:worker   # Worker (BFF) :8787

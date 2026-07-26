@@ -61,6 +61,9 @@ function sourceQuery(source: Source, cursor?: string): string {
 export const api = {
   health: () => request<Health>(API.health),
   views: () => request<View[]>(API.views),
+  /** カスタム View 定義の全量置換（単一ユーザー前提。docs/deck-view-spec.md §3） */
+  saveViews: (views: View[]) =>
+    request<View[]>(API.views, { method: 'PUT', body: JSON.stringify(views) }),
   /** ピッカー用の選択可能 Source 一覧（プロバイダ別。部分失敗は error フラグで返る） */
   sources: () => request<SourceCatalogEntry[]>(API.sources),
   providers: () => request<ProviderInfo[]>(API.providers),

@@ -13,7 +13,12 @@
   },
   "vars": {
     "MISSKEY_INSTANCE_URL": "https://misskey.io"
-  }
+  },
+  // カスタム View 定義の保存先（docs/deck-view-spec.md §3）。
+  // id は `npx wrangler kv namespace create VIEWS` の出力で置き換えること（ローカル dev はエミュレーションで動作）。
+  "kv_namespaces": [
+    { "binding": "VIEWS", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }
+  ]
   // シークレットは `wrangler secret put` で設定:
   //   BSKY_HANDLE, BSKY_APP_PASSWORD, MISSKEY_TOKEN
 }
