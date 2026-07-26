@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 合流する3ストリーム（複数 Source → 1 Timeline）。
+       丸角クリップはファビコン表示用。PNG ラスター時は render-icons.mjs が
+       clip-path を除去して全出血（maskable 要件）で出力する。 -->
+  <defs>
+    <clipPath id="tile-clip"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile-clip)">
+    <rect width="512" height="512" fill="#0b0f14"/>
+    <g fill="none" stroke-linecap="round">
+      <path d="M84 256H320" stroke="#1d9bf0" stroke-width="40"/>
+      <path d="M84 128C196 128 232 256 320 256" stroke="#8ed0f9" stroke-width="40"/>
+      <path d="M84 384C196 384 232 256 320 256" stroke="#4db2f4" stroke-width="40"/>
+      <path d="M320 256H420" stroke="#0c63ad" stroke-width="54"/>
+    </g>
+  </g>
+</svg>

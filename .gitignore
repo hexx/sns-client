@@ -1,6 +1,5 @@
 node_modules/
 app/dist/
-app/public/icon-*.png
 .wrangler/
 .dev.vars
 *.log

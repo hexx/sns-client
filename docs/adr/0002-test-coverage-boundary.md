@@ -12,7 +12,7 @@
 
 - `app/sw.ts`（Service Worker。テスト困難・tsconfig からも除外）
 - `app/main.tsx`（エントリポイント、自明）
-- `scripts/gen-icons.mjs`（ビルドスクリプト）
+- `scripts/render-icons.mjs`（アイコンのラスタライズスクリプト）
 - 型・定数のみのファイル（`shared/types.ts` / `constants.ts`）
 - worker のエージェント orchestration（`createPost` の refetch/fallback、`getTimeline`、`uploadMedia`）。（モックした）エージェントを呼んで `buildPostRecord`/`mapPost` に繋ぐ薄い wrapper で、難しいロジック本体は個別に測試済み。`createPost` の fallback は「メディア URL 空→UI 側で除外」と graceful に縮退するため、未テストのリスクが小さい
 
