@@ -1,8 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Timeline } from './components/Timeline';
+import { Deck } from './components/Deck';
 import { Compose } from './components/Compose';
 import { api } from './api';
 import type { Post, ProviderInfo, View } from '../../shared/types';
+
+const DECK_QUERY = '(min-width: 1024px)';
+
+/** 画面幅がデッキ UI の閾値以上か（docs/deck-view-spec.md §7） */
+function useIsDeckWidth(): boolean {
+  const [isDeck, setIsDeck] = useState(() => window.matchMedia(DECK_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(DECK_QUERY);
+    const onChange = () => setIsDeck(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return isDeck;
+}
 
 type ComposeState = { open: boolean; replyTo?: Post; quote?: Post };
 
@@ -13,7 +28,9 @@ export default function App() {
   const [compose, setCompose] = useState<ComposeState>({ open: false });
   const [justPosted, setJustPosted] = useState<Post | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [loadTick, setLoadTick] = useState(0);
+  const isDeck = useIsDeckWidth();
 
   useEffect(() => {
     let cancelled = false;
@@ -34,6 +51,16 @@ export default function App() {
     };
   }, [loadTick]);
 
+  /** デッキ UI からの View 構成変更: 即座に反映し、BFF（KV）へ保存。失敗はバナーで通知 */
+  const handleViewsChange = useCallback((next: View[]) => {
+    setViews(next);
+    setSaveError(null);
+    api.saveViews(next).catch((e) => {
+      console.error('[app] failed to save views', e);
+      setSaveError('カラム構成の保存に失敗しました（表示は維持しています）');
+    });
+  }, []);
+
   const activeView = views.find((v) => v.id === activeViewId) ?? views[0];
 
   return (
@@ -42,6 +69,15 @@ export default function App() {
         <div className="banner error">
           {loadError} <button onClick={() => setLoadTick((t) => t + 1)}>再試行</button>
         </div>
+      ) : isDeck ? (
+        <>
+          {saveError && <div className="banner error">{saveError}</div>}
+          {views.length > 0 ? (
+            <Deck views={views} onViewsChange={handleViewsChange} />
+          ) : (
+            <p className="empty">読み込み中…</p>
+          )}
+        </>
       ) : activeView ? (
         <Timeline
           view={activeView}
@@ -55,7 +91,7 @@ export default function App() {
       ) : (
         <p className="empty">読み込み中…</p>
       )}
-      {compose.open && (
+      {!isDeck && compose.open && (
         <Compose
           providers={providers}
           replyTo={compose.replyTo}

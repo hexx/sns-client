@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
-import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, resetSession, uploadMedia as bskyUpload } from './bsky';
-import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, react as misskeyReact, uploadMedia as misskeyUpload } from './misskey';
+import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, likePost as bskyLike, listSources as bskySources, repostPost as bskyRepost, resetSession, unlikePost as bskyUnlike, unrepostPost as bskyUnrepost, uploadMedia as bskyUpload } from './bsky';
+import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, listSources as misskeySources, react as misskeyReact, renote as misskeyRenote, uploadMedia as misskeyUpload } from './misskey';
 
 // モジュール境界でモック（instanceof のため AuthError 系は実物を維持）
 vi.mock('./bsky', async (importOriginal) => {
@@ -13,6 +13,11 @@ vi.mock('./bsky', async (importOriginal) => {
     uploadMedia: vi.fn(),
     createPost: vi.fn(),
     resetSession: vi.fn(),
+    listSources: vi.fn(),
+    likePost: vi.fn(),
+    unlikePost: vi.fn(),
+    repostPost: vi.fn(),
+    unrepostPost: vi.fn(),
   };
 });
 vi.mock('./misskey', async (importOriginal) => {
@@ -25,12 +30,15 @@ vi.mock('./misskey', async (importOriginal) => {
     getComposeCharLimit: vi.fn(),
     react: vi.fn(),
     getEmojiList: vi.fn(),
+    listSources: vi.fn(),
+    renote: vi.fn(),
   };
 });
 
 function makeEnv(assetsFetch = vi.fn()): Env {
   return {
     ASSETS: { fetch: assetsFetch } as unknown as Env['ASSETS'],
+    VIEWS: { get: vi.fn(), put: vi.fn() } as unknown as Env['VIEWS'],
     BSKY_HANDLE: 'h',
     BSKY_APP_PASSWORD: 'p',
     MISSKEY_INSTANCE_URL: 'https://misskey.io',
@@ -77,14 +85,130 @@ describe('health / views / providers', () => {
   });
 });
 
+describe('views（KV カスタム View）', () => {
+  function envWithKv(getImpl: () => unknown = () => null) {
+    const kv = { get: vi.fn(async () => getImpl()), put: vi.fn(async () => {}) };
+    const env: Env = { ...makeEnv(), VIEWS: kv as unknown as Env['VIEWS'] };
+    return { env, kv };
+  }
+
+  it('KV 未設定 → プリセット', async () => {
+    const { env } = envWithKv(() => null);
+    const res = await worker.fetch(new Request('https://x/api/views'), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([{ id: 'home', name: 'ホーム', sources: expect.any(Array) }]);
+  });
+
+  it('KV に保存済み → そちらを優先', async () => {
+    const stored = [{ id: 'v1', name: '技術', sources: [{ provider: 'misskey', kind: 'list', id: 'L1' }] }];
+    const { env } = envWithKv(() => stored);
+    const res = await worker.fetch(new Request('https://x/api/views'), env);
+    expect(await res.json()).toEqual(stored);
+  });
+
+  it('KV 障害 → プリセットへフォールバック', async () => {
+    const kv = { get: vi.fn(async () => { throw new Error('kv down'); }), put: vi.fn(async () => {}) };
+    const env: Env = { ...makeEnv(), VIEWS: kv as unknown as Env['VIEWS'] };
+    const res = await worker.fetch(new Request('https://x/api/views'), env);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { id: string }[])[0].id).toBe('home');
+  });
+
+  it('VIEWS バインド無し → プリセット（段階ロールアウト互換）', async () => {
+    const env = makeEnv();
+    delete (env as { VIEWS?: unknown }).VIEWS;
+    const res = await worker.fetch(new Request('https://x/api/views'), env);
+    expect(res.status).toBe(200);
+  });
+
+  it('PUT: 有効な View[] → KV に保存してエコー', async () => {
+    const { env, kv } = envWithKv();
+    const views = [
+      { id: 'v1', name: '技術', sources: [{ provider: 'misskey', kind: 'list', id: 'L1' }, { provider: 'bluesky', kind: 'home' }] },
+    ];
+    const res = await worker.fetch(
+      new Request('https://x/api/views', { method: 'PUT', body: JSON.stringify(views) }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(views);
+    expect(kv.put).toHaveBeenCalledWith('views', JSON.stringify(views));
+  });
+
+  it.each([
+    ['配列でない', JSON.stringify({ id: 'v1' })],
+    ['id 無し', JSON.stringify([{ name: 'x', sources: [{ provider: 'bluesky', kind: 'home' }] }])],
+    ['id 重複', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'bluesky', kind: 'home' }] }, { id: 'a', name: 'y', sources: [{ provider: 'bluesky', kind: 'home' }] }])],
+    ['sources 空', JSON.stringify([{ id: 'a', name: 'x', sources: [] }])],
+    ['kind 不正', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'misskey', kind: 'feed' }] }])],
+    ['id 必須の kind で id 無し', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'bluesky', kind: 'list' }] }])],
+  ])('PUT 不正 → 400（%s）', async (_label, body) => {
+    const res = await worker.fetch(new Request('https://x/api/views', { method: 'PUT', body }), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('PUT: VIEWS 未バインド → 503', async () => {
+    const env = makeEnv();
+    delete (env as { VIEWS?: unknown }).VIEWS;
+    const res = await worker.fetch(
+      new Request('https://x/api/views', { method: 'PUT', body: '[]' }),
+      env,
+    );
+    expect(res.status).toBe(503);
+  });
+});
+
 describe('timeline dispatch', () => {
   it('provider=bluesky → bskyTimeline', async () => {
     vi.mocked(bskyTimeline).mockResolvedValue({ posts: [], nextCursor: 'c' });
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=bluesky&cursor=abc'), makeEnv());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ posts: [], nextCursor: 'c' });
-    expect(bskyTimeline).toHaveBeenCalledWith('h', 'p', 'abc');
+    expect(bskyTimeline).toHaveBeenCalledWith('h', 'p', { provider: 'bluesky', kind: 'home' }, 'abc');
     expect(misskeyTimeline).not.toHaveBeenCalled();
+  });
+
+  it('kind=list&id → source に id を載せて dispatch', async () => {
+    vi.mocked(misskeyTimeline).mockResolvedValue({ posts: [], nextCursor: null });
+    const res = await worker.fetch(
+      new Request('https://x/api/timeline?provider=misskey&kind=list&id=L1'),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyTimeline).toHaveBeenCalledWith(expect.anything(), { provider: 'misskey', kind: 'list', id: 'L1' }, undefined);
+  });
+
+  it('kind 不正 → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/timeline?provider=misskey&kind=feed'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('kind=list で id 無し → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/timeline?provider=bluesky&kind=list'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('sources catalog', () => {
+  it('両プロバイダの Source 一覧を返す', async () => {
+    vi.mocked(bskySources).mockResolvedValue([{ source: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }]);
+    vi.mocked(misskeySources).mockResolvedValue([{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }]);
+    const res = await worker.fetch(new Request('https://x/api/sources'), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([
+      { provider: 'bluesky', options: [{ source: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }] },
+      { provider: 'misskey', options: [{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }] },
+    ]);
+  });
+
+  it('片方失敗しても他方は返る（error フラグ付き）', async () => {
+    vi.mocked(bskySources).mockRejectedValue(new Error('boom'));
+    vi.mocked(misskeySources).mockResolvedValue([{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }]);
+    const res = await worker.fetch(new Request('https://x/api/sources'), makeEnv());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { provider: string; options: unknown[]; error?: boolean }[];
+    expect(body[0]).toEqual({ provider: 'bluesky', options: [], error: true });
+    expect(body[1].options).toHaveLength(1);
   });
 
   it('provider=misskey → misskeyTimeline', async () => {
@@ -100,6 +224,7 @@ describe('timeline dispatch', () => {
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=mixi'), makeEnv());
     expect(res.status).toBe(400);
   });
+
 
   it('provider=mastodon（型上予約のみ・未実装）→ 400', async () => {
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=mastodon'), makeEnv());
@@ -287,6 +412,79 @@ describe('エラーハンドリング（プロバイダ対応）', () => {
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=misskey'), makeEnv());
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: 'Internal server error' });
+  });
+
+  it('POST /api/likes → bskyLike に dispatch し recordUri を返す', async () => {
+    vi.mocked(bskyLike).mockResolvedValue('at://did/app.bsky.feed.like/r1');
+    const res = await worker.fetch(
+      new Request('https://x/api/likes', { method: 'POST', body: JSON.stringify({ uri: 'at://p', cid: 'c1' }) }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recordUri: 'at://did/app.bsky.feed.like/r1' });
+    expect(bskyLike).toHaveBeenCalledWith('h', 'p', 'at://p', 'c1');
+  });
+
+  it('POST /api/likes 不正ボディ → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/likes', { method: 'POST', body: '{}' }), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('DELETE /api/likes → bskyUnlike に dispatch', async () => {
+    vi.mocked(bskyUnlike).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/likes', { method: 'DELETE', body: JSON.stringify({ recordUri: 'at://like/r1' }) }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(bskyUnlike).toHaveBeenCalledWith('h', 'p', 'at://like/r1');
+  });
+
+  it('POST /api/reposts provider=bluesky → bskyRepost', async () => {
+    vi.mocked(bskyRepost).mockResolvedValue('at://did/app.bsky.feed.repost/r1');
+    const res = await worker.fetch(
+      new Request('https://x/api/reposts', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'bluesky', ref: { uri: 'at://p', cid: 'c1' } }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recordUri: 'at://did/app.bsky.feed.repost/r1' });
+  });
+
+  it('POST /api/reposts provider=misskey → misskeyRenote（noteId 透過）', async () => {
+    vi.mocked(misskeyRenote).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/reposts', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'misskey', ref: 'note-1' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyRenote).toHaveBeenCalledWith(expect.anything(), 'note-1');
+  });
+
+  it('POST /api/reposts misskey で ref が文字列でない → 400', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/reposts', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'misskey', ref: { uri: 'x' } }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('DELETE /api/reposts → bskyUnrepost', async () => {
+    vi.mocked(bskyUnrepost).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/reposts', { method: 'DELETE', body: JSON.stringify({ recordUri: 'at://repost/r1' }) }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(bskyUnrepost).toHaveBeenCalledWith('h', 'p', 'at://repost/r1');
   });
 
   it('未知の /api/* → 501', async () => {

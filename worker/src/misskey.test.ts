@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, getEmojiList, react, MisskeyApiError, MisskeyAuthError } from './misskey';
+import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, getEmojiList, getTimeline, listSources, react, renote, MisskeyApiError, MisskeyAuthError } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -435,5 +435,97 @@ describe('react（リアクション操作）', () => {
     await expect(react({ MISSKEY_INSTANCE_URL: 'https://react.test' }, 'n1', '👍')).rejects.toBeInstanceOf(
       MisskeyAuthError,
     );
+  });
+});
+
+/** URL でエンドポイントを振り分ける fetch モック（timeline 系 + emojis レジストリ） */
+function stubMisskeyFetch(calls: { url: string; body: Record<string, unknown> }[]) {
+  const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.body) calls.push({ url, body: JSON.parse(String(init.body)) });
+    if (url.endsWith('/api/emojis')) return new Response(JSON.stringify({ emojis: [] }), { status: 200 });
+    return new Response(JSON.stringify([note()]), { status: 200 });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+describe('getTimeline（Source 種別 dispatch）', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('kind=home → notes/timeline', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    stubMisskeyFetch(calls);
+    const res = await getTimeline({ MISSKEY_INSTANCE_URL: 'https://tl-home.test', MISSKEY_TOKEN: 't' }, { provider: 'misskey', kind: 'home' });
+    expect(res.posts).toHaveLength(1);
+    expect(res.nextCursor).toBe('n1');
+    expect(calls.some((c) => c.url.endsWith('/api/notes/timeline'))).toBe(true);
+  });
+
+  it('kind=list → notes/user-list-timeline（listId + untilId）', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    stubMisskeyFetch(calls);
+    await getTimeline(
+      { MISSKEY_INSTANCE_URL: 'https://tl-list.test', MISSKEY_TOKEN: 't' },
+      { provider: 'misskey', kind: 'list', id: 'L1' },
+      'cur1',
+    );
+    const call = calls.find((c) => c.url.endsWith('/api/notes/user-list-timeline'));
+    expect(call?.body).toMatchObject({ listId: 'L1', untilId: 'cur1', limit: 30 });
+  });
+
+  it('kind=antenna → antennas/notes（antennaId）', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    stubMisskeyFetch(calls);
+    await getTimeline({ MISSKEY_INSTANCE_URL: 'https://tl-ant.test', MISSKEY_TOKEN: 't' }, { provider: 'misskey', kind: 'antenna', id: 'A1' });
+    const call = calls.find((c) => c.url.endsWith('/api/antennas/notes'));
+    expect(call?.body).toMatchObject({ antennaId: 'A1' });
+  });
+
+  it('kind=list で id 無し → MisskeyApiError(400)', async () => {
+    stubMisskeyFetch([]);
+    await expect(
+      getTimeline({ MISSKEY_INSTANCE_URL: 'https://tl-noid.test', MISSKEY_TOKEN: 't' }, { provider: 'misskey', kind: 'list' }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('renote（docs/deck-view-spec.md §6）', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('notes/create に renoteId を送る', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ createdNote: note() }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renote({ MISSKEY_INSTANCE_URL: 'https://renote.test', MISSKEY_TOKEN: 't' }, 'n9');
+    const call = calls.find((c) => c.url.endsWith('/api/notes/create'));
+    expect(call?.body).toMatchObject({ renoteId: 'n9', visibility: 'public' });
+  });
+});
+
+describe('listSources（ピッカーカタログ）', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('ホーム + リスト + アンテナを返す', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/api/users/lists/list')) {
+        return new Response(JSON.stringify([{ id: 'L1', name: '技術' }]), { status: 200 });
+      }
+      if (url.endsWith('/api/antennas/list')) {
+        return new Response(JSON.stringify([{ id: 'A1', name: 'AI' }]), { status: 200 });
+      }
+      return new Response('null', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const options = await listSources({ MISSKEY_INSTANCE_URL: 'https://src.test', MISSKEY_TOKEN: 't' });
+    expect(options).toEqual([
+      { source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' },
+      { source: { provider: 'misskey', kind: 'list', id: 'L1' }, name: '技術' },
+      { source: { provider: 'misskey', kind: 'antenna', id: 'A1' }, name: 'AI' },
+    ]);
   });
 });

@@ -13,6 +13,12 @@ export type Source = { provider: Provider; kind: string; id?: string };
 /** 表示画面の定義。1つ以上の Source の集合（クライアントが時系列合成する） */
 export type View = { id: string; name: string; sources: Source[] };
 
+/** ピッカー用の選択可能 Source（人間可読名付き）。/api/sources が配信する */
+export type SourceOption = { source: Source; name: string };
+
+/** /api/sources のプロバイダ別エントリ。片方失敗しても他方を返せるよう error を持つ */
+export type SourceCatalogEntry = { provider: Provider; options: SourceOption[]; error?: boolean };
+
 export type Author = { handle: string; displayName: string; avatarUrl?: string };
 
 /** 統一インラインリッチテキスト（ADR-0005）。BFF が MFM/facets から生成 */
@@ -50,6 +56,7 @@ export type Post = {
   localOnly?: boolean; // 任意（Misskey）
   channel?: { id: string; name: string }; // 任意（Misskey）。投稿が所属するチャンネル
   ref?: unknown; // プロバイダ固有の自己参照（bsky={uri,cid} / misskey=noteId）
+  viewer?: { likeUri?: string; repostUri?: string }; // 自分が行った操作の記録 URI（Bluesky のトグル用）
   source: unknown; // 各SNSの生データ退避
 };
 
@@ -69,6 +76,17 @@ export type PostInputWire = {
 };
 
 export type MediaUploadResponse = { blob: unknown };
+
+/** Like 操作リクエスト（ブラウザ → BFF。Bluesky のみ。uri/cid は Post.ref） */
+export type LikeRequest = { uri: string; cid: string };
+/** Like 解除リクエスト（自分の like レコード URI） */
+export type UnlikeRequest = { recordUri: string };
+/** リポスト操作リクエスト（bsky ref={uri,cid} / misskey ref=noteId。BFF がプロバイダごとに解釈） */
+export type RepostRequest = { provider: Provider; ref: unknown };
+/** リポスト解除リクエスト（Bluesky のみ。自分の repost レコード URI） */
+export type UnrepostRequest = { recordUri: string };
+/** 作成した操作レコードの URI 応答（misskey renote は URI 無しのため任意） */
+export type RecordUriResponse = { recordUri?: string };
 
 /** ピッカー用のローカルカスタム絵文字（BFF がレジストリを compact 化して配信。ADR-0006 キャッシュ再利用） */
 export type EmojiInfo = { name: string; url: string; aliases?: string[] };

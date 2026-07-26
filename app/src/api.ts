@@ -9,7 +9,9 @@ import type {
   Provider,
   ProviderInfo,
   ReactionResponse,
+  RecordUriResponse,
   Source,
+  SourceCatalogEntry,
   TimelineResponse,
   View,
 } from '../../shared/types';
@@ -60,6 +62,11 @@ function sourceQuery(source: Source, cursor?: string): string {
 export const api = {
   health: () => request<Health>(API.health),
   views: () => request<View[]>(API.views),
+  /** カスタム View 定義の全量置換（単一ユーザー前提。docs/deck-view-spec.md §3） */
+  saveViews: (views: View[]) =>
+    request<View[]>(API.views, { method: 'PUT', body: JSON.stringify(views) }),
+  /** ピッカー用の選択可能 Source 一覧（プロバイダ別。部分失敗は error フラグで返る） */
+  sources: () => request<SourceCatalogEntry[]>(API.sources),
   providers: () => request<ProviderInfo[]>(API.providers),
   timeline: (source: Source, cursor?: string) =>
     request<TimelineResponse>(`${API.timeline}?${sourceQuery(source, cursor)}`),
@@ -70,6 +77,18 @@ export const api = {
     ),
   post: (input: PostInputWire) =>
     request<Post>(API.post, { method: 'POST', body: JSON.stringify(input) }),
+  /** Bluesky Like の作成（Post.ref の uri/cid を渡す） */
+  like: (uri: string, cid: string) =>
+    request<RecordUriResponse>(API.likes, { method: 'POST', body: JSON.stringify({ uri, cid }) }),
+  /** Bluesky Like の解除（自分の like レコード URI） */
+  unlike: (recordUri: string) =>
+    request<RecordUriResponse>(API.likes, { method: 'DELETE', body: JSON.stringify({ recordUri }) }),
+  /** リポスト（bsky ref={uri,cid} / misskey ref=noteId） */
+  repost: (provider: Provider, ref: unknown) =>
+    request<RecordUriResponse>(API.reposts, { method: 'POST', body: JSON.stringify({ provider, ref }) }),
+  /** Bluesky Repost の解除（自分の repost レコード URI） */
+  unrepost: (recordUri: string) =>
+    request<RecordUriResponse>(API.reposts, { method: 'DELETE', body: JSON.stringify({ recordUri }) }),
   /** リアクションの付与/置換（reaction あり）または解除（reaction なし）。Misskey のみ */
   react: (postId: string, reaction?: string) =>
     request<ReactionResponse>(API.reactions, {

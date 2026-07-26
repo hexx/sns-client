@@ -1,7 +1,9 @@
 import { AtpAgent, RichText, type AppBskyFeedDefs, type AtpSessionData } from '@atproto/api';
-import type { LinkCard, Media, Post, PostInputWire, TimelineResponse } from '../../shared/types';
+import type { LinkCard, Media, Post, PostInputWire, Source, SourceOption, TimelineResponse } from '../../shared/types';
 
 const SERVICE = 'https://bsky.social';
+const COL_LIKE = 'app.bsky.feed.like';
+const COL_REPOST = 'app.bsky.feed.repost';
 
 // --- セッション管理（単一ユーザー、モジュールスコープキャッシュ） ---
 let agent: AtpAgent | undefined;
@@ -107,23 +109,182 @@ export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
       likes: pv.likeCount ?? 0,
     },
     ref: { uri: pv.uri, cid: pv.cid },
+    viewer: buildViewer(pv.viewer),
     source: { uri: pv.uri, cid: pv.cid },
+  };
+}
+
+/** 自分の操作状態（like/repost レコード URI）を Post.viewer へ整形する。操作無しなら undefined */
+function buildViewer(viewer: { like?: string; repost?: string } | undefined): Post['viewer'] {
+  if (!viewer?.like && !viewer?.repost) return undefined;
+  return {
+    ...(viewer.like ? { likeUri: viewer.like } : {}),
+    ...(viewer.repost ? { repostUri: viewer.repost } : {}),
   };
 }
 
 // --- BFF 処理本体 ---
 
+/**
+ * Source 種別（home / list / feed）を Bluesky のフィード API へ dispatch する。
+ * list = app.bsky.feed.getListFeed (list AT-URI)、feed = app.bsky.feed.getFeed (generator AT-URI)。
+ * 3者とも応答形は { feed: [{post}], cursor } で共通。
+ */
 export async function getTimeline(
   handle: string | undefined,
   appPassword: string | undefined,
+  source: Source,
   cursor?: string,
 ): Promise<TimelineResponse> {
   const a = await getAgent(handle, appPassword);
-  const res = await a.getTimeline({ cursor, limit: 30 });
+  let res: { data: { feed: { post: AppBskyFeedDefs.PostView }[]; cursor?: string } };
+  if (source.kind === 'list') {
+    if (!source.id) throw new Error('list source requires id');
+    res = await a.app.bsky.feed.getListFeed({ list: source.id, cursor, limit: 30 });
+  } else if (source.kind === 'feed') {
+    if (!source.id) throw new Error('feed source requires id');
+    res = await a.app.bsky.feed.getFeed({ feed: source.id, cursor, limit: 30 });
+  } else {
+    res = await a.getTimeline({ cursor, limit: 30 });
+  }
   return {
     posts: res.data.feed.map((f) => mapPost(f.post)),
     nextCursor: res.data.cursor ?? null,
   };
+}
+
+/**
+ * ピッカー用の選択可能 Source 一覧（ホーム + 自作リスト + saved feeds/pinned lists）。
+ * - 自作リスト: app.bsky.graph.getLists(actor=self)
+ * - saved feeds / ピン留めリスト（フォロー中リストを含む）: actor preferences の savedFeedsPrefV2 を
+ *   getList / getFeedGenerator で hydrate して名前を得る。部分失敗は当該項目をスキップ。
+ */
+export async function listSources(
+  handle: string | undefined,
+  appPassword: string | undefined,
+): Promise<SourceOption[]> {
+  const a = await getAgent(handle, appPassword);
+  const options: SourceOption[] = [{ source: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }];
+
+  const did = a.session?.did;
+  if (did) {
+    try {
+      const res = await a.app.bsky.graph.getLists({ actor: did, limit: 100 });
+      for (const l of res.data.lists) {
+        options.push({ source: { provider: 'bluesky', kind: 'list', id: l.uri }, name: l.name });
+      }
+    } catch (e) {
+      console.error('[bsky] getLists failed', e);
+    }
+  }
+
+  try {
+    const prefs = await a.app.bsky.actor.getPreferences();
+    const saved = prefs.data.preferences.find(
+      (p): p is { $type: string; items: { type: string; value: string }[] } =>
+        p.$type === 'app.bsky.actor.defs#savedFeedsPrefV2',
+    );
+    const seen = new Set(options.map((o) => o.source.id).filter(Boolean));
+    const items = (saved?.items ?? []).filter((it) => (it.type === 'list' || it.type === 'feed') && !seen.has(it.value));
+    await Promise.all(
+      items.map(async (it) => {
+        try {
+          if (it.type === 'list') {
+            const r = await a.app.bsky.graph.getList({ list: it.value, limit: 1 });
+            options.push({ source: { provider: 'bluesky', kind: 'list', id: it.value }, name: r.data.list.name });
+          } else {
+            const r = await a.app.bsky.feed.getFeedGenerator({ feed: it.value });
+            options.push({
+              source: { provider: 'bluesky', kind: 'feed', id: it.value },
+              name: r.data.view.displayName,
+            });
+          }
+        } catch (e) {
+          console.error(`[bsky] hydrate ${it.type} failed`, e);
+        }
+      }),
+    );
+  } catch (e) {
+    console.error('[bsky] getPreferences failed', e);
+  }
+
+  return options;
+}
+
+// --- Like / Repost 操作（docs/deck-view-spec.md §6。自分の操作は viewer のレコード URI でトグルする） ---
+
+function rkeyOf(recordUri: string): string {
+  // at://did/collection/rkey → rkey
+  const rkey = recordUri.split('/').pop();
+  if (!rkey) throw new Error(`invalid record uri: ${recordUri}`);
+  return rkey;
+}
+
+async function createRecord(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  collection: string,
+  record: Record<string, unknown>,
+): Promise<string> {
+  const a = await getAgent(handle, appPassword);
+  const did = a.session?.did;
+  if (!did) throw new BskyAuthError('no-session');
+  const res = await a.com.atproto.repo.createRecord({
+    repo: did,
+    collection,
+    record: { ...record, createdAt: new Date().toISOString() },
+  });
+  return res.data.uri;
+}
+
+async function deleteRecord(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  collection: string,
+  recordUri: string,
+): Promise<void> {
+  const a = await getAgent(handle, appPassword);
+  const did = a.session?.did;
+  if (!did) throw new BskyAuthError('no-session');
+  await a.com.atproto.repo.deleteRecord({ repo: did, collection, rkey: rkeyOf(recordUri) });
+}
+
+/** Like を作成し、自分の like レコード URI を返す */
+export async function likePost(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  uri: string,
+  cid: string,
+): Promise<string> {
+  return createRecord(handle, appPassword, COL_LIKE, { subject: { uri, cid } });
+}
+
+/** Like を解除する（自分の like レコード URI 指定） */
+export async function unlikePost(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  recordUri: string,
+): Promise<void> {
+  return deleteRecord(handle, appPassword, COL_LIKE, recordUri);
+}
+
+/** Repost を作成し、自分の repost レコード URI を返す */
+export async function repostPost(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  uri: string,
+  cid: string,
+): Promise<string> {
+  return createRecord(handle, appPassword, COL_REPOST, { subject: { uri, cid } });
+}
+
+/** Repost を解除する（自分の repost レコード URI 指定） */
+export async function unrepostPost(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  recordUri: string,
+): Promise<void> {
+  return deleteRecord(handle, appPassword, COL_REPOST, recordUri);
 }
 
 /** 画像をアップロードし blob 参照を返す */

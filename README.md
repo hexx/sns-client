@@ -30,6 +30,14 @@ MISSKEY_TOKEN=your-misskey-api-token
 本番は `wrangler secret put BSKY_HANDLE` / `BSKY_APP_PASSWORD` / `MISSKEY_TOKEN`
 （`MISSKEY_INSTANCE_URL` は `wrangler.jsonc` の vars に既定 `https://misskey.io`）。
 
+カスタム View 用の KV namespace を作成し、`wrangler.jsonc` の `REPLACE_WITH_KV_NAMESPACE_ID` を置き換え:
+
+```bash
+npx wrangler kv namespace create VIEWS   # 出力の id を wrangler.jsonc へ
+```
+
+（ローカル dev はエミュレーションで動作。KV 未バインドでもプリセット View の配信のみ動作する）
+
 ### 2. ローカル開発
 ```bash
 npm run dev:worker   # Worker (BFF) :8787
@@ -67,6 +75,10 @@ wrangler.jsonc  assets(run_worker_first) + Worker 設定
 - [x] **M2** BFF セッション管理＋`/api/timeline`＋タイムライン UI（無限スクロール/プル更新/新着ピル）
 - [x] **M3** 投稿（グラフェム/facets/画像/リプライ/引用/CW）
 - [x] **M4** PWA 化＋オフライン＋耐障害性
+- [x] **M5** Source 種別拡張（Misskey list/antenna・Bluesky list/feed の BFF 取得＋`/api/sources` カタログ）（[deck-view-spec](./docs/deck-view-spec.md)）
+- [x] **M6** カスタム View（KV 保存＋`PUT /api/views` 編集 API）
+- [x] **M7** デッキ UI（横並びカラム・レスポンシブ切替・ソースピッカー）
+- [x] **M8** カラム内操作（Bluesky Like/Repost トグル・Misskey Renote 作成）＋帰属バッジ
 
 ## PWA メモ
 - カスタム Service Worker（`app/src/sw.ts`, injectManifest）:
