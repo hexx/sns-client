@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
@@ -13,6 +13,7 @@ vi.mock('./api', () => ({
     timeline: vi.fn(),
     uploadMedia: vi.fn(),
     post: vi.fn(),
+    sources: vi.fn(),
   },
 }));
 
@@ -39,6 +40,7 @@ beforeEach(() => {
   vi.mocked(api.views).mockResolvedValue(VIEWS);
   vi.mocked(api.providers).mockResolvedValue(PROVIDERS);
   vi.mocked(api.timeline).mockResolvedValue({ posts: [], nextCursor: null });
+  vi.mocked(api.sources).mockResolvedValue([]);
 });
 
 describe('App の wiring', () => {
@@ -89,5 +91,52 @@ describe('App の wiring', () => {
 
     await user.click(screen.getByRole('button', { name: '引用' }));
     expect(screen.getByText(/引用: @alice\.bsky\.social/)).toBeInTheDocument();
+  });
+});
+
+describe('App（デッキ UI）', () => {
+  let matchMediaSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+  // deck-view-spec §7 の閾値（≥1024px）経路を再現
+  function enableDeckMode(): void {
+    matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: true,
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+        }) as unknown as MediaQueryList,
+    );
+  }
+
+  afterEach(() => {
+    matchMediaSpy?.mockRestore();
+    matchMediaSpy = undefined;
+  });
+
+  it('デッキ表示で FAB から Compose が開く', async () => {
+    enableDeckMode();
+    const user = userEvent.setup();
+    render(<App />);
+
+    const fab = await screen.findByRole('button', { name: '新規投稿' });
+    await user.click(fab);
+    expect(screen.getByPlaceholderText('いまどうしてる？')).toBeInTheDocument();
+  });
+
+  it('デッキで投稿成功時にトーストが出る', async () => {
+    enableDeckMode();
+    const user = userEvent.setup();
+    vi.mocked(api.post).mockResolvedValue(makePost());
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: '新規投稿' }));
+    await user.type(screen.getByPlaceholderText('いまどうしてる？'), 'hello deck');
+    await user.click(screen.getByRole('button', { name: '投稿' }));
+
+    expect(await screen.findByText('投稿しました')).toBeInTheDocument();
   });
 });

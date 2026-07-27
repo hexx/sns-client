@@ -27,10 +27,18 @@ export default function App() {
   const [activeViewId, setActiveViewId] = useState<string>('home');
   const [compose, setCompose] = useState<ComposeState>({ open: false });
   const [justPosted, setJustPosted] = useState<Post | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [loadTick, setLoadTick] = useState(0);
   const isDeck = useIsDeckWidth();
+
+  // デッキ UI での Compose 成功トースト（deck-compose-spec §4。3秒で自動消去）
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,7 +81,7 @@ export default function App() {
         <>
           {saveError && <div className="banner error">{saveError}</div>}
           {views.length > 0 ? (
-            <Deck views={views} onViewsChange={handleViewsChange} />
+            <Deck views={views} onViewsChange={handleViewsChange} onCompose={() => setCompose({ open: true })} />
           ) : (
             <p className="empty">読み込み中…</p>
           )}
@@ -91,15 +99,19 @@ export default function App() {
       ) : (
         <p className="empty">読み込み中…</p>
       )}
-      {!isDeck && compose.open && (
+      {compose.open && (
         <Compose
           providers={providers}
           replyTo={compose.replyTo}
           quote={compose.quote}
           onClose={() => setCompose({ open: false })}
-          onPosted={(post) => setJustPosted(post)}
+          onPosted={(post) => {
+            setJustPosted(post);
+            if (isDeck) setToast('投稿しました');
+          }}
         />
       )}
+      {toast && <div className="toast">{toast}</div>}
     </>
   );
 }

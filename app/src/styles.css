@@ -118,6 +118,33 @@ body,
   border-color: var(--accent);
 }
 
+/* デッキ UI の Compose 起動フロートボタン（deck-compose-spec §4）。
+   モーダル（z-index:30）より下、通常コンテンツより上に配置 */
+.deck-compose-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
+}
+.deck-compose-fab:hover {
+  filter: brightness(1.1);
+}
+.deck-compose-fab:active {
+  transform: translateY(1px);
+}
+
 /* --- ソースピッカー（カラム編集ダイアログ） --- */
 .source-picker {
   display: flex;

@@ -111,10 +111,13 @@ function ColumnEditor({
 export function Deck({
   views,
   onViewsChange,
+  onCompose,
 }: {
   views: View[];
   /** View 構成の変更（App が状態反映＋BFF 保存を担う） */
   onViewsChange: (views: View[]) => void;
+  /** Compose（新規投稿）モーダルを開く（deck-compose-spec §4） */
+  onCompose: () => void;
 }) {
   const [editing, setEditing] = useState<{ view: View; isNew: boolean } | null>(null);
   const [catalog, setCatalog] = useState<SourceCatalogEntry[]>([]);
@@ -238,6 +241,10 @@ export function Deck({
         }
       >
         + カラム追加
+      </button>
+
+      <button className="deck-compose-fab" onClick={onCompose} aria-label="新規投稿" title="新規投稿">
+        ✏ 新規投稿
       </button>
 
       {editing && (

@@ -48,6 +48,10 @@ _Avoid_: comment, thread
 既存の投稿を参照して自分の投稿に埋め込むこと（引用）。
 _Avoid_: repost, share, retweet
 
+**Compose**:
+新しい Post を作成する行為、およびそのための UI（投稿モーダル）。reply・quote を伴う場合もある。投稿先 Provider の選択、本文、Media、CW を1つの下書きとして扱う。日本語の「新規投稿」は説明語であり、識別子としての正式名は Compose。
+_Avoid_: post（動詞として）, new post, 投稿作成, write
+
 **repost**:
 既存の投稿を、本文を添えずに自分のフォロワーへ再共有すること。Misskey の renote、Bluesky の repost を指す統一用語。モデルでは「誰が再共有したか」を `repostedBy` で表す。本文を添えて再共有すれば quote（引用）であり別概念。
 _Avoid_: renote, boost, retweet, share
