@@ -12,7 +12,7 @@ function sourceKey(s: Source): string {
   return `${s.provider}:${s.kind}:${s.id ?? ''}`;
 }
 
-const KIND_LABEL: Record<string, string> = { home: 'ホーム', list: 'リスト', antenna: 'アンテナ', feed: 'フィード' };
+const KIND_LABEL: Record<string, string> = { home: 'ホーム', list: 'リスト', antenna: 'アンテナ', feed: 'フィード', channel: 'チャンネル' };
 const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon' };
 
 /** カラム編集ダイアログ: 名前と Source 構成を選んで保存する */

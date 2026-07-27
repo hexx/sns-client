@@ -38,6 +38,7 @@ const CATALOG: SourceCatalogEntry[] = [
       { source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' },
       { source: { provider: 'misskey', kind: 'list', id: 'mk-L1' }, name: '技術' },
       { source: { provider: 'misskey', kind: 'antenna', id: 'mk-A1' }, name: 'ニュース' },
+      { source: { provider: 'misskey', kind: 'channel', id: 'mk-C1' }, name: '📺 ゲーム部' },
     ],
   },
 ];
@@ -98,6 +99,25 @@ describe('Deck（カラム追加）', () => {
       { provider: 'misskey', kind: 'list', id: 'mk-L1' },
       { provider: 'misskey', kind: 'antenna', id: 'mk-A1' },
     ]);
+  });
+
+  it('お気に入りチャンネルを 📺 プレフィックス付きで選択・保存できる（docs/misskey-channel-source-spec.md）', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Deck views={VIEWS} onViewsChange={onChange} onCompose={() => {}} />);
+
+    await user.click(screen.getByRole('button', { name: '+ カラム追加' }));
+    await waitFor(() => expect(api.sources).toHaveBeenCalled());
+
+    const ch = await screen.findByRole('checkbox', { name: /📺 ゲーム部/ });
+    await user.clear(screen.getByRole('textbox', { name: 'カラム名' }));
+    await user.type(screen.getByRole('textbox', { name: 'カラム名' }), 'ゲーム');
+    await user.click(ch);
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0][0] as View[];
+    expect(next[2].sources).toEqual([{ provider: 'misskey', kind: 'channel', id: 'mk-C1' }]);
   });
 
   it('Source 未選択では保存できない', async () => {
