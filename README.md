@@ -1,9 +1,28 @@
 # SNS Client
 
-複数 SNS を1画面で扱う PWA クライアント。MVP は Bluesky（閲覧＋投稿）。
+複数 SNS を1画面の**デッキ**で統合して閲覧・投稿できる PWA クライアント。Bluesky と Misskey に対応し、SNS ごとの差異を吸収した統一モデルで投稿を扱います。
 仕様: [docs/sns-client-spec.md](docs/sns-client-spec.md) ／ Misskey 統合: [docs/misskey-integration-spec.md](docs/misskey-integration-spec.md) ／ mixi2: [対応しない決定](docs/mixi2-integration-spec.md)（型上予約のみ）
+仕様・ADR の全一覧は [docs/README.md](docs/README.md)。
 
 単一 Cloudflare Worker が **静的 SPA 配信** と **BFF (`/api/*`)** を兼ねます（同一オリジン）。
+
+## 機能
+- **デッキ UI**: 複数カラムを横並びにし、Source（home / Bluesky の feed・list / Misskey の list・antenna・channel 等）を自由に割り当てて1画面で統合閲覧（[deck-view-spec](docs/deck-view-spec.md)）。
+- **カスタム View**: Source の組み合わせを View として KV に保存・編集（`PUT /api/views`）。
+- **Compose**: 新規投稿。本文・CW・画像（Media）・リプライ・引用、投稿先 Provider の選択に対応（[deck-compose-spec](docs/deck-compose-spec.md)）。
+- **PWA / オフライン**: アプリシェルの precache、タイムラインの network-first キャッシュでオフライン起動・最終取得成功分の表示。
+
+### Provider × 機能
+| 機能 | Bluesky | Misskey |
+|---|---|---|
+| タイムライン閲覧・デッキ統合 | ○ | ○ |
+| Compose（本文/CW/Media/リプライ/引用） | ○ | ○ |
+| Like（単一カウンタ） | ○ | — |
+| Repost / Renote | ○ | ○ |
+| 絵文字リアクション（カスタム絵文字含む）（[仕様](docs/misskey-reaction-action-spec.md)） | — | ○ |
+| チャンネル表示 / チャンネル Source（[表示](docs/misskey-channel-display-spec.md) / [Source 化](docs/misskey-channel-source-spec.md)） | — | ○ |
+
+共通: LinkCard（[仕様](docs/linkcard-display-spec.md)）・grapheme 単位の投稿長・カスタム絵文字の画像解決・帰属バッジ。
 
 ## 前提
 - Node 20+ / npm
@@ -51,6 +70,14 @@ npm run deploy       # vite build → wrangler deploy
 ```
 デプロイ先: `https://sns-client.<your-subdomain>.workers.dev`
 
+## 開発
+```bash
+npm test             # vitest（ユニット＋コンポーネントテスト）
+npm run lint         # oxlint (--deny-warnings)
+npm run typecheck    # tsc (worker / app)
+```
+テスト範囲・coverage の方針は [ADR-0001](docs/adr/0001-test-scope-no-e2e.md) / [ADR-0002](docs/adr/0002-test-coverage-boundary.md)。
+
 ## Cloudflare Access（Zero Trust）で保護
 アプリ側に認証コードは不要。ダッシュボードで設定:
 
@@ -61,24 +88,16 @@ npm run deploy       # vite build → wrangler deploy
 4. 保存。以降、該当ホストへのアクセスは Access の OTP ログインで保護される
 
 > ⚠️ PWA の Service Worker が Access ログイン画面をキャッシュしないよう、
-> ナビゲーションは network-first にする（M4 で対応）。
+> ナビゲーションは network-first にする（[pwa-sw-update-fix-spec](docs/pwa-sw-update-fix-spec.md)）。
 
 ## 構成
 ```
-app/      React + Vite SPA (フロント)
-worker/   BFF (@atproto/api, session 管理)
+app/      React + Vite SPA (フロント。カスタム Service Worker: app/src/sw.ts)
+worker/   BFF（Bluesky: @atproto/api、Misskey: REST API へ dispatch。session 管理）
+shared/   フロント・Worker・Service Worker で共有する型と API 定数
+scripts/  アイコン生成（render-icons.mjs）
 wrangler.jsonc  assets(run_worker_first) + Worker 設定
 ```
-
-## マイルストーン
-- [x] **M1** Worker スケルトン＋Static Assets＋`/api/health`
-- [x] **M2** BFF セッション管理＋`/api/timeline`＋タイムライン UI（無限スクロール/プル更新/新着ピル）
-- [x] **M3** 投稿（グラフェム/facets/画像/リプライ/引用/CW）
-- [x] **M4** PWA 化＋オフライン＋耐障害性
-- [x] **M5** Source 種別拡張（Misskey list/antenna・Bluesky list/feed の BFF 取得＋`/api/sources` カタログ）（[deck-view-spec](./docs/deck-view-spec.md)）
-- [x] **M6** カスタム View（KV 保存＋`PUT /api/views` 編集 API）
-- [x] **M7** デッキ UI（横並びカラム・レスポンシブ切替・ソースピッカー）
-- [x] **M8** カラム内操作（Bluesky Like/Repost トグル・Misskey Renote 作成）＋帰属バッジ
 
 ## PWA メモ
 - カスタム Service Worker（`app/src/sw.ts`, injectManifest）:
