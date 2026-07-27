@@ -105,7 +105,7 @@ if (note.channel) post.channel = { id: note.channel.id, name: note.channel.name 
 
 1. **チャンネルへの投稿（compose）** — `PostInputWire` への `channelId` 追加とチャンネル選択 UI。投稿先選択は別デザイン（チャンネル一覧取得 API 等）が必要。
 2. **チャンネル単位のフィルタ/ミュート** — 表示による需要確認が先。
-3. **チャンネルタイムラインの Source 化** — `kind: 'channel'` の Source を View に足す機能。既存 Source 機構で自然に載るが、本仕様の課題（ホーム TL に混ざる投稿の識別）とは別チケット。
+3. **チャンネルタイムラインの Source 化** — `kind: 'channel'` の Source を View に足す機能。→ 後続仕様 [misskey-channel-source-spec.md](./misskey-channel-source-spec.md) で策定済み。
 4. **チップのクリック遷移** — `{instance}/channels/{id}` へのディープリンク。複数インスタンス対応時のインスタンス URL 解決が絡むため後回し。`channel.id` は確保済み。
 
 ## ADR

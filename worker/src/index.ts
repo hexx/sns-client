@@ -65,7 +65,7 @@ async function collectSources(provider: Provider, fn: () => Promise<SourceOption
 /** プロバイダごとに許容する Source kind（docs/deck-view-spec.md §3） */
 const KINDS: Record<string, string[]> = {
   bluesky: ['home', 'list', 'feed'],
-  misskey: ['home', 'list', 'antenna'],
+  misskey: ['home', 'list', 'antenna', 'channel'],
 };
 
 /** 固定プリセットの View 定義（KV 未設定時のフォールバック。ADR-0004） */

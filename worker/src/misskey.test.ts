@@ -482,10 +482,29 @@ describe('getTimeline（Source 種別 dispatch）', () => {
     expect(call?.body).toMatchObject({ antennaId: 'A1' });
   });
 
+  it('kind=channel → channels/timeline（channelId + untilId。docs/misskey-channel-source-spec.md）', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    stubMisskeyFetch(calls);
+    await getTimeline(
+      { MISSKEY_INSTANCE_URL: 'https://tl-ch.test', MISSKEY_TOKEN: 't' },
+      { provider: 'misskey', kind: 'channel', id: 'C1' },
+      'cur1',
+    );
+    const call = calls.find((c) => c.url.endsWith('/api/channels/timeline'));
+    expect(call?.body).toMatchObject({ channelId: 'C1', untilId: 'cur1', limit: 30 });
+  });
+
   it('kind=list で id 無し → MisskeyApiError(400)', async () => {
     stubMisskeyFetch([]);
     await expect(
       getTimeline({ MISSKEY_INSTANCE_URL: 'https://tl-noid.test', MISSKEY_TOKEN: 't' }, { provider: 'misskey', kind: 'list' }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('kind=channel で id 無し → MisskeyApiError(400)', async () => {
+    stubMisskeyFetch([]);
+    await expect(
+      getTimeline({ MISSKEY_INSTANCE_URL: 'https://tl-chnoid.test', MISSKEY_TOKEN: 't' }, { provider: 'misskey', kind: 'channel' }),
     ).rejects.toMatchObject({ status: 400 });
   });
 });
@@ -509,14 +528,19 @@ describe('renote（docs/deck-view-spec.md §6）', () => {
 describe('listSources（ピッカーカタログ）', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('ホーム + リスト + アンテナを返す', async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+  it('ホーム + リスト + アンテナ + お気に入りチャンネル（📺 プレフィックス）を返す', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
+      calls.push({ url, body: JSON.parse(String(init?.body ?? '{}')) });
       if (url.endsWith('/api/users/lists/list')) {
         return new Response(JSON.stringify([{ id: 'L1', name: '技術' }]), { status: 200 });
       }
       if (url.endsWith('/api/antennas/list')) {
         return new Response(JSON.stringify([{ id: 'A1', name: 'AI' }]), { status: 200 });
+      }
+      if (url.endsWith('/api/channels/my-favorites')) {
+        return new Response(JSON.stringify([{ id: 'C1', name: 'ゲーム部' }]), { status: 200 });
       }
       return new Response('null', { status: 200 });
     });
@@ -526,7 +550,11 @@ describe('listSources（ピッカーカタログ）', () => {
       { source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' },
       { source: { provider: 'misskey', kind: 'list', id: 'L1' }, name: '技術' },
       { source: { provider: 'misskey', kind: 'antenna', id: 'A1' }, name: 'AI' },
+      { source: { provider: 'misskey', kind: 'channel', id: 'C1' }, name: '📺 ゲーム部' },
     ]);
+    // お気に入りは limit: 100 の1ページ分のみ（docs/misskey-channel-source-spec.md）
+    const fav = calls.find((c) => c.url.endsWith('/api/channels/my-favorites'));
+    expect(fav?.body).toMatchObject({ limit: 100 });
   });
 });
 

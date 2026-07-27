@@ -135,6 +135,16 @@ describe('views（KV カスタム View）', () => {
     expect(kv.put).toHaveBeenCalledWith('views', JSON.stringify(views));
   });
 
+  it('PUT: misskey channel Source（id 付き）→ 200（docs/misskey-channel-source-spec.md）', async () => {
+    const { env } = envWithKv();
+    const views = [{ id: 'v1', name: 'チャンネル', sources: [{ provider: 'misskey', kind: 'channel', id: 'C1' }] }];
+    const res = await worker.fetch(
+      new Request('https://x/api/views', { method: 'PUT', body: JSON.stringify(views) }),
+      env,
+    );
+    expect(res.status).toBe(200);
+  });
+
   it.each([
     ['配列でない', JSON.stringify({ id: 'v1' })],
     ['id 無し', JSON.stringify([{ name: 'x', sources: [{ provider: 'bluesky', kind: 'home' }] }])],
@@ -142,6 +152,7 @@ describe('views（KV カスタム View）', () => {
     ['sources 空', JSON.stringify([{ id: 'a', name: 'x', sources: [] }])],
     ['kind 不正', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'misskey', kind: 'feed' }] }])],
     ['id 必須の kind で id 無し', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'bluesky', kind: 'list' }] }])],
+    ['misskey channel で id 無し', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'misskey', kind: 'channel' }] }])],
   ])('PUT 不正 → 400（%s）', async (_label, body) => {
     const res = await worker.fetch(new Request('https://x/api/views', { method: 'PUT', body }), makeEnv());
     expect(res.status).toBe(400);

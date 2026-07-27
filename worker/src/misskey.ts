@@ -392,8 +392,9 @@ export function mapNote(note: MkNote, registry: Record<string, string> = {}): Po
 // --- BFF 処理本体 ---
 
 /**
- * Source 種別（home / list / antenna）を Misskey のタイムライン API へ dispatch する。
- * list = notes/user-list-timeline (listId)、antenna = antennas/notes (antennaId)。
+ * Source 種別（home / list / antenna / channel）を Misskey のタイムライン API へ dispatch する。
+ * list = notes/user-list-timeline (listId)、antenna = antennas/notes (antennaId)、
+ * channel = channels/timeline (channelId)（docs/misskey-channel-source-spec.md）。
  * ページングは共通で untilId（Source 種別に依存しない）。
  */
 export async function getTimeline(env: MisskeyEnv, source: Source, cursor?: string): Promise<TimelineResponse> {
@@ -408,6 +409,10 @@ export async function getTimeline(env: MisskeyEnv, source: Source, cursor?: stri
     if (!source.id) throw new MisskeyApiError(400, 'antenna source requires id');
     endpoint = 'antennas/notes';
     params.antennaId = source.id;
+  } else if (source.kind === 'channel') {
+    if (!source.id) throw new MisskeyApiError(400, 'channel source requires id');
+    endpoint = 'channels/timeline';
+    params.channelId = source.id;
   }
   const notes = await mkApi<MkNote[]>(env, endpoint, params);
   const registry = await loadEmojiRegistry(env);
@@ -416,17 +421,21 @@ export async function getTimeline(env: MisskeyEnv, source: Source, cursor?: stri
 }
 
 /**
- * ピッカー用の選択可能 Source 一覧（ホーム + ユーザーリスト + アンテナ）。
- * users/lists/list と antennas/list を並列取得し、人間可読名を添えて返す。
+ * ピッカー用の選択可能 Source 一覧（ホーム + ユーザーリスト + アンテナ + お気に入りチャンネル）。
+ * users/lists/list・antennas/list・channels/my-favorites を並列取得し、人間可読名を添えて返す。
+ * チャンネル候補はフォロー中ではなくお気に入り（docs/misskey-channel-source-spec.md）。
+ * ラベルの 📺 プレフィックスは PostCard チップと同一の視覚言語。
  */
 export async function listSources(env: MisskeyEnv): Promise<SourceOption[]> {
   const options: SourceOption[] = [{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }];
-  const [lists, antennas] = await Promise.all([
+  const [lists, antennas, favorites] = await Promise.all([
     mkApi<{ id: string; name: string }[]>(env, 'users/lists/list'),
     mkApi<{ id: string; name: string }[]>(env, 'antennas/list'),
+    mkApi<{ id: string; name: string }[]>(env, 'channels/my-favorites', { limit: 100 }),
   ]);
   for (const l of lists) options.push({ source: { provider: 'misskey', kind: 'list', id: l.id }, name: l.name });
   for (const a of antennas) options.push({ source: { provider: 'misskey', kind: 'antenna', id: a.id }, name: a.name });
+  for (const c of favorites ?? []) options.push({ source: { provider: 'misskey', kind: 'channel', id: c.id }, name: `📺 ${c.name}` });
   return options;
 }
 
