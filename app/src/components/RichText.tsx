@@ -1,9 +1,9 @@
 import type { RichSegment } from '../../../shared/types';
 
-/** 統一インラインリッチテキスト（ADR-0005）を描画する */
-export function RichText({ segments }: { segments: RichSegment[] }) {
-  return (
-    <p className="text">
+/** 統一インラインリッチテキスト（ADR-0005）を描画する。inline は名前行などのインライン文脈用 */
+export function RichText({ segments, inline }: { segments: RichSegment[]; inline?: boolean }) {
+  const content = (
+    <>
       {segments.map((s, i) => {
         switch (s.type) {
           case 'text':
@@ -34,6 +34,7 @@ export function RichText({ segments }: { segments: RichSegment[] }) {
             );
         }
       })}
-    </p>
+    </>
   );
+  return inline ? <span className="rt-inline">{content}</span> : <p className="text">{content}</p>;
 }
