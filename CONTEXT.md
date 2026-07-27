@@ -9,7 +9,7 @@ SNS 横断で統一された「1つの投稿」のドメインモデル。UI は
 _Avoid_: status, toot, record
 
 **Provider**:
-投稿の由来となる SNS の種別（`bluesky` / `misskey` / `mastodon`）。
+投稿の由来となる SNS の種別（`bluesky` / `misskey` / `mastodon` / `mixi2`）。`mastodon`・`mixi2` は型上予約のみ（mixi2 は公式 API が Bot 用のため Provider 不成立、docs/mixi2-integration-spec.md）。
 _Avoid_: network, service
 
 **Source**:

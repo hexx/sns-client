@@ -66,6 +66,7 @@ async function collectSources(provider: Provider, fn: () => Promise<SourceOption
 const KINDS: Record<string, string[]> = {
   bluesky: ['home', 'list', 'feed'],
   misskey: ['home', 'list', 'antenna', 'channel'],
+  mixi2: [], // 型上予約のみ。公式 API に TL 取得手段が無いため Source 種別なし（docs/mixi2-integration-spec.md）
 };
 
 /** 固定プリセットの View 定義（KV 未設定時のフォールバック。ADR-0004） */
@@ -113,7 +114,7 @@ function isAuthError(e: unknown): boolean {
 }
 
 function isProvider(s: string | null): s is Provider {
-  // mastodon は型上予約のみ（未実装）。実装済みの bluesky/misskey だけを受け付け、他は 400 にする
+  // mastodon・mixi2 は型上予約のみ（未実装）。実装済みの bluesky/misskey だけを受け付け、他は 400 にする
   return s === 'bluesky' || s === 'misskey';
 }
 

@@ -13,7 +13,7 @@ function sourceKey(s: Source): string {
 }
 
 const KIND_LABEL: Record<string, string> = { home: 'ホーム', list: 'リスト', antenna: 'アンテナ', feed: 'フィード', channel: 'チャンネル' };
-const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon' };
+const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon', mixi2: 'mixi2' };
 
 /** カラム編集ダイアログ: 名前と Source 構成を選んで保存する */
 function ColumnEditor({

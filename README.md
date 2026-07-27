@@ -1,7 +1,7 @@
 # SNS Client
 
 複数 SNS を1画面で扱う PWA クライアント。MVP は Bluesky（閲覧＋投稿）。
-仕様: [docs/sns-client-spec.md](docs/sns-client-spec.md) ／ Misskey 統合: [docs/misskey-integration-spec.md](docs/misskey-integration-spec.md)
+仕様: [docs/sns-client-spec.md](docs/sns-client-spec.md) ／ Misskey 統合: [docs/misskey-integration-spec.md](docs/misskey-integration-spec.md) ／ mixi2: [対応しない決定](docs/mixi2-integration-spec.md)（型上予約のみ）
 
 単一 Cloudflare Worker が **静的 SPA 配信** と **BFF (`/api/*`)** を兼ねます（同一オリジン）。
 

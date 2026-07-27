@@ -27,7 +27,7 @@ const EMPTY: Draft = {
 const MAX_IMAGES = 4;
 const TARGET_KEY = 'compose-target';
 
-const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon' };
+const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon', mixi2: 'mixi2' };
 
 export function Compose({
   providers,
