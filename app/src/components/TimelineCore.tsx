@@ -61,6 +61,8 @@ export const TimelineCore = forwardRef<
     onRefreshingChange?: (refreshing: boolean) => void;
     /** タッチの pull-to-refresh を有効化（モバイル向け。デッキでは無効） */
     pullToRefresh?: boolean;
+    /** 未取り込み新着数の変化を通知（スマホ UI のタブバッジ用。docs/mobile-paging-spec.md §4.4） */
+    onPendingCountChange?: (count: number) => void;
     /** オフラインバナーを表示（モバイル向け。デッキでは各カラムが持つと冗長なため無効） */
     showOfflineBanner?: boolean;
     className?: string;
@@ -76,6 +78,7 @@ export const TimelineCore = forwardRef<
     onRefreshingChange,
     pullToRefresh,
     showOfflineBanner,
+    onPendingCountChange,
     className,
   },
   ref,
@@ -92,6 +95,7 @@ export const TimelineCore = forwardRef<
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const touchStartY = useRef<number | null>(null);
+  const touchStartX = useRef<number | null>(null);
   const reactionInflight = useRef<Set<string>>(new Set());
   const engageInflight = useRef<Set<string>>(new Set());
   const loadingKeys = useRef<Set<string>>(new Set());
@@ -427,18 +431,26 @@ export const TimelineCore = forwardRef<
   // --- pull-to-refresh（タッチ。モバイル向け） ---
   const onTouchStart = (e: React.TouchEvent) => {
     if (!pullToRefresh) return;
-    if ((scrollRef.current?.scrollTop ?? 1) <= 0) touchStartY.current = e.touches[0].clientY;
-    else touchStartY.current = null;
+    if ((scrollRef.current?.scrollTop ?? 1) <= 0) {
+      touchStartY.current = e.touches[0].clientY;
+      touchStartX.current = e.touches[0].clientX;
+    } else {
+      touchStartY.current = null;
+      touchStartX.current = null;
+    }
   };
   const onTouchMove = (e: React.TouchEvent) => {
     if (touchStartY.current == null) return;
     const dy = e.touches[0].clientY - touchStartY.current;
-    if (dy > 0 && (scrollRef.current?.scrollTop ?? 1) <= 0) setPull(Math.min(dy * 0.5, 120));
+    const adx = Math.abs(e.touches[0].clientX - (touchStartX.current ?? e.touches[0].clientX));
+    // 縦優勢のジェスチャのみ PTR とする（横スワイプページングとの調停。docs/mobile-paging-spec.md §5）
+    if (dy > 0 && dy > adx && (scrollRef.current?.scrollTop ?? 1) <= 0) setPull(Math.min(dy * 0.5, 120));
   };
   const onTouchEnd = () => {
     if (pull >= PTR_THRESHOLD) void refresh();
     setPull(0);
     touchStartY.current = null;
+    touchStartX.current = null;
   };
 
   // --- 全 Source を時系列で合成（dedup 付き。帰属バッジ用の Source も保持） ---
@@ -461,6 +473,10 @@ export const TimelineCore = forwardRef<
   }, [states]);
 
   const pendingCount = states.reduce((n, s) => n + s.pending.length, 0);
+
+  useEffect(() => {
+    onPendingCountChange?.(pendingCount);
+  }, [onPendingCountChange, pendingCount]);
   const loadingMore = states.some((s) => s.loadingMore);
   const errored = states.filter((s) => s.error);
   const hasMore = states.some((s) => s.cursor && s.posts.length > 0 && !s.authFailed);

@@ -8,6 +8,7 @@
 
 ## 機能
 - **デッキ UI**: 複数カラムを横並びにし、Source（home / Bluesky の feed・list / Misskey の list・antenna・channel 等）を自由に割り当てて1画面で統合閲覧（[deck-view-spec](docs/deck-view-spec.md)）。
+- **スマホ UI**: 全 View を横スワイプ・ページングで閲覧。非表示 View も常時監視し、新着はタブバッジで通知（[mobile-paging-spec](docs/mobile-paging-spec.md)）。
 - **カスタム View**: Source の組み合わせを View として KV に保存・編集（`PUT /api/views`）。
 - **Compose**: 新規投稿。本文・CW・画像（Media）・リプライ・引用、投稿先 Provider の選択に対応（[deck-compose-spec](docs/deck-compose-spec.md)）。
 - **PWA / オフライン**: アプリシェルの precache、タイムラインの network-first キャッシュでオフライン起動・最終取得成功分の表示。

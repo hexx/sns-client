@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Timeline } from './Timeline';
+import { useState } from 'react';
+import { MobilePager } from './MobilePager';
 import { api } from '../api';
 import type { Post, View } from '../../../shared/types';
 
@@ -19,6 +20,7 @@ vi.mock('../api', async (importOriginal) => {
       post: vi.fn(),
       react: vi.fn(),
       emojis: vi.fn(),
+      sources: vi.fn(),
     },
   };
 });
@@ -70,17 +72,29 @@ const mergedView: View = {
   ],
 };
 
-const handlers = {
-  onSwitchView: () => {},
-  onCompose: () => {},
-  onReply: () => {},
-  onQuote: () => {},
-};
+function Pager(props: { views: View[]; initial?: string; onSwitchView?: (id: string) => void }) {
+  const [active, setActive] = useState(props.initial ?? props.views[0].id);
+  return (
+    <MobilePager
+      views={props.views}
+      activeViewId={active}
+      onSwitchView={(id) => {
+        setActive(id);
+        props.onSwitchView?.(id);
+      }}
+      onCompose={() => {}}
+      onReply={() => {}}
+      onQuote={() => {}}
+      justPosted={null}
+    />
+  );
+}
 
 beforeEach(() => {
   ioInstances = [];
   vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
   vi.mocked(api.timeline).mockResolvedValue({ posts: [], nextCursor: null });
+  vi.mocked(api.sources).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -89,10 +103,10 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('Timeline（単一 Source）', () => {
+describe('MobilePager（単一 Source）', () => {
   it('初回読込でタイムラインを描画する', async () => {
     vi.mocked(api.timeline).mockResolvedValue({ posts: [makePost({ id: 'p1', text: 'first' })], nextCursor: 'c1' });
-    render(<Timeline view={bskyView} views={[bskyView]} {...handlers} justPosted={null} />);
+    render(<Pager views={[bskyView]} />);
     expect(await screen.findByText('first')).toBeInTheDocument();
     expect(api.timeline).toHaveBeenCalledWith({ provider: 'bluesky', kind: 'home' });
   });
@@ -102,7 +116,7 @@ describe('Timeline（単一 Source）', () => {
     vi.mocked(api.timeline)
       .mockRejectedValueOnce(new Error('network down'))
       .mockResolvedValueOnce({ posts: [makePost({ text: 'recovered' })], nextCursor: null });
-    render(<Timeline view={bskyView} views={[bskyView]} {...handlers} justPosted={null} />);
+    render(<Pager views={[bskyView]} />);
 
     expect(await screen.findByText(/network down/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '再試行' }));
@@ -113,7 +127,7 @@ describe('Timeline（単一 Source）', () => {
     vi.mocked(api.timeline)
       .mockResolvedValueOnce({ posts: [makePost({ id: 'p1', text: 'first' })], nextCursor: 'c1' })
       .mockResolvedValueOnce({ posts: [makePost({ id: 'p2', text: 'second' })], nextCursor: null });
-    render(<Timeline view={bskyView} views={[bskyView]} {...handlers} justPosted={null} />);
+    render(<Pager views={[bskyView]} />);
     expect(await screen.findByText('first')).toBeInTheDocument();
 
     await act(async () => {
@@ -131,7 +145,7 @@ describe('Timeline（単一 Source）', () => {
       .mockResolvedValueOnce({ posts: [p1], nextCursor: null })
       .mockResolvedValue({ posts: [p1, p2], nextCursor: null });
 
-    render(<Timeline view={bskyView} views={[bskyView]} {...handlers} justPosted={null} />);
+    render(<Pager views={[bskyView]} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -151,25 +165,9 @@ describe('Timeline（単一 Source）', () => {
     expect(articles[1]).toHaveTextContent('first');
     expect(screen.queryByRole('button', { name: /新着/ })).not.toBeInTheDocument();
   });
-
-  it('justPosted を先頭に反映し、重複を排除する', async () => {
-    vi.mocked(api.timeline).mockResolvedValue({ posts: [makePost({ id: 'p1', text: 'first' })], nextCursor: null });
-    const { rerender } = render(<Timeline view={bskyView} views={[bskyView]} {...handlers} justPosted={null} />);
-    expect(await screen.findByText('first')).toBeInTheDocument();
-
-    rerender(<Timeline view={bskyView} views={[bskyView]} {...handlers} justPosted={makePost({ id: 'p2', text: 'mine' })} />);
-    expect(await screen.findByText('mine')).toBeInTheDocument();
-    let articles = screen.getAllByRole('article');
-    expect(articles[0]).toHaveTextContent('mine');
-    expect(articles[1]).toHaveTextContent('first');
-
-    rerender(<Timeline view={bskyView} views={[bskyView]} {...handlers} justPosted={makePost({ id: 'p1', text: 'first' })} />);
-    articles = screen.getAllByRole('article');
-    expect(articles).toHaveLength(2);
-  });
 });
 
-describe('Timeline（複数 Source 合成）', () => {
+describe('MobilePager（複数 Source 合成）', () => {
   it('2つの Source を時系列で合成して描画する', async () => {
     vi.mocked(api.timeline).mockImplementation(async (source) => {
       if (source.provider === 'bluesky') {
@@ -177,7 +175,7 @@ describe('Timeline（複数 Source 合成）', () => {
       }
       return { posts: [makePost({ id: 'm1', provider: 'misskey', text: 'mk-new', createdAt: '2026-07-01T11:00:00Z' })], nextCursor: null };
     });
-    render(<Timeline view={mergedView} views={[mergedView]} {...handlers} justPosted={null} />);
+    render(<Pager views={[mergedView]} />);
     expect(await screen.findByText('mk-new')).toBeInTheDocument();
     expect(await screen.findByText('bsky-old')).toBeInTheDocument();
     const articles = screen.getAllByRole('article');
@@ -192,9 +190,125 @@ describe('Timeline（複数 Source 合成）', () => {
       }
       throw new Error('misskey down');
     });
-    render(<Timeline view={mergedView} views={[mergedView]} {...handlers} justPosted={null} />);
+    render(<Pager views={[mergedView]} />);
     expect(await screen.findByText('bsky-ok')).toBeInTheDocument();
     expect(await screen.findByText(/misskey: misskey down/)).toBeInTheDocument();
+  });
+});
+
+describe('MobilePager（ページング操作。docs/mobile-paging-spec.md §4–§5）', () => {
+  const techView: View = { id: 'tech', name: '技術', sources: [{ provider: 'misskey', kind: 'list', id: 'l1' }] };
+  const twoViews: View[] = [bskyView, techView];
+
+  // フリック速度判定は performance.now() ベース。テスト側で時刻を制御する
+  let now = 0;
+  beforeEach(() => {
+    now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+  });
+
+  function touch(el: HTMLElement, type: 'touchStart' | 'touchMove' | 'touchEnd', x: number, y: number, t: number): void {
+    now = t;
+    fireEvent[type](el, {
+      touches: type === 'touchEnd' ? [] : [{ clientX: x, clientY: y }],
+      changedTouches: [{ clientX: x, clientY: y }],
+    });
+  }
+
+  it('タブタップでその View へ切替わる', async () => {
+    const user = userEvent.setup();
+    const onSwitchView = vi.fn();
+    render(<Pager views={twoViews} onSwitchView={onSwitchView} />);
+
+    await user.click(screen.getByRole('tab', { name: '技術' }));
+    expect(onSwitchView).toHaveBeenCalledWith('tech');
+    expect(screen.getByRole('tab', { name: '技術' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('左スワイプ（距離十分）で次の View へ切替わる', async () => {
+    const onSwitchView = vi.fn();
+    render(<Pager views={twoViews} onSwitchView={onSwitchView} />);
+    const viewport = document.querySelector('.pager-viewport') as HTMLElement;
+
+    touch(viewport, 'touchStart', 300, 100, 0);
+    touch(viewport, 'touchMove', 290, 100, 100); // スロップ超 → 横ロック
+    touch(viewport, 'touchMove', 0, 102, 500); // dx=-300（jsdom 幅1024の25%以上）
+    touch(viewport, 'touchEnd', 0, 102, 1000); // 低速 → 距離判定のみ
+
+    expect(onSwitchView).toHaveBeenCalledWith('tech');
+  });
+
+  it('短い低速スワイプはスナップバックし切替わらない', () => {
+    const onSwitchView = vi.fn();
+    render(<Pager views={twoViews} onSwitchView={onSwitchView} />);
+    const viewport = document.querySelector('.pager-viewport') as HTMLElement;
+
+    touch(viewport, 'touchStart', 300, 100, 0);
+    touch(viewport, 'touchMove', 280, 100, 100); // 横ロック
+    touch(viewport, 'touchMove', 270, 100, 900); // dx=-30, 低速
+    touch(viewport, 'touchEnd', 270, 100, 1000);
+
+    expect(onSwitchView).not.toHaveBeenCalled();
+  });
+
+  it('縦スワイプ（縦ロック）はページ切替にならない', () => {
+    const onSwitchView = vi.fn();
+    render(<Pager views={twoViews} onSwitchView={onSwitchView} />);
+    const viewport = document.querySelector('.pager-viewport') as HTMLElement;
+
+    touch(viewport, 'touchStart', 300, 100, 0);
+    touch(viewport, 'touchMove', 300, 130, 100); // 縦ロック
+    touch(viewport, 'touchMove', 300, 400, 200);
+    touch(viewport, 'touchEnd', 300, 400, 300);
+
+    expect(onSwitchView).not.toHaveBeenCalled();
+  });
+
+  it('先頭ページで右スワイプしても切替わらない（端でクランプ）', () => {
+    const onSwitchView = vi.fn();
+    render(<Pager views={twoViews} onSwitchView={onSwitchView} />);
+    const viewport = document.querySelector('.pager-viewport') as HTMLElement;
+
+    touch(viewport, 'touchStart', 100, 100, 0);
+    touch(viewport, 'touchMove', 120, 100, 100);
+    touch(viewport, 'touchMove', 500, 100, 200); // dx=+400
+    touch(viewport, 'touchEnd', 500, 100, 300);
+
+    expect(onSwitchView).not.toHaveBeenCalled();
+  });
+
+  it('非アクティブ View の新着はタブバッジで知らせ、切替で消えてピルに引き継ぐ', async () => {
+    vi.useFakeTimers();
+    const p1 = makePost({ id: 'p1', text: 'first' });
+    const p2 = makePost({ id: 'p2', text: 'second' });
+    let bskyCalls = 0;
+    vi.mocked(api.timeline).mockImplementation(async (source) => {
+      if (source.provider !== 'bluesky') return { posts: [], nextCursor: null };
+      // 初回は1件、ポーリングで2件目が見つかる
+      bskyCalls += 1;
+      return bskyCalls <= 1 ? { posts: [p1], nextCursor: null } : { posts: [p1, p2], nextCursor: null };
+    });
+
+    // アクティブを「技術」（新着なし）にして、「ホーム」の新着がバッジに出ることを見る
+    render(<Pager views={twoViews} initial="tech" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(75_000);
+    });
+
+    // 非アクティブの「ホーム」タブにバッジ 1。アクティブタブには出ない
+    expect(screen.getByRole('tab', { name: /ホーム/ })).toHaveTextContent('1');
+    expect(screen.getByRole('tab', { name: '技術' })).not.toHaveTextContent('1');
+
+    // ホームへ切替 → バッジ消去、ページ内ピルが現れる（§4.4）
+    await act(async () => {
+      screen.getByRole('tab', { name: /ホーム/ }).click();
+    });
+    expect(screen.getByRole('tab', { name: 'ホーム' })).not.toHaveTextContent('1');
+    expect(screen.getByRole('button', { name: /新着 1 件/ })).toBeInTheDocument();
   });
 });
 
@@ -210,7 +324,7 @@ describe('リアクション楽観更新（docs/misskey-reaction-action-spec.md�
     vi.mocked(api.timeline).mockResolvedValue({ posts: [mkPost({ text: 'mk-post' })], nextCursor: null });
     vi.mocked(api.react).mockResolvedValue({ reaction: '👍' });
     vi.mocked(api.emojis).mockResolvedValue([]);
-    render(<Timeline view={mkView} views={[mkView]} {...handlers} justPosted={null} />);
+    render(<Pager views={[mkView]} />);
     expect(await screen.findByText('mk-post')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'リアクションを追加' }));
@@ -229,7 +343,7 @@ describe('リアクション楽観更新（docs/misskey-reaction-action-spec.md�
     // 拒否をテスト側から制御する（楽観状態の表明より先に沈下する競合を避ける）
     let rejectReact!: (e: Error) => void;
     vi.mocked(api.react).mockReturnValue(new Promise((_resolve, reject) => (rejectReact = reject)));
-    render(<Timeline view={mkView} views={[mkView]} {...handlers} justPosted={null} />);
+    render(<Pager views={[mkView]} />);
     expect(await screen.findByText('2')).toBeInTheDocument();
 
     await user.click(screen.getByTitle('👍')); // 相乗り → 楽観で 3

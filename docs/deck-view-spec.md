@@ -27,7 +27,7 @@
 - 複数アカウント（Misskey / Bluesky 各複数）。
 - カラムごとのキーワードミュート・フィルタ。
 - カラムのドラッグ&ドロップ並び替え。
-- スマホ向けデッキ UI 最適化。
+- ~~スマホ向けデッキ UI 最適化~~ → [mobile-paging-spec.md](./mobile-paging-spec.md) で仕様化済み（スワイプページング、[ADR-0010](./adr/0010-mobile-swipe-paging-all-mounted.md)）。
 
 ## 3. アーキテクチャ（既存踏襲）
 
@@ -94,7 +94,7 @@
 
 ## 8. 非目標（v1）
 
-複数アカウント／ストリーミング／返信・引用（新規投稿は [deck-compose-spec.md](./deck-compose-spec.md) で対応済み）／キーワードミュート／カラムの DnD 並び替え／スマホ向けデッキ最適化。
+複数アカウント／ストリーミング／返信・引用（新規投稿は [deck-compose-spec.md](./deck-compose-spec.md) で対応済み）／キーワードミュート／カラムの DnD 並び替え。スマホ向けは [mobile-paging-spec.md](./mobile-paging-spec.md) を参照。
 
 ## 9. 既存文書との関係
 

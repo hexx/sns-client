@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Timeline } from './components/Timeline';
+import { MobilePager } from './components/MobilePager';
 import { Deck } from './components/Deck';
 import { Compose } from './components/Compose';
 import { api } from './api';
@@ -87,9 +87,9 @@ export default function App() {
           )}
         </>
       ) : activeView ? (
-        <Timeline
-          view={activeView}
+        <MobilePager
           views={views}
+          activeViewId={activeViewId}
           onSwitchView={setActiveViewId}
           justPosted={justPosted}
           onCompose={() => setCompose({ open: true })}
