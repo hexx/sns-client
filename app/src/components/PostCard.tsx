@@ -44,15 +44,19 @@ function hostOf(url: string): string {
   }
 }
 
-/** 公開範囲バッジ（Misskey の非 public / localOnly のみ表示） */
+/** 公開範囲バッジ（Misskey の非 public / localOnly のみ表示。アイコンのみ・説明はツールチップ。docs/card-meta-row-spec.md §4） */
 function VisibilityBadge({ post }: { post: Post }) {
   const icon =
     post.visibility === 'home' ? '🏠' : post.visibility === 'followers' ? '🔒' : post.visibility === 'specified' ? '✉️' : '';
   if (!icon && !post.localOnly) return null;
+  // visibility と localOnly は併存しうる（例: 🔒+📍）。ツールチップは合成する
+  const tip = [post.localOnly ? 'ローカルのみ' : '', icon ? (post.visibility as string) : '']
+    .filter(Boolean)
+    .join('・');
   return (
-    <span className="visibility" title={post.localOnly ? 'ローカルのみ' : post.visibility}>
+    <span className="visibility" title={tip}>
       {icon}
-      {post.localOnly ? ' ローカルのみ' : ''}
+      {post.localOnly ? '📍' : ''}
     </span>
   );
 }
@@ -223,18 +227,27 @@ export function PostCard({
               {relTime(post.createdAt)}
             </time>
           </div>
+          {/* 2行目=投稿者情報（handle+公開範囲）、3行目=帰属情報（チャンネル+由来ソース）。docs/card-meta-row-spec.md §3 */}
           <div className="author-line author-line-meta">
             <span className="handle">
               @{post.author.handle}
               <VisibilityBadge post={post} />
             </span>
-            {post.channel && (
-              <span className="channel-chip" title={post.channel.name}>
-                📺 <span className="channel-name">{post.channel.name}</span>
-              </span>
-            )}
-            {badge && <span className="provider-badge">{badge}</span>}
           </div>
+          {(post.channel || badge) && (
+            <div className="author-line author-line-attr">
+              {post.channel && (
+                <span className="channel-chip" title={post.channel.name}>
+                  📺 <span className="channel-name">{post.channel.name}</span>
+                </span>
+              )}
+              {badge && (
+                <span className="provider-badge" title={badge}>
+                  {badge}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

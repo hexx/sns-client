@@ -620,9 +620,8 @@ body,
 
 /* --- 帰属バッジ（デッキ: プラットフォーム名 + 由来ソース名） --- */
 .provider-badge {
-  flex: 0 0 auto;
-  max-width: 12em;
-  margin-left: 6px;
+  flex: 0 1 auto;
+  max-width: 10em;
   padding: 1px 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -631,6 +630,11 @@ body,
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.provider-badge:hover {
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 /* --- 操作ボタン付き stats（デッキの Like/Repost） --- */
@@ -664,12 +668,13 @@ body,
   color: var(--muted);
 }
 
-/* --- チャンネルチップ（Misskey。card-head 時刻の隣） --- */
+/* --- チャンネルチップ（Misskey。帰属行。docs/card-meta-row-spec.md §5） --- */
 .channel-chip {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  max-width: 12em;
+  max-width: 10em;
+  transition: border-color 0.15s ease;
   padding: 1px 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -678,6 +683,9 @@ body,
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
+}
+.channel-chip:hover {
+  border-color: var(--accent);
 }
 .channel-name {
   overflow: hidden;

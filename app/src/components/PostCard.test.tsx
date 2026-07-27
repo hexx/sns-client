@@ -234,10 +234,12 @@ describe('リッチ表示（Misskey 統合）', () => {
     expect(quoteCard).toHaveTextContent('Quoted');
   });
 
-  it('非 public / localOnly に visibility バッジを描画する', () => {
+  it('非 public / localOnly に visibility バッジを描画する（アイコンのみ・テキスト無し。docs/card-meta-row-spec.md §4）', () => {
     render(<PostCard post={makePost({ visibility: 'followers', localOnly: true })} />);
-    expect(screen.getByText(/ローカルのみ/)).toBeInTheDocument();
-    expect(screen.getByTitle('ローカルのみ')).toBeInTheDocument();
+    // 🔒+📍 の合成、ツールチップも合成。テキスト「ローカルのみ」は出ない
+    const badge = screen.getByTitle('ローカルのみ・followers');
+    expect(badge).toHaveTextContent('🔒📍');
+    expect(badge).not.toHaveTextContent('ローカルのみ');
   });
 });
 
@@ -452,10 +454,13 @@ describe('表示名（docs/name-display-spec.md）', () => {
     );
     const main = container.querySelector('.author-line-main');
     const meta = container.querySelector('.author-line-meta');
+    const attr = container.querySelector('.author-line-attr');
     expect(main?.querySelector('.display-name')).not.toBeNull();
     expect(main?.querySelector('time.time')).not.toBeNull();
+    // 2行目=投稿者情報、3行目=帰属情報（docs/card-meta-row-spec.md §3）
     expect(meta?.querySelector('.handle')).not.toBeNull();
-    expect(meta?.querySelector('.channel-chip')).not.toBeNull();
-    expect(meta?.querySelector('.provider-badge')).not.toBeNull();
+    expect(meta?.querySelector('.channel-chip')).toBeNull();
+    expect(attr?.querySelector('.channel-chip')).not.toBeNull();
+    expect(attr?.querySelector('.provider-badge')).not.toBeNull();
   });
 });
