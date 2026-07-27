@@ -1,6 +1,6 @@
 /** フロント・Worker 共通のドメインモデル（最小抽象） */
 
-export type Provider = 'bluesky' | 'misskey' | 'mastodon'; // mastodon は型上予約のみ
+export type Provider = 'bluesky' | 'misskey' | 'mastodon' | 'mixi2'; // mastodon・mixi2 は型上予約のみ（mixi2: docs/mixi2-integration-spec.md）
 
 export type Media = { type: 'image'; url: string; alt?: string };
 
