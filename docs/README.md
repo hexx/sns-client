@@ -14,6 +14,7 @@
 - [mixi2-integration-spec.md](mixi2-integration-spec.md) — mixi2 統合 可行性とスコープ決定（対応しない決定）
 
 ## UI
+- [mobile-paging-spec.md](mobile-paging-spec.md) — スマホ UI 仕様書（スワイプページングによる複数 View 閲覧）
 - [deck-compose-spec.md](deck-compose-spec.md) — デッキ UI からの Compose（新規投稿）仕様書
 - [linkcard-display-spec.md](linkcard-display-spec.md) — LinkCard（リンクプレビューカード）表示機能 仕様
 - [name-display-spec.md](name-display-spec.md) — 投稿者名表示 仕様書（長い名前の縦伸び解消＋名前絵文字の解決）
@@ -34,3 +35,4 @@
 - [0007](adr/0007-misskey-reaction-action-design.md) — Misskey リアクション操作：楽観更新・単一 POST ルート・`ref` ターゲット
 - [0008](adr/0008-app-icon-static-svg-assets.md) — アプリアイコン：SVG 単一ソース + コミット済み PNG、Provider ブランドカラーの不採用
 - [0009](adr/0009-mixi2-out-of-scope.md) — mixi2 を Provider として統合しない（型上予約のみ）
+- [0010](adr/0010-mobile-swipe-paging-all-mounted.md) — スマホ UI は全ページ常時マウントのスワイプページング

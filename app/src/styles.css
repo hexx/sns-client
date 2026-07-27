@@ -22,15 +22,7 @@ body,
   font-family: system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
 }
 
-.timeline-root {
-  display: flex;
-  flex-direction: column;
-  height: 100dvh;
-  max-width: 640px;
-  margin: 0 auto;
-}
-
-/* TimelineCore: モバイルでは timeline-root 内を埋め、デッキではカラム内を埋める */
+/* TimelineCore: モバイルでは pager-page 内を埋め、デッキではカラム内を埋める */
 .timeline-core {
   display: flex;
   flex-direction: column;
@@ -95,9 +87,6 @@ body,
 .deck-col-head button:disabled {
   opacity: 0.35;
   cursor: default;
-}
-.deck-col .new-pill {
-  top: 8px;
 }
 .deck-col .card {
   padding: 10px 12px;
@@ -186,34 +175,6 @@ body,
   white-space: nowrap;
 }
 
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  background: var(--bg);
-  z-index: 10;
-}
-.topbar h1 {
-  font-size: 18px;
-  margin: 0;
-}
-.refresh-btn {
-  background: var(--card);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 14px;
-  cursor: pointer;
-}
-.refresh-btn:disabled {
-  opacity: 0.6;
-}
-
 .banner {
   padding: 8px 16px;
   font-size: 13px;
@@ -234,7 +195,7 @@ body,
 
 .new-pill {
   position: sticky;
-  top: 52px;
+  top: 8px;
   z-index: 9;
   align-self: center;
   margin: 8px auto;
@@ -457,6 +418,139 @@ body,
   cursor: pointer;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
   z-index: 20;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.fab:hover {
+  transform: scale(1.06);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+}
+.fab:active {
+  transform: scale(0.94);
+}
+
+/* --- スマホ UI: スワイプページング（docs/mobile-paging-spec.md） --- */
+.pager-root {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+/* タブストリップ（§4.3）: View 名でジャンプ、非アクティブタブに新着バッジ */
+.pager-tabs {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  z-index: 10;
+}
+.pager-tabs::-webkit-scrollbar {
+  display: none;
+}
+.pager-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+.pager-tab:hover {
+  color: var(--text);
+}
+.pager-tab:active {
+  background: var(--card);
+}
+.pager-tab.active {
+  color: var(--text);
+}
+.pager-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* アクティブタブの下線インジケータ（JS で実測配置。スライドアニメ付き） */
+.pager-indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent);
+  transition: transform 0.28s cubic-bezier(0.3, 0.8, 0.3, 1), width 0.28s cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+
+/* 新着バッジ（§4.4） */
+.pager-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  animation: badge-pop 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+@keyframes badge-pop {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ページングトラック（§4.2 / §5）: pan-y で縦スクロールはブラウザ委任、横はジェスチャ調停 */
+.pager-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-y;
+}
+.pager-track {
+  display: flex;
+  height: 100%;
+  will-change: transform;
+}
+.pager-page {
+  flex: 0 0 100%;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pager-track,
+  .pager-indicator,
+  .pager-tab,
+  .fab {
+    transition: none !important;
+  }
+  .pager-badge {
+    animation: none;
+  }
 }
 
 .modal-backdrop {
@@ -606,27 +700,6 @@ body,
 .counter.over {
   color: #ff6b6b;
   font-weight: 700;
-}
-
-/* --- View 切替タブ --- */
-.view-tabs {
-  display: flex;
-  gap: 6px;
-}
-.view-tab {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.view-tab.active {
-  color: var(--text);
-  background: var(--card);
-  border-color: var(--border);
 }
 
 /* --- リッチテキスト --- */
