@@ -262,11 +262,41 @@ export function mfmToRich(text: string, emojiUrls: Record<string, string>): { ri
 
 // --- ドメインモデルへのマッピング ---
 
-function authorOf(u: MkUser): Author {
+const NAME_EMOJI_RE = /:([a-zA-Z0-9_]+):/g;
+
+/**
+ * 表示名中のカスタム絵文字ショートコード（`:name:`）をリッチセグメント化する
+ * （docs/name-display-spec.md §4）。レジストリ未収録のショートコードは生テキストのまま。
+ * ショートコードを1つも解決できない場合は undefined（プレーン描画にフォールバック）。
+ */
+export function nameToRich(name: string, registry: Record<string, string>): RichSegment[] | undefined {
+  if (!name.includes(':')) return undefined;
+  const segments: RichSegment[] = [];
+  let last = 0;
+  let resolved = false;
+  NAME_EMOJI_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = NAME_EMOJI_RE.exec(name))) {
+    const url = registry[m[1]];
+    if (!url) continue;
+    resolved = true;
+    if (m.index > last) segments.push({ type: 'text', text: name.slice(last, m.index) });
+    segments.push({ type: 'emoji', name: m[1], url });
+    last = m.index + m[0].length;
+  }
+  if (!resolved) return undefined;
+  if (last < name.length) segments.push({ type: 'text', text: name.slice(last) });
+  return segments;
+}
+
+function authorOf(u: MkUser, registry: Record<string, string> = {}): Author {
   const handle = u.host ? `${u.username}@${u.host}` : u.username;
+  const displayName = u.name || u.username;
+  const displayNameRich = nameToRich(displayName, registry);
   return {
     handle,
-    displayName: u.name || u.username,
+    displayName,
+    ...(displayNameRich ? { displayNameRich } : {}),
     ...(u.avatarUrl ? { avatarUrl: u.avatarUrl } : {}),
   };
 }
@@ -311,7 +341,7 @@ function basePost(note: MkNote, registry: Record<string, string>): Post {
   const post: Post = {
     id: note.id,
     provider: 'misskey',
-    author: authorOf(note.user),
+    author: authorOf(note.user, registry),
     text: plain,
     createdAt: note.createdAt,
     media: mediaOf(note.files),
@@ -343,7 +373,7 @@ export function mapNote(note: MkNote, registry: Record<string, string> = {}): Po
       ...inner,
       id: note.id, // renote 活動ごとに一意（dedup されすぎない）
       createdAt: note.createdAt, // フィードに現れた時刻（マージ順序の歪みを避ける）
-      repostedBy: authorOf(note.user),
+      repostedBy: authorOf(note.user, registry),
       source: note,
     };
     // チャンネルは外側（renote 活動）優先、無ければ内側（コンテンツの出身）。

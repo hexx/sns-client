@@ -19,7 +19,13 @@ export type SourceOption = { source: Source; name: string };
 /** /api/sources のプロバイダ別エントリ。片方失敗しても他方を返せるよう error を持つ */
 export type SourceCatalogEntry = { provider: Provider; options: SourceOption[]; error?: boolean };
 
-export type Author = { handle: string; displayName: string; avatarUrl?: string };
+export type Author = {
+  handle: string;
+  displayName: string;
+  /** 絵文字解決済みの表示名（あれば UI は RichText inline で描画。docs/name-display-spec.md §4） */
+  displayNameRich?: RichSegment[];
+  avatarUrl?: string;
+};
 
 /** 統一インラインリッチテキスト（ADR-0005）。BFF が MFM/facets から生成 */
 export type RichSegment =

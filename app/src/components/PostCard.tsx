@@ -1,7 +1,26 @@
 import { useState } from 'react';
-import type { Post } from '../../../shared/types';
+import type { Author, Post } from '../../../shared/types';
 import { ReactionPicker } from './ReactionPicker';
 import { RichText } from './RichText';
+
+/**
+ * 表示名（docs/name-display-spec.md）。絵文字解決済みの displayNameRich があれば RichText inline、
+ * なければプレーンテキスト。フルネームは title でホバー表示。クランプせず全文を表示する。
+ */
+function DisplayName({ author, className }: { author: Author; className?: string }) {
+  if (author.displayNameRich && author.displayNameRich.length > 0) {
+    return (
+      <span className={className} title={author.displayName}>
+        <RichText segments={author.displayNameRich} inline />
+      </span>
+    );
+  }
+  return (
+    <span className={className} title={author.displayName}>
+      {author.displayName}
+    </span>
+  );
+}
 
 function relTime(iso: string): string {
   const ms = new Date(iso).getTime();
@@ -65,7 +84,7 @@ function QuoteCard({ post }: { post: Post }) {
         {post.author.avatarUrl ? (
           <img className="avatar avatar-sm" src={post.author.avatarUrl} alt="" loading="lazy" />
         ) : null}
-        <span className="display-name">{post.author.displayName}</span>
+        <DisplayName author={post.author} className="display-name" />
         <span className="handle">@{post.author.handle}</span>
       </div>
       <Body post={post} />
@@ -184,8 +203,13 @@ export function PostCard({
   const reposted = Boolean(post.viewer?.repostUri);
   return (
     <article className="card">
-      {post.repostedBy && <div className="repost-badge">🔁 {post.repostedBy.displayName} がリポスト</div>}
+      {post.repostedBy && (
+        <div className="repost-badge">
+          🔁 <DisplayName author={post.repostedBy} className="repost-name" /> がリポスト
+        </div>
+      )}
 
+      {/* 2行ヘッダー（docs/name-display-spec.md §3）: 1行目=名前…時刻、2行目=@handle+補足チップ */}
       <div className="card-head">
         {post.author.avatarUrl ? (
           <img className="avatar" src={post.author.avatarUrl} alt="" loading="lazy" />
@@ -193,21 +217,25 @@ export function PostCard({
           <div className="avatar avatar-fallback" />
         )}
         <div className="author">
-          <span className="display-name">{post.author.displayName}</span>
-          <span className="handle">
-            @{post.author.handle}
-            <VisibilityBadge post={post} />
-          </span>
+          <div className="author-line author-line-main">
+            <DisplayName author={post.author} className="display-name" />
+            <time className="time" dateTime={post.createdAt}>
+              {relTime(post.createdAt)}
+            </time>
+          </div>
+          <div className="author-line author-line-meta">
+            <span className="handle">
+              @{post.author.handle}
+              <VisibilityBadge post={post} />
+            </span>
+            {post.channel && (
+              <span className="channel-chip" title={post.channel.name}>
+                📺 <span className="channel-name">{post.channel.name}</span>
+              </span>
+            )}
+            {badge && <span className="provider-badge">{badge}</span>}
+          </div>
         </div>
-        <time className="time" dateTime={post.createdAt}>
-          {relTime(post.createdAt)}
-        </time>
-        {badge && <span className="provider-badge">{badge}</span>}
-        {post.channel && (
-          <span className="channel-chip" title={post.channel.name}>
-            📺 <span className="channel-name">{post.channel.name}</span>
-          </span>
-        )}
       </div>
 
       <Body post={post} />

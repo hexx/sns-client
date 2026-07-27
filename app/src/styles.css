@@ -259,20 +259,48 @@ body,
 .author {
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+/* 2行ヘッダー（docs/name-display-spec.md §3）: 1行目=名前…時刻、2行目=@handle+チップ */
+.author-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
 .display-name {
   font-weight: 600;
   font-size: 15px;
+  line-height: 1.35;
+  /* クランプせず全文表示。確保された幅で自然に折り返す（1文字ずつの縦伸びを解消） */
+  overflow-wrap: anywhere;
+  transition: color 0.15s ease;
+}
+.display-name:hover {
+  color: #fff;
 }
 .handle {
   color: var(--muted);
   font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .time {
   margin-left: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 13px;
+}
+.repost-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+/* インラインリッチテキスト（名前行の絵文字など） */
+.rt-inline {
+  display: inline;
 }
 .text {
   margin: 8px 0;
@@ -671,6 +699,8 @@ body,
 }
 .quote-head .display-name {
   font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .quote-head .handle {
   font-size: 12px;

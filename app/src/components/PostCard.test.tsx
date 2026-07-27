@@ -219,7 +219,8 @@ describe('リッチ表示（Misskey 統合）', () => {
         post={makePost({ repostedBy: { handle: 'carol', displayName: 'Carol' } })}
       />,
     );
-    expect(screen.getByText(/Carol がリポスト/)).toBeInTheDocument();
+    // 名前は DisplayName（span）に分割されるため textContent で検証する
+    expect(document.querySelector('.repost-badge')?.textContent).toContain('Carol がリポスト');
   });
 
   it('引用カード（1階層）を描画する', () => {
@@ -340,7 +341,7 @@ describe('チャンネルチップ（Misskey、docs/misskey-channel-display-spec
         })}
       />,
     );
-    expect(screen.getByText(/Carol がリポスト/)).toBeInTheDocument();
+    expect(container.querySelector('.repost-badge')?.textContent).toContain('Carol がリポスト');
     expect(container.querySelector('.channel-chip')).toHaveTextContent('ゲーム部');
   });
 
@@ -394,5 +395,67 @@ describe('PostCard の操作ボタン（docs/deck-view-spec.md §6）', () => {
   it('帰属バッジを描画する', () => {
     render(<PostCard post={makePost()} badge="Misskey · 技術リスト" />);
     expect(screen.getByText('Misskey · 技術リスト')).toBeInTheDocument();
+  });
+});
+
+describe('表示名（docs/name-display-spec.md）', () => {
+  it('displayNameRich があれば絵文字を画像で描画し、title にフルネームを持つ', () => {
+    const { container } = render(
+      <PostCard
+        post={makePost({
+          author: {
+            handle: 'shizuku@misskey.io',
+            displayName: '応彩しずく :verified_blue:',
+            displayNameRich: [
+              { type: 'text', text: '応彩しずく ' },
+              { type: 'emoji', name: 'verified_blue', url: 'https://e/vb.png' },
+            ],
+          },
+        })}
+      />,
+    );
+    const img = container.querySelector('.display-name img.rt-emoji') as HTMLImageElement;
+    expect(img).not.toBeNull();
+    expect(img.src).toBe('https://e/vb.png');
+    expect(container.querySelector('.display-name')).toHaveAttribute('title', '応彩しずく :verified_blue:');
+  });
+
+  it('displayNameRich がなければプレーンテキスト描画', () => {
+    render(<PostCard post={makePost()} />);
+    expect(screen.getByText('Alice')).toBeInTheDocument();
+  });
+
+  it('repostedBy バッジの名前も絵文字解決される', () => {
+    const { container } = render(
+      <PostCard
+        post={makePost({
+          repostedBy: {
+            handle: 'carol',
+            displayName: 'Carol :kawaii:',
+            displayNameRich: [
+              { type: 'text', text: 'Carol ' },
+              { type: 'emoji', name: 'kawaii', url: 'https://e/k.png' },
+            ],
+          },
+        })}
+      />,
+    );
+    expect(container.querySelector('.repost-badge img.rt-emoji')).not.toBeNull();
+  });
+
+  it('2行ヘッダー: 時刻は名前行（author-line-main）、チップはメタ行（author-line-meta）', () => {
+    const { container } = render(
+      <PostCard
+        post={makePost({ channel: { id: 'ch1', name: '音楽部' } })}
+        badge="Misskey · 技術"
+      />,
+    );
+    const main = container.querySelector('.author-line-main');
+    const meta = container.querySelector('.author-line-meta');
+    expect(main?.querySelector('.display-name')).not.toBeNull();
+    expect(main?.querySelector('time.time')).not.toBeNull();
+    expect(meta?.querySelector('.handle')).not.toBeNull();
+    expect(meta?.querySelector('.channel-chip')).not.toBeNull();
+    expect(meta?.querySelector('.provider-badge')).not.toBeNull();
   });
 });

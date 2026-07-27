@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, getEmojiList, getTimeline, listSources, react, renote, MisskeyApiError, MisskeyAuthError } from './misskey';
+import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, nameToRich, getEmojiList, getTimeline, listSources, react, renote, MisskeyApiError, MisskeyAuthError } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -527,5 +527,46 @@ describe('listSources（ピッカーカタログ）', () => {
       { source: { provider: 'misskey', kind: 'list', id: 'L1' }, name: '技術' },
       { source: { provider: 'misskey', kind: 'antenna', id: 'A1' }, name: 'AI' },
     ]);
+  });
+});
+
+describe('nameToRich（表示名の絵文字解決。docs/name-display-spec.md §4）', () => {
+  it('解決できるショートコードを絵文字セグメント化する', () => {
+    const rich = nameToRich('応彩しずく :verified_blue:', { verified_blue: 'https://e/vb.png' });
+    expect(rich).toEqual([
+      { type: 'text', text: '応彩しずく ' },
+      { type: 'emoji', name: 'verified_blue', url: 'https://e/vb.png' },
+    ]);
+  });
+
+  it('未収録ショートコードは生テキストのまま', () => {
+    const rich = nameToRich('a :unknown: b', { known: 'u' });
+    expect(rich).toBeUndefined();
+  });
+
+  it('解決・未収録が混在すると、未収録はテキストとして残る', () => {
+    const rich = nameToRich(':known: x :unknown:', { known: 'u1' });
+    expect(rich).toEqual([
+      { type: 'emoji', name: 'known', url: 'u1' },
+      { type: 'text', text: ' x :unknown:' },
+    ]);
+  });
+
+  it('コロン無し → undefined', () => {
+    expect(nameToRich('ただの名前', { a: 'u' })).toBeUndefined();
+  });
+
+  it('mapNote: 投稿者名と repostedBy に反映される', () => {
+    // 通常ノート: author に反映
+    const p1 = mapNote(note({ user: user({ name: 'shizuku :verified_blue:' }) }), { verified_blue: 'https://e/vb.png' });
+    expect(p1.author.displayNameRich?.[1]).toEqual({ type: 'emoji', name: 'verified_blue', url: 'https://e/vb.png' });
+    // 純粋renote: 表示主体は内側ノートの著者、renote した人（外側）は repostedBy に入り同様に解決される
+    const n = note({
+      user: user({ name: 'carol :verified_blue:' }),
+      renote: note({ id: 'inner', text: 'body' }),
+      text: null,
+    });
+    const p2 = mapNote(n, { verified_blue: 'https://e/vb.png' });
+    expect(p2.repostedBy?.displayNameRich?.[1]).toEqual({ type: 'emoji', name: 'verified_blue', url: 'https://e/vb.png' });
   });
 });
