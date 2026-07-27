@@ -23,7 +23,7 @@
 
 ### 将来拡張（今回は対象外）
 - Misskey ストリーミング（BFF WebSocket プロキシ経由のリアルタイム購読）。
-- 返信・引用・新規投稿（compose）。
+- 返信・引用（新規投稿（compose）は [deck-compose-spec.md](./deck-compose-spec.md) で対応済み）。
 - 複数アカウント（Misskey / Bluesky 各複数）。
 - カラムごとのキーワードミュート・フィルタ。
 - カラムのドラッグ&ドロップ並び替え。
@@ -79,7 +79,8 @@
 - 閲覧 + いいね系 + リポスト系まで:
   - Bluesky: Like / Repost。
   - Misskey: リアクション（既存のカスタム絵文字ピッカー、[reaction-action-spec](./misskey-reaction-action-spec.md)）/ Renote。
-- 返信・引用・新規投稿は対象外（既存アプリのスマホ UI には compose があるが、デッキ UI からは起動しない）。
+- 新規投稿（Compose）は [deck-compose-spec.md](./deck-compose-spec.md) を参照（デッキ UI からの起動を対応済み）。
+- 返信・引用は対象外（deck-compose-spec でも引き続き非目標）。
 
 ## 7. UI（デスクトップ）
 
@@ -93,7 +94,7 @@
 
 ## 8. 非目標（v1）
 
-複数アカウント／ストリーミング／返信・引用・投稿／キーワードミュート／カラムの DnD 並び替え／スマホ向けデッキ最適化。
+複数アカウント／ストリーミング／返信・引用（新規投稿は [deck-compose-spec.md](./deck-compose-spec.md) で対応済み）／キーワードミュート／カラムの DnD 並び替え／スマホ向けデッキ最適化。
 
 ## 9. 既存文書との関係
 

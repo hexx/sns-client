@@ -54,10 +54,19 @@ beforeEach(() => {
 
 describe('Deck（カラム描画）', () => {
   it('View ごとにカラムを描画する', () => {
-    render(<Deck views={VIEWS} onViewsChange={() => {}} />);
+    render(<Deck views={VIEWS} onViewsChange={() => {}} onCompose={() => {}} />);
     expect(screen.getByRole('region', { name: 'ホーム' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: '技術' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '+ カラム追加' })).toBeInTheDocument();
+  });
+
+  it('新規投稿 FAB で onCompose が呼ばれる', async () => {
+    const user = userEvent.setup();
+    const onCompose = vi.fn();
+    render(<Deck views={VIEWS} onViewsChange={() => {}} onCompose={onCompose} />);
+
+    await user.click(screen.getByRole('button', { name: '新規投稿' }));
+    expect(onCompose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -65,7 +74,7 @@ describe('Deck（カラム追加）', () => {
   it('カタログから Source を選んで追加すると onViewsChange に乗る', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<Deck views={VIEWS} onViewsChange={onChange} />);
+    render(<Deck views={VIEWS} onViewsChange={onChange} onCompose={() => {}} />);
 
     await user.click(screen.getByRole('button', { name: '+ カラム追加' }));
     // ダイアログが開きカタログが取得される
@@ -93,7 +102,7 @@ describe('Deck（カラム追加）', () => {
 
   it('Source 未選択では保存できない', async () => {
     const user = userEvent.setup();
-    render(<Deck views={VIEWS} onViewsChange={() => {}} />);
+    render(<Deck views={VIEWS} onViewsChange={() => {}} onCompose={() => {}} />);
     await user.click(screen.getByRole('button', { name: '+ カラム追加' }));
     await waitFor(() => expect(api.sources).toHaveBeenCalled());
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
@@ -104,7 +113,7 @@ describe('Deck（削除・並び替え・編集）', () => {
   it('削除確認を経て onViewsChange から当該 View が消える', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<Deck views={VIEWS} onViewsChange={onChange} />);
+    render(<Deck views={VIEWS} onViewsChange={onChange} onCompose={() => {}} />);
 
     const delButtons = screen.getAllByRole('button', { name: '削除' });
     await user.click(delButtons[0]); // v1 の ✕
@@ -120,7 +129,7 @@ describe('Deck（削除・並び替え・編集）', () => {
   it('左右矢印で並び替える', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<Deck views={VIEWS} onViewsChange={onChange} />);
+    render(<Deck views={VIEWS} onViewsChange={onChange} onCompose={() => {}} />);
 
     const rightButtons = screen.getAllByRole('button', { name: '右へ移動' });
     await user.click(rightButtons[0]); // v1 を右へ
@@ -130,7 +139,7 @@ describe('Deck（削除・並び替え・編集）', () => {
   });
 
   it('端のカラムはそれ以上移動できない', () => {
-    render(<Deck views={VIEWS} onViewsChange={() => {}} />);
+    render(<Deck views={VIEWS} onViewsChange={() => {}} onCompose={() => {}} />);
     expect(screen.getAllByRole('button', { name: '左へ移動' })[0]).toBeDisabled();
     expect(screen.getAllByRole('button', { name: '右へ移動' })[1]).toBeDisabled();
   });
@@ -138,7 +147,7 @@ describe('Deck（削除・並び替え・編集）', () => {
   it('編集ダイアログで名前を変えると onViewsChange に反映される', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<Deck views={VIEWS} onViewsChange={onChange} />);
+    render(<Deck views={VIEWS} onViewsChange={onChange} onCompose={() => {}} />);
 
     await user.click(screen.getAllByRole('button', { name: '編集' })[1]); // v2 の ⚙
     const nameInput = await screen.findByRole('textbox', { name: 'カラム名' });
