@@ -9,8 +9,12 @@ SNS 横断で統一された「1つの投稿」のドメインモデル。UI は
 _Avoid_: status, toot, record
 
 **Provider**:
-投稿の由来となる SNS の種別（`bluesky` / `misskey` / `mastodon` / `mixi2`）。`mastodon`・`mixi2` は型上予約のみ（mixi2 は公式 API が Bot 用のため Provider 不成立、docs/mixi2-integration-spec.md）。
+投稿の由来となる SNS の種別（`bluesky` / `misskey` / `mastodon` / `mixi2`）。`mastodon`・`mixi2` は型上予約のみ（mixi2 は公式 API が Bot 用のため Provider 不成立、docs/mixi2-integration-spec.md）。Threads は Misskey の ActivityPub 連合で吸収するため Provider 不成立（docs/threads-integration-spec.md、ADR-0011）。型予約もしない。
 _Avoid_: network, service
+
+**remote user（リモートユーザー）**:
+Source が属するインスタンスの外にいる、連合経由で現れるユーザー。投稿者表示が `username@host` になる主体。Threads ユーザーは Misskey の Source において `@user@threads.net` のリモートユーザーとして現れる。
+_Avoid_: external user, federated user, よそのユーザー
 
 **Source**:
 1つの Provider に属する、投稿の時系列ストリーム1つ。home（ホーム）や、Bluesky の feed、Misskey の antenna などの種別（kind）と、必要に応じて ID を持つ。Timeline は1つ以上の Source を合成して作られる。
