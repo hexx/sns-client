@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
-import type { Post, Provider, ProviderInfo } from '../../../shared/types';
+import type { Destination, DestinationOption, Post, ProviderInfo } from '../../../shared/types';
 import { countGraphemes } from '../lib/graphemes';
 
 type Visibility = 'public' | 'home' | 'followers';
@@ -25,9 +25,21 @@ const EMPTY: Draft = {
   localOnly: false,
 };
 const MAX_IMAGES = 4;
-const TARGET_KEY = 'compose-target';
+const DEST_KEY = 'compose-destination';
 
 const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon', mixi2: 'mixi2' };
+
+/** Destination をセレクトの value として一意に識別するキー */
+function destKey(d: Destination): string {
+  return `${d.provider}:${d.kind}:${d.id ?? ''}`;
+}
+
+/** reply/quote 先から強制 Destination を導出する（チャンネルノートならそのチャンネル、さもなくば home。docs/compose-destination-spec.md §5.4） */
+function forcedDestOf(post?: Post): Destination | undefined {
+  if (!post) return undefined;
+  if (post.channel) return { provider: 'misskey', kind: 'channel', id: post.channel.id };
+  return { provider: post.provider, kind: 'home' };
+}
 
 export function Compose({
   providers,
@@ -42,31 +54,86 @@ export function Compose({
   onClose: () => void;
   onPosted: (post: Post) => void;
 }) {
-  // 返信/引用中は対象プロバイダに固定（クロスプロバイダ返信は不可）
-  const forced = replyTo?.provider ?? quote?.provider;
+  // 返信/引用中は対象 Destination に固定（クロスプロバイダ・クロスチャンネル返信は不可）
+  const ctxPost = replyTo ?? quote;
+  // 毎レンダーの新オブジェクト生成を避け、effect の依存を安定化（無限ループ防止）
+  const forced = useMemo(() => forcedDestOf(ctxPost), [replyTo, quote]);
   const configured = providers.filter((p) => p.configured).map((p) => p.provider);
 
-  const [target, setTarget] = useState<Provider>(
-    () => forced ?? (localStorage.getItem(TARGET_KEY) as Provider | null) ?? 'bluesky',
+  const [destination, setDestination] = useState<Destination>(
+    () =>
+      forced ??
+      (() => {
+        try {
+          const saved = localStorage.getItem(DEST_KEY);
+          if (saved) {
+            const d = JSON.parse(saved) as Destination;
+            if (d && (d.kind === 'home' || d.kind === 'channel')) return d;
+          }
+        } catch {
+          /* 壊れた保存値は無視して既定へ */
+        }
+        return { provider: 'bluesky', kind: 'home' };
+      })(),
   );
+  const [catalog, setCatalog] = useState<DestinationOption[] | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // providers 読み込み後に target を有効な（configured な）プロバイダへ補正
+  // 投稿先カタログの取得（失敗時は home のみの静的フォールバックで動作継続。docs/compose-destination-spec.md §5.1）
+  useEffect(() => {
+    let alive = true;
+    api
+      .destinations()
+      .then((entries) => {
+        if (alive) setCatalog(entries.flatMap((e) => e.options));
+      })
+      .catch((e) => {
+        console.error('[compose] destination catalog failed', e);
+        /* catalog=null のまま → home 静的フォールバック */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 選択可能オプション（カタログ + configured プロバイダの home 静的フォールバック、重複排除）
+  const options = useMemo(() => {
+    const list: DestinationOption[] = [];
+    const seen = new Set<string>();
+    const push = (o: DestinationOption) => {
+      const k = destKey(o.destination);
+      if (seen.has(k)) return;
+      seen.add(k);
+      list.push(o);
+    };
+    for (const o of catalog ?? []) push(o);
+    for (const p of configured) push({ destination: { provider: p, kind: 'home' }, name: 'ホーム' });
+    // 読込中の現在選択（チャンネル）が候補に無くても select の value が欠落しないようにする
+    if (destination.kind === 'channel') push({ destination, name: `📺 ${destination.id}` });
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog, providers, destination]);
+
+  // providers/カタログ読み込み後に destination を有効値へ補正
   useEffect(() => {
     if (forced) {
-      setTarget(forced);
+      setDestination(forced);
       return;
     }
     if (configured.length === 0) return;
-    if (!configured.includes(target)) {
-      const saved = localStorage.getItem(TARGET_KEY) as Provider | null;
-      setTarget(saved && configured.includes(saved) ? saved : configured[0]);
+    if (!configured.includes(destination.provider)) {
+      setDestination({ provider: configured[0], kind: 'home' });
+      return;
+    }
+    // カタログ読込後、存在しないチャンネルを指した保存値は当該プロバイダの home へフォールバック
+    if (catalog && destination.kind === 'channel' && !options.some((o) => destKey(o.destination) === destKey(destination))) {
+      setDestination({ provider: destination.provider, kind: 'home' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providers, forced]);
+  }, [providers, catalog, forced]);
 
   // アンマウント時に残りの Object URL を解放（メモリリーク防止）
   const imagesRef = useRef(draft.images);
@@ -76,6 +143,9 @@ export function Compose({
       for (const img of imagesRef.current) URL.revokeObjectURL(img.previewUrl);
     };
   }, []);
+
+  const target = destination.provider;
+  const isChannel = destination.kind === 'channel';
 
   // プロバイダ別の计数（bsky=grapheme / misskey=文字数）
   const cfg = providers.find((p) => p.provider === target)?.compose;
@@ -116,18 +186,20 @@ export function Compose({
         }),
       );
       // 2) 投稿（replyTo/quote は Post.ref をエコー。解釈は BFF 側）
+      // チャンネル投稿は visibility/localOnly を送らない（Misskey サーバが public/localOnly=true に強制するため。docs/compose-destination-spec.md §5.3）
       const post = await api.post({
         provider: target,
+        destination,
         text: draft.text,
         images: uploaded.length ? uploaded : undefined,
         replyTo: replyTo?.ref,
         quote: quote?.ref,
         contentWarning: draft.cwEnabled && draft.cw.trim() ? draft.cw.trim() : undefined,
         langs: target === 'bluesky' && draft.lang ? [draft.lang] : undefined,
-        visibility: target === 'misskey' ? draft.visibility : undefined,
-        localOnly: target === 'misskey' && draft.localOnly ? true : undefined,
+        visibility: target === 'misskey' && !isChannel ? draft.visibility : undefined,
+        localOnly: target === 'misskey' && !isChannel && draft.localOnly ? true : undefined,
       });
-      localStorage.setItem(TARGET_KEY, target);
+      localStorage.setItem(DEST_KEY, JSON.stringify(destination));
       onPosted(post);
       setDraft(EMPTY);
       onClose();
@@ -147,19 +219,35 @@ export function Compose({
             閉じる
           </button>
           {forced ? (
-            <span className="target-fixed">{PROVIDER_LABEL[forced] ?? forced} に投稿</span>
+            <span className="target-fixed">
+              {forced.kind === 'channel'
+                ? `📺 ${ctxPost?.channel?.name ?? forced.id ?? ''} へ投稿`
+                : `${PROVIDER_LABEL[forced.provider] ?? forced.provider} に投稿`}
+            </span>
           ) : (
-            configured.length > 1 && (
+            options.length > 1 && (
               <select
                 className="target-select"
-                value={target}
-                onChange={(e) => setTarget(e.target.value as Provider)}
+                aria-label="投稿先"
+                value={destKey(destination)}
+                onChange={(e) => {
+                  const next = options.find((o) => destKey(o.destination) === e.target.value);
+                  if (next) setDestination(next.destination);
+                }}
               >
-                {configured.map((p) => (
-                  <option key={p} value={p}>
-                    {PROVIDER_LABEL[p] ?? p}
-                  </option>
-                ))}
+                {configured.map((p) => {
+                  const opts = options.filter((o) => o.destination.provider === p);
+                  if (opts.length === 0) return null;
+                  return (
+                    <optgroup key={p} label={PROVIDER_LABEL[p] ?? p}>
+                      {opts.map((o) => (
+                        <option key={destKey(o.destination)} value={destKey(o.destination)}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
               </select>
             )
           )}
@@ -230,7 +318,7 @@ export function Compose({
           />
         )}
 
-        {target === 'misskey' && (
+        {target === 'misskey' && !isChannel && (
           <div className="compose-visibility">
             <select
               className="lang-select"
@@ -250,6 +338,10 @@ export function Compose({
               ローカルのみ
             </label>
           </div>
+        )}
+
+        {target === 'misskey' && isChannel && (
+          <div className="compose-visibility-note">チャンネル投稿は公開・ローカルのみ（Misskey 仕様）</div>
         )}
 
         {error && <div className="banner error">送信失敗（下書きは保持）: {error}</div>}

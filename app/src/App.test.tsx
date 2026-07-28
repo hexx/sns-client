@@ -14,6 +14,7 @@ vi.mock('./api', () => ({
     uploadMedia: vi.fn(),
     post: vi.fn(),
     sources: vi.fn(),
+    destinations: vi.fn(() => Promise.resolve([])),
   },
 }));
 
