@@ -16,6 +16,10 @@ _Avoid_: network, service
 1つの Provider に属する、投稿の時系列ストリーム1つ。home（ホーム）や、Bluesky の feed、Misskey の antenna などの種別（kind）と、必要に応じて ID を持つ。Timeline は1つ以上の Source を合成して作られる。
 _Avoid_: feed, antenna, list, channel（これらは特定の Provider における Source の実現形態であり、総称ではない）
 
+**Destination**:
+新しい Post の提出先（書き込み側）。`Source` と対になる概念で、`{provider, kind, id?}` と同じ形状を持つが、kind は投稿可能な種別（`home` / `channel`）に限られる（`list` / `antenna` / bsky `feed` は閲覧専用のため Destination にならない）。Compose は1つの投稿につき正確に1つの Destination を選ぶ。
+_Avoid_: target, 投稿先（識別子として）, to
+
 **View**:
 利用者が閲覧する1つの画面の定義。1つ以上の Source の集合で表され、クライアントがこの定義に従って各 Source を fetch・時系列合成し、Timeline として描画する。統合ホームも「フィード＋アンテナ」も等しく View の一实例。
 _Avoid_: column, tab, feed, timeline（Timeline は描画結果、View はそのソース構成の定義）

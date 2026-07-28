@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, nameToRich, getEmojiList, getTimeline, listSources, react, renote, MisskeyApiError, MisskeyAuthError } from './misskey';
+import { createPost, loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, nameToRich, getEmojiList, getTimeline, listDestinations, listSources, react, renote, MisskeyApiError, MisskeyAuthError } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -555,6 +555,70 @@ describe('listSources（ピッカーカタログ）', () => {
     // お気に入りは limit: 100 の1ページ分のみ（docs/misskey-channel-source-spec.md）
     const fav = calls.find((c) => c.url.endsWith('/api/channels/my-favorites'));
     expect(fav?.body).toMatchObject({ limit: 100 });
+  });
+});
+
+describe('listDestinations（投稿先カタログ。docs/compose-destination-spec.md §4.1）', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('ホーム + フォロー中∪お気に入りチャンネル（id 重複排除・📺 プレフィックス）を返す', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, body: JSON.parse(String(init?.body ?? '{}')) });
+      if (url.endsWith('/api/channels/followed')) {
+        return new Response(JSON.stringify([{ id: 'C1', name: 'ゲーム部' }, { id: 'C2', name: '技術部' }]), { status: 200 });
+      }
+      if (url.endsWith('/api/channels/my-favorites')) {
+        // C2 はフォロー中と重複 → 排除される
+        return new Response(JSON.stringify([{ id: 'C2', name: '技術部' }, { id: 'C3', name: '音楽部' }]), { status: 200 });
+      }
+      return new Response('null', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const options = await listDestinations({ MISSKEY_INSTANCE_URL: 'https://dest.test', MISSKEY_TOKEN: 't' });
+    expect(options).toEqual([
+      { destination: { provider: 'misskey', kind: 'home' }, name: 'ホーム' },
+      { destination: { provider: 'misskey', kind: 'channel', id: 'C1' }, name: '📺 ゲーム部' },
+      { destination: { provider: 'misskey', kind: 'channel', id: 'C2' }, name: '📺 技術部' },
+      { destination: { provider: 'misskey', kind: 'channel', id: 'C3' }, name: '📺 音楽部' },
+    ]);
+    const followed = calls.find((c) => c.url.endsWith('/api/channels/followed'));
+    expect(followed?.body).toMatchObject({ limit: 100 });
+  });
+});
+
+describe('createPost（Destination 受け渡し。docs/compose-destination-spec.md §4.2）', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stubCreate(calls: { url: string; body: Record<string, unknown> }[]) {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body ?? '{}')) });
+      return new Response(JSON.stringify({ createdNote: note() }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  it('destination=channel → notes/create に channelId を送る', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    stubCreate(calls);
+    await createPost(
+      { MISSKEY_INSTANCE_URL: 'https://post.test', MISSKEY_TOKEN: 't' },
+      { provider: 'misskey', text: 'hi', destination: { provider: 'misskey', kind: 'channel', id: 'C1' } },
+    );
+    const call = calls.find((c) => c.url.endsWith('/api/notes/create'));
+    expect(call?.body).toMatchObject({ text: 'hi', channelId: 'C1' });
+  });
+
+  it('destination=home / 省略 → channelId を送らない', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    stubCreate(calls);
+    await createPost(
+      { MISSKEY_INSTANCE_URL: 'https://post.test', MISSKEY_TOKEN: 't' },
+      { provider: 'misskey', text: 'hi', destination: { provider: 'misskey', kind: 'home' } },
+    );
+    const call = calls.find((c) => c.url.endsWith('/api/notes/create'));
+    expect(call?.body).not.toHaveProperty('channelId');
   });
 });
 

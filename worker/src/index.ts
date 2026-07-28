@@ -6,6 +6,8 @@
  */
 import { API, VIEWS_KV_KEY } from '../../shared/constants';
 import type {
+  DestinationCatalogEntry,
+  DestinationOption,
   LikeRequest,
   PostInputWire,
   Provider,
@@ -38,6 +40,7 @@ import {
   getComposeCharLimit,
   getEmojiList as misskeyEmojis,
   getTimeline as misskeyTimeline,
+  listDestinations as misskeyDestinations,
   listSources as misskeySources,
   react as misskeyReact,
   renote as misskeyRenote,
@@ -60,6 +63,33 @@ async function collectSources(provider: Provider, fn: () => Promise<SourceOption
     console.error(`[api/sources:${provider}]`, e);
     return { provider, options: [], error: true };
   }
+}
+
+/** /api/destinations: /api/sources と同じ部分障害耐性（片方失敗しても他方は返す） */
+async function collectDestinations(
+  provider: Provider,
+  fn: () => Promise<DestinationOption[]>,
+): Promise<DestinationCatalogEntry> {
+  try {
+    return { provider, options: await fn() };
+  } catch (e) {
+    console.error(`[api/destinations:${provider}]`, e);
+    return { provider, options: [], error: true };
+  }
+}
+
+/**
+ * PostInputWire.destination の検証（docs/compose-destination-spec.md §4.2）。
+ * 問題なければ null、あればエラー文言を返す。省略（home）は常に有効。
+ */
+function validateDestination(input: PostInputWire): string | null {
+  const d = input.destination;
+  if (!d) return null;
+  if (d.provider !== input.provider) return 'destination.provider mismatch';
+  if (d.kind !== 'home' && d.kind !== 'channel') return `invalid destination.kind: ${String(d.kind)}`;
+  if (d.kind === 'channel' && (typeof d.id !== 'string' || d.id.length === 0)) return 'destination.id required';
+  if (d.kind === 'channel' && d.provider !== 'misskey') return 'channel destination is misskey only';
+  return null;
 }
 
 /** プロバイダごとに許容する Source kind（docs/deck-view-spec.md §3） */
@@ -231,6 +261,15 @@ export default {
       return json(entries);
     }
 
+    if (url.pathname === API.destinations && request.method === 'GET') {
+      // Bluesky は home のみ（list/feed はアグリゲーションで投稿概念なし）。静的に列挙するためカタログ失敗時も home は常に残る
+      const entries = await Promise.all([
+        collectDestinations('bluesky', async () => [{ destination: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }]),
+        collectDestinations('misskey', () => misskeyDestinations(env)),
+      ]);
+      return json(entries);
+    }
+
     if (url.pathname === API.media && request.method === 'POST') {
       const provider = url.searchParams.get('provider');
       if (!isProvider(provider)) return json({ error: 'invalid provider' }, { status: 400 });
@@ -251,6 +290,8 @@ export default {
       const input = (await request.json().catch(() => null)) as PostInputWire | null;
       if (!input) return json({ error: 'invalid json' }, { status: 400 });
       if (!isProvider(input.provider)) return json({ error: 'invalid provider' }, { status: 400 });
+      const destErr = validateDestination(input);
+      if (destErr) return json({ error: destErr }, { status: 400 });
       if (input.provider === 'bluesky') {
         return run('api/post:bluesky', input.provider, () => bskyPost(env.BSKY_HANDLE, env.BSKY_APP_PASSWORD, input), 201);
       }

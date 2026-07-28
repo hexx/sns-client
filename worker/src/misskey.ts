@@ -6,6 +6,7 @@
 import { parse, toString } from 'mfm-js';
 import type {
   Author,
+  DestinationOption,
   EmojiInfo,
   Media,
   Post,
@@ -439,6 +440,27 @@ export async function listSources(env: MisskeyEnv): Promise<SourceOption[]> {
   return options;
 }
 
+/**
+ * Compose 用の投稿先（Destination）一覧（ホーム + チャンネル）。
+ * チャンネル候補は channels/followed（フォロー中）∪ channels/my-favorites（お気に入り）を id で重複排除。
+ * 閲覧カタログ（listSources）がお気に入りのみなのに対し、投稿先はフォロー中を本命とする意図的な差異
+ * （docs/compose-destination-spec.md §4.1）。
+ */
+export async function listDestinations(env: MisskeyEnv): Promise<DestinationOption[]> {
+  const options: DestinationOption[] = [{ destination: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }];
+  const [followed, favorites] = await Promise.all([
+    mkApi<{ id: string; name: string }[]>(env, 'channels/followed', { limit: 100 }),
+    mkApi<{ id: string; name: string }[]>(env, 'channels/my-favorites', { limit: 100 }),
+  ]);
+  const seen = new Set<string>();
+  for (const c of [...(followed ?? []), ...(favorites ?? [])]) {
+    if (seen.has(c.id)) continue;
+    seen.add(c.id);
+    options.push({ destination: { provider: 'misskey', kind: 'channel', id: c.id }, name: `📺 ${c.name}` });
+  }
+  return options;
+}
+
 /** 画像をドライブへアップロードし、fileId を opaque 参照として返す */
 export async function uploadMedia(
   env: MisskeyEnv,
@@ -472,6 +494,8 @@ export async function createPost(env: MisskeyEnv, input: PostInputWire): Promise
   if (fileIds.length > 0) params.fileIds = fileIds;
   if (input.replyTo) params.replyId = input.replyTo as string;
   if (input.quote) params.renoteId = input.quote as string; // 引用 = 本文付き renote
+  // チャンネル投稿（docs/compose-destination-spec.md §4.2）。visibility/localOnly はサーバが public/true に強制するため送信値は意味を持たない
+  if (input.destination?.kind === 'channel') params.channelId = input.destination.id;
   const res = await mkApi<{ createdNote: MkNote }>(env, 'notes/create', params);
   const registry = await loadEmojiRegistry(env);
   return mapNote(res.createdNote, registry);

@@ -1,6 +1,7 @@
 /** BFF (/api/*) を叩く薄い fetch クライアント */
 import { API } from '../../shared/constants';
 import type {
+  DestinationCatalogEntry,
   EmojiInfo,
   Health,
   MediaUploadResponse,
@@ -67,6 +68,8 @@ export const api = {
     request<View[]>(API.views, { method: 'PUT', body: JSON.stringify(views) }),
   /** ピッカー用の選択可能 Source 一覧（プロバイダ別。部分失敗は error フラグで返る） */
   sources: () => request<SourceCatalogEntry[]>(API.sources),
+  /** Compose 用の選択可能 Destination 一覧（プロバイダ別。部分失敗は error フラグで返る。docs/compose-destination-spec.md） */
+  destinations: () => request<DestinationCatalogEntry[]>(API.destinations),
   providers: () => request<ProviderInfo[]>(API.providers),
   timeline: (source: Source, cursor?: string) =>
     request<TimelineResponse>(`${API.timeline}?${sourceQuery(source, cursor)}`),

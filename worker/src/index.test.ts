@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
 import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, likePost as bskyLike, listSources as bskySources, repostPost as bskyRepost, resetSession, unlikePost as bskyUnlike, unrepostPost as bskyUnrepost, uploadMedia as bskyUpload } from './bsky';
-import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, listSources as misskeySources, react as misskeyReact, renote as misskeyRenote, uploadMedia as misskeyUpload } from './misskey';
+import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, listDestinations as misskeyDestinations, listSources as misskeySources, react as misskeyReact, renote as misskeyRenote, uploadMedia as misskeyUpload } from './misskey';
 
 // モジュール境界でモック（instanceof のため AuthError 系は実物を維持）
 vi.mock('./bsky', async (importOriginal) => {
@@ -31,6 +31,7 @@ vi.mock('./misskey', async (importOriginal) => {
     react: vi.fn(),
     getEmojiList: vi.fn(),
     listSources: vi.fn(),
+    listDestinations: vi.fn(),
     renote: vi.fn(),
   };
 });
@@ -243,6 +244,36 @@ describe('sources catalog', () => {
   });
 });
 
+describe('destinations catalog（docs/compose-destination-spec.md §4.1）', () => {
+  it('bluesky は home 静的、misskey はカタログ由来を返す', async () => {
+    vi.mocked(misskeyDestinations).mockResolvedValue([
+      { destination: { provider: 'misskey', kind: 'home' }, name: 'ホーム' },
+      { destination: { provider: 'misskey', kind: 'channel', id: 'C1' }, name: '📺 ゲーム部' },
+    ]);
+    const res = await worker.fetch(new Request('https://x/api/destinations'), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([
+      { provider: 'bluesky', options: [{ destination: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }] },
+      {
+        provider: 'misskey',
+        options: [
+          { destination: { provider: 'misskey', kind: 'home' }, name: 'ホーム' },
+          { destination: { provider: 'misskey', kind: 'channel', id: 'C1' }, name: '📺 ゲーム部' },
+        ],
+      },
+    ]);
+  });
+
+  it('misskey 失敗しても bluesky home は返る（error フラグ付き）', async () => {
+    vi.mocked(misskeyDestinations).mockRejectedValue(new Error('boom'));
+    const res = await worker.fetch(new Request('https://x/api/destinations'), makeEnv());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { provider: string; options: unknown[]; error?: boolean }[];
+    expect(body[0].options).toHaveLength(1);
+    expect(body[1]).toEqual({ provider: 'misskey', options: [], error: true });
+  });
+});
+
 describe('media / post dispatch', () => {
   it('media provider=misskey → drive fileId（alt 透過）', async () => {
     vi.mocked(misskeyUpload).mockResolvedValue('file-1');
@@ -312,7 +343,79 @@ describe('media / post dispatch', () => {
     );
     expect(res.status).toBe(400);
   });
+
+  // --- destination 検証（docs/compose-destination-spec.md §4.2） ---
+
+  it('post destination=misskey channel → misskeyPost へ透過（201）', async () => {
+    vi.mocked(misskeyPost).mockResolvedValue({ id: 'n1' } as never);
+    const input = {
+      provider: 'misskey',
+      text: 'hi',
+      destination: { provider: 'misskey', kind: 'channel', id: 'C1' },
+    };
+    const res = await worker.fetch(postRequest(input), makeEnv());
+    expect(res.status).toBe(201);
+    expect(misskeyPost).toHaveBeenCalledWith(expect.anything(), input);
+  });
+
+  it('post destination.provider 不一致 → 400', async () => {
+    const res = await worker.fetch(
+      postRequest({
+        provider: 'misskey',
+        text: 'hi',
+        destination: { provider: 'bluesky', kind: 'home' },
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(misskeyPost).not.toHaveBeenCalled();
+  });
+
+  it('post destination.kind 不正 → 400', async () => {
+    const res = await worker.fetch(
+      postRequest({
+        provider: 'misskey',
+        text: 'hi',
+        destination: { provider: 'misskey', kind: 'antenna', id: 'A1' },
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('post destination=channel で id 無し → 400', async () => {
+    const res = await worker.fetch(
+      postRequest({
+        provider: 'misskey',
+        text: 'hi',
+        destination: { provider: 'misskey', kind: 'channel' },
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('post destination=channel + bluesky → 400', async () => {
+    const res = await worker.fetch(
+      postRequest({
+        provider: 'bluesky',
+        text: 'hi',
+        destination: { provider: 'bluesky', kind: 'channel', id: 'C1' },
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(bskyPost).not.toHaveBeenCalled();
+  });
 });
+
+function postRequest(body: unknown): Request {
+  return new Request('https://x/api/post', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'content-type': 'application/json' },
+  });
+}
 
 function reactionRequest(body: unknown): Request {
   return new Request('https://x/api/reactions', {

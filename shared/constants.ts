@@ -4,6 +4,7 @@ export const API = {
   health: '/api/health',
   views: '/api/views',
   sources: '/api/sources',
+  destinations: '/api/destinations',
   providers: '/api/providers',
   timeline: '/api/timeline',
   media: '/api/media',

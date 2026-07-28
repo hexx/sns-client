@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Compose } from './Compose';
 import { api } from '../api';
@@ -14,6 +14,7 @@ vi.mock('../api', () => ({
     timeline: vi.fn(),
     uploadMedia: vi.fn(),
     post: vi.fn(),
+    destinations: vi.fn(() => Promise.resolve([])),
   },
 }));
 
@@ -47,6 +48,11 @@ function setTextarea(value: string): HTMLElement {
   fireEvent.change(textarea, { target: { value } });
   return textarea;
 }
+
+beforeEach(() => {
+  // destinations モックの既定（mockRejectedValue 等の持ち越しを防ぐ）
+  vi.mocked(api.destinations).mockResolvedValue([]);
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -135,5 +141,101 @@ describe('Compose（Misskey ターゲット）', () => {
     await waitFor(() =>
       expect(vi.mocked(api.post).mock.calls[0][0]).toMatchObject({ provider: 'misskey', visibility: 'public' }),
     );
+  });
+});
+
+describe('Compose（Destination 選択。docs/compose-destination-spec.md）', () => {
+  const CHANNELS = [
+    {
+      provider: 'misskey' as const,
+      options: [
+        { destination: { provider: 'misskey' as const, kind: 'home' as const }, name: 'ホーム' },
+        { destination: { provider: 'misskey' as const, kind: 'channel' as const, id: 'C1' }, name: '📺 ゲーム部' },
+      ],
+    },
+  ];
+
+  it('カタログから候補を描画し、チャンネル選択で visibility が隠れて注記が出る', async () => {
+    vi.mocked(api.destinations).mockResolvedValue(CHANNELS);
+    const user = userEvent.setup();
+    renderCompose();
+    await screen.findByRole('option', { name: '📺 ゲーム部' });
+    await user.selectOptions(screen.getByRole('combobox', { name: '投稿先' }), 'misskey:channel:C1');
+
+    expect(screen.getByText('チャンネル投稿は公開・ローカルのみ（Misskey 仕様）')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('公開（public）')).not.toBeInTheDocument();
+  });
+
+  it('チャンネル投稿 → destination を送り、visibility/localOnly は送らない', async () => {
+    vi.mocked(api.destinations).mockResolvedValue(CHANNELS);
+    vi.mocked(api.post).mockResolvedValue({ ...POSTED, provider: 'misskey', id: 'n1' });
+    const user = userEvent.setup();
+    renderCompose();
+    await screen.findByRole('option', { name: '📺 ゲーム部' });
+    await user.selectOptions(screen.getByRole('combobox', { name: '投稿先' }), 'misskey:channel:C1');
+    await user.type(screen.getByPlaceholderText(/MFM 使用可/), 'やあ');
+    await user.click(screen.getByRole('button', { name: '投稿' }));
+
+    await waitFor(() => {
+      const input = vi.mocked(api.post).mock.calls[0][0];
+      expect(input).toMatchObject({
+        provider: 'misskey',
+        destination: { provider: 'misskey', kind: 'channel', id: 'C1' },
+      });
+      expect(input.visibility).toBeUndefined();
+      expect(input.localOnly).toBeUndefined();
+    });
+    // 前回選択が compose-destination に永続化される
+    expect(JSON.parse(localStorage.getItem('compose-destination') ?? 'null')).toEqual({
+      provider: 'misskey',
+      kind: 'channel',
+      id: 'C1',
+    });
+  });
+
+  it('home 投稿 → destination.kind=home を送り、misskey なら visibility を維持する', async () => {
+    vi.mocked(api.post).mockResolvedValue({ ...POSTED, provider: 'misskey', id: 'n2' });
+    const user = userEvent.setup();
+    renderCompose({ providers: MISSKEY_ONLY });
+    await user.type(screen.getByPlaceholderText(/MFM 使用可/), 'やあ');
+    await user.click(screen.getByRole('button', { name: '投稿' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(api.post).mock.calls[0][0]).toMatchObject({
+        provider: 'misskey',
+        destination: { provider: 'misskey', kind: 'home' },
+        visibility: 'public',
+      }),
+    );
+  });
+
+  it('チャンネルノートへの返信 → Destination がそのチャンネルに固定される', async () => {
+    vi.mocked(api.post).mockResolvedValue({ ...POSTED, provider: 'misskey', id: 'n3' });
+    const user = userEvent.setup();
+    const replyTo: Post = {
+      ...POSTED,
+      provider: 'misskey',
+      ref: 'note-1',
+      channel: { id: 'C1', name: 'ゲーム部' },
+    };
+    renderCompose({ replyTo });
+
+    expect(screen.getByText('📺 ゲーム部 へ投稿')).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText('返信を投稿'), 're');
+    await user.click(screen.getByRole('button', { name: '投稿' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(api.post).mock.calls[0][0]).toMatchObject({
+        destination: { provider: 'misskey', kind: 'channel', id: 'C1' },
+      }),
+    );
+  });
+
+  it('カタログ取得失敗時も home 候補だけで動作する', async () => {
+    vi.mocked(api.destinations).mockRejectedValue(new Error('boom'));
+    renderCompose();
+    // bsky+misskey の home 2候補（静的フォールバック）でセレクタ表示
+    const select = await screen.findByRole('combobox', { name: '投稿先' });
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['ホーム', 'ホーム']);
   });
 });

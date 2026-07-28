@@ -974,3 +974,8 @@ button.reaction:hover {
   font-size: 13px;
   color: var(--muted);
 }
+.compose-visibility-note {
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--muted);
+}

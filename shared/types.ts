@@ -19,6 +19,15 @@ export type SourceOption = { source: Source; name: string };
 /** /api/sources のプロバイダ別エントリ。片方失敗しても他方を返せるよう error を持つ */
 export type SourceCatalogEntry = { provider: Provider; options: SourceOption[]; error?: boolean };
 
+/** 新しい Post の提出先（書き込み側）。Source と対になる概念（docs/compose-destination-spec.md） */
+export type Destination = { provider: Provider; kind: 'home' | 'channel'; id?: string };
+
+/** ピッカー用の選択可能 Destination（人間可読名付き）。/api/destinations が配信する */
+export type DestinationOption = { destination: Destination; name: string };
+
+/** /api/destinations のプロバイダ別エントリ。片方失敗しても他方を返せるよう error を持つ */
+export type DestinationCatalogEntry = { provider: Provider; options: DestinationOption[]; error?: boolean };
+
 export type Author = {
   handle: string;
   displayName: string;
@@ -71,6 +80,7 @@ export type TimelineResponse = { posts: Post[]; nextCursor: string | null };
 /** 投稿リクエスト（ブラウザ → BFF）。画像は事前アップロード済みの opaque 参照 */
 export type PostInputWire = {
   provider: Provider; // 投稿先（単一ターゲット）
+  destination?: Destination; // 提出先（省略 = home）。provider との一致を BFF が検証（docs/compose-destination-spec.md §4.2）
   text: string;
   images?: { blob: unknown; alt: string }[]; // blob は opaque（bsky=blob / misskey=drive fileId）
   replyTo?: unknown; // opaque（Post.ref をエコー）。BFF がプロバイダごとに解釈
