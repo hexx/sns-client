@@ -24,6 +24,7 @@
 - [pwa-sw-update-fix-spec.md](pwa-sw-update-fix-spec.md) — PWA Service Worker 更新固定 修正仕様
 - [app-icon-spec.md](app-icon-spec.md) — アプリアイコン（ファビコン / PWA アイコン）仕様
 - [dependency-upgrade-2026-07.md](dependency-upgrade-2026-07.md) — 全依存ライブラリの最新化（2026-07）
+- [hono-migration-spec.md](hono-migration-spec.md) — Worker ルータの Hono 移行 仕様書
 
 ## ADR（設計判断の記録）
 - [0001](adr/0001-test-scope-no-e2e.md) — テスト範囲はユニット＋コンポーネントテストに限定し、E2E は採用しない
@@ -36,3 +37,5 @@
 - [0008](adr/0008-app-icon-static-svg-assets.md) — アプリアイコン：SVG 単一ソース + コミット済み PNG、Provider ブランドカラーの不採用
 - [0009](adr/0009-mixi2-out-of-scope.md) — mixi2 を Provider として統合しない（型上予約のみ）
 - [0010](adr/0010-mobile-swipe-paging-all-mounted.md) — スマホ UI は全ページ常時マウントのスワイプページング
+- [0011](adr/0011-threads-via-misskey-federation.md) — Threads は Provider 化せず Misskey 連合で吸収する
+- [0012](adr/0012-hono-as-worker-router.md) — BFF Worker のルータに Hono を採用する
