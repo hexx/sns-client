@@ -9,12 +9,20 @@ SNS 横断で統一された「1つの投稿」のドメインモデル。UI は
 _Avoid_: status, toot, record
 
 **Provider**:
-投稿の由来となる SNS の種別（`bluesky` / `misskey` / `mastodon` / `mixi2`）。`mastodon`・`mixi2` は型上予約のみ（mixi2 は公式 API が Bot 用のため Provider 不成立、docs/mixi2-integration-spec.md）。Threads は Misskey の ActivityPub 連合で吸収するため Provider 不成立（docs/threads-integration-spec.md、ADR-0011）。型予約もしない。
+投稿の由来となる SNS の種別（`bluesky` / `misskey` / `mastodon` / `mixi2` / `nostr`）。`mastodon`・`mixi2` は型上予約のみ（mixi2 は公式 API が Bot 用のため Provider 不成立、docs/mixi2-integration-spec.md）。Threads は Misskey の ActivityPub 連合で吸収するため Provider 不成立（docs/threads-integration-spec.md、ADR-0011）。型予約もしない。`nostr` は初の読み取り専用 Provider（閲覧のみで Destination を持たない、docs/nostr-integration-spec.md、ADR-0013）。
 _Avoid_: network, service
 
 **remote user（リモートユーザー）**:
 Source が属するインスタンスの外にいる、連合経由で現れるユーザー。投稿者表示が `username@host` になる主体。Threads ユーザーは Misskey の Source において `@user@threads.net` のリモートユーザーとして現れる。
 _Avoid_: external user, federated user, よそのユーザー
+
+**relay（リレー）**:
+Nostr における、イベント（投稿）を預かって配信する WebSocket サーバ。中央サーバが存在しないため、閲覧は「複数リレーへの並列照会」として行う。Source の実現形態としての `relay` Source は、そのリレーのグローバル新着（コミュニティのローカル TL 相当）を意味する。
+_Avoid_: server, instance, node
+
+**pubkey（公開鍵）**:
+Nostr におけるユーザー識別子。`npub1...` は同じ公開鍵の人間可読な bech32 表現。Nostr にはサーバ側のタイムラインが無いため、Source の実現形態としての `pubkey` Source は、この公開鍵が署名したイベントの購読を意味する。
+_Avoid_: user ID, account, address
 
 **Source**:
 1つの Provider に属する、投稿の時系列ストリーム1つ。home（ホーム）や、Bluesky の feed、Misskey の antenna などの種別（kind）と、必要に応じて ID を持つ。Timeline は1つ以上の Source を合成して作られる。

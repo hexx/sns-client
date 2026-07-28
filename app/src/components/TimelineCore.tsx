@@ -11,7 +11,7 @@ import type { Post, Provider, Source } from '../../../shared/types';
 import { PostCard } from './PostCard';
 
 const TICK_MS = 15_000;
-const POLL_MS: Record<Provider, number> = { misskey: 15_000, bluesky: 30_000, mastodon: 30_000, mixi2: 30_000 };
+const POLL_MS: Record<Provider, number> = { misskey: 15_000, bluesky: 30_000, mastodon: 30_000, mixi2: 30_000, nostr: 30_000 };
 const PTR_THRESHOLD = 70;
 
 export type TimelineCoreHandle = { refresh: () => Promise<void> };
