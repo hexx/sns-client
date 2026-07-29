@@ -174,6 +174,14 @@ body,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.nostr-add {
+  display: flex;
+  gap: 6px;
+  padding: 4px 2px;
+}
+.nostr-add .cw-input {
+  flex: 1 1 auto;
+}
 
 .banner {
   padding: 8px 16px;

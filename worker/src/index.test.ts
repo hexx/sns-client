@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
 import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, likePost as bskyLike, listSources as bskySources, repostPost as bskyRepost, resetSession, unlikePost as bskyUnlike, unrepostPost as bskyUnrepost, uploadMedia as bskyUpload } from './bsky';
 import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, listDestinations as misskeyDestinations, listSources as misskeySources, react as misskeyReact, renote as misskeyRenote, uploadMedia as misskeyUpload } from './misskey';
+import { getTimeline as nostrTimeline } from './nostr';
 
 // モジュール境界でモック（instanceof のため AuthError 系は実物を維持）
 vi.mock('./bsky', async (importOriginal) => {
@@ -34,6 +35,11 @@ vi.mock('./misskey', async (importOriginal) => {
     listDestinations: vi.fn(),
     renote: vi.fn(),
   };
+});
+// nostr は実体が WebSocket を開くため、ルーティングテストではモック（実挙動は nostr.test.ts で検証）
+vi.mock('./nostr', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./nostr')>();
+  return { ...actual, getTimeline: vi.fn() };
 });
 
 function makeEnv(assetsFetch = vi.fn()): Env {
@@ -83,6 +89,97 @@ describe('health / views / providers', () => {
     const res = await worker.fetch(new Request('https://x/api/providers'), env);
     const list = (await res.json()) as { provider: string; configured: boolean }[];
     expect(list.find((p) => p.provider === 'misskey')!.configured).toBe(false);
+  });
+
+  it('providers: nostr は常に configured・compose 無し（読み取り専用、§5.3）', async () => {
+    const res = await worker.fetch(new Request('https://x/api/providers'), makeEnv());
+    const list = (await res.json()) as { provider: string; configured: boolean; compose?: unknown }[];
+    const nostr = list.find((p) => p.provider === 'nostr')!;
+    expect(nostr.configured).toBe(true);
+    expect(nostr.compose).toBeUndefined();
+  });
+});
+
+describe('nostr ルーティング（読み取り専用）', () => {
+  it('timeline: pubkey + id → nostrTimeline に dispatch', async () => {
+    vi.mocked(nostrTimeline).mockResolvedValue({ posts: [], nextCursor: null });
+    const res = await worker.fetch(
+      new Request('https://x/api/timeline?provider=nostr&kind=pubkey&id=npub1abc'),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(nostrTimeline).toHaveBeenCalledWith({ provider: 'nostr', kind: 'pubkey', id: 'npub1abc' }, undefined);
+  });
+
+  it('timeline: pubkey で id 無し → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/timeline?provider=nostr&kind=pubkey'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('timeline: 不正な kind → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/timeline?provider=nostr&kind=home'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('timeline: 不正な npub → 400（NostrError をマップ）', async () => {
+    vi.mocked(nostrTimeline).mockImplementation(async () => {
+      const { NostrError } = await import('./nostr');
+      throw new NostrError(400, 'invalid npub');
+    });
+    const res = await worker.fetch(
+      new Request('https://x/api/timeline?provider=nostr&kind=pubkey&id=npub1bad'),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid npub');
+  });
+
+  it('post: nostr は投稿不可 → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/post', {
+      method: 'POST',
+      body: JSON.stringify({ provider: 'nostr', text: 'hi' }),
+    }), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('media: nostr は 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/media?provider=nostr', {
+      method: 'POST',
+      body: new Uint8Array([1, 2, 3]),
+    }), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('reposts: nostr は 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/reposts', {
+      method: 'POST',
+      body: JSON.stringify({ provider: 'nostr', ref: 'x' }),
+    }), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('views PUT: nostr source（pubkey+id）を受け付ける', async () => {
+    const { env, kv } = (() => {
+      const store = { get: vi.fn(async () => null), put: vi.fn(async () => {}) };
+      return { env: { ...makeEnv(), VIEWS: store as unknown as Env['VIEWS'] }, kv: store };
+    })();
+    const body = [{ id: 'n', name: 'Nostr', sources: [{ provider: 'nostr', kind: 'pubkey', id: 'npub1abc' }] }];
+    const res = await worker.fetch(new Request('https://x/api/views', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }), env);
+    expect(res.status).toBe(200);
+    expect(kv.put).toHaveBeenCalled();
+  });
+
+  it('views PUT: nostr source で id 無し → 400', async () => {
+    const env = { ...makeEnv(), VIEWS: { get: vi.fn(), put: vi.fn() } as unknown as Env['VIEWS'] };
+    const body = [{ id: 'n', name: 'Nostr', sources: [{ provider: 'nostr', kind: 'pubkey' }] }];
+    const res = await worker.fetch(new Request('https://x/api/views', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }), env);
+    expect(res.status).toBe(400);
   });
 });
 

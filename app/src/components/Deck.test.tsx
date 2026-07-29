@@ -182,3 +182,67 @@ describe('Deck（削除・並び替え・編集）', () => {
     expect(next[1].sources).toEqual([{ provider: 'misskey', kind: 'list', id: 'mk-L1' }]);
   });
 });
+
+async function openEditor(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: '+ カラム追加' }));
+  await waitFor(() => expect(api.sources).toHaveBeenCalled());
+}
+
+describe('Deck（Nostr 自由入力、docs/nostr-integration-spec.md §6.6）', () => {
+  it('npub を入力すると pubkey Source として追加・保存される', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Deck views={VIEWS} onViewsChange={onChange} onCompose={() => {}} />);
+    await openEditor(user);
+
+    await user.type(screen.getByRole('textbox', { name: 'Nostr ソース追加' }), 'npub1qqqqqq');
+    await user.click(screen.getByRole('button', { name: '追加' }));
+    await user.clear(screen.getByRole('textbox', { name: 'カラム名' }));
+    await user.type(screen.getByRole('textbox', { name: 'カラム名' }), 'Nostr');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0][0] as View[];
+    expect(next[2].sources).toEqual([{ provider: 'nostr', kind: 'pubkey', id: 'npub1qqqqqq' }]);
+  });
+
+  it('wss:// URL を入力すると relay Source として追加される', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Deck views={VIEWS} onViewsChange={onChange} onCompose={() => {}} />);
+    await openEditor(user);
+
+    await user.type(screen.getByRole('textbox', { name: 'Nostr ソース追加' }), 'wss://nostr.hiroba.media');
+    await user.click(screen.getByRole('button', { name: '追加' }));
+    await user.clear(screen.getByRole('textbox', { name: 'カラム名' }));
+    await user.type(screen.getByRole('textbox', { name: 'カラム名' }), '広場');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    const next = onChange.mock.calls[0][0] as View[];
+    expect(next[2].sources).toEqual([{ provider: 'nostr', kind: 'relay', id: 'wss://nostr.hiroba.media' }]);
+  });
+
+  it('不正な形式はエラーになり追加されない', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Deck views={VIEWS} onViewsChange={onChange} onCompose={() => {}} />);
+    await openEditor(user);
+
+    await user.type(screen.getByRole('textbox', { name: 'Nostr ソース追加' }), 'not-valid');
+    await user.click(screen.getByRole('button', { name: '追加' }));
+
+    expect(screen.getByText('npub1… または wss://… の形式で入力してください')).toBeInTheDocument();
+    // 何も選択されていないので保存できない
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('host 空の wss:// は拒否する', async () => {
+    const user = userEvent.setup();
+    render(<Deck views={VIEWS} onViewsChange={() => {}} onCompose={() => {}} />);
+    await openEditor(user);
+    await user.type(screen.getByRole('textbox', { name: 'Nostr ソース追加' }), 'wss://');
+    await user.click(screen.getByRole('button', { name: '追加' }));
+    expect(screen.getByText('npub1… または wss://… の形式で入力してください')).toBeInTheDocument();
+  });
+});

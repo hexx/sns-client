@@ -56,6 +56,7 @@ import {
   uploadMedia as misskeyUpload,
   type MisskeyEnv,
 } from './misskey';
+import { NostrError, getTimeline as nostrTimeline } from './nostr';
 
 export interface Env extends MisskeyEnv {
   ASSETS: Fetcher;
@@ -108,6 +109,7 @@ const KINDS: Record<string, string[]> = {
   bluesky: ['home', 'list', 'feed'],
   misskey: ['home', 'list', 'antenna', 'channel'],
   mixi2: [], // 型上予約のみ。公式 API に TL 取得手段が無いため Source 種別なし（docs/mixi2-integration-spec.md）
+  nostr: ['pubkey', 'relay'], // 読み取り専用。両方とも id 必須（docs/nostr-integration-spec.md §5.1）
 };
 
 /** 固定プリセットの View 定義（KV 未設定時のフォールバック。ADR-0004） */
@@ -148,7 +150,12 @@ function isAuthError(e: unknown): boolean {
 }
 
 function isProvider(s: string | null | undefined): s is Provider {
-  // mastodon・mixi2 は型上予約のみ（未実装）。実装済みの bluesky/misskey だけを受け付け、他は 400 にする
+  // mastodon・mixi2 は型上予約のみ（未実装）。実装済みの bluesky/misskey/nostr を受け付け、他は 400 にする
+  return s === 'bluesky' || s === 'misskey' || s === 'nostr';
+}
+
+/** 書き込み（投稿/メディア/リポスト）に対応するプロバイダ。nostr は読み取り専用なので除外 */
+function isWritableProvider(s: string | null | undefined): s is 'bluesky' | 'misskey' {
   return s === 'bluesky' || s === 'misskey';
 }
 
@@ -181,6 +188,9 @@ function mapError(err: unknown, c: Context<AppEnv>): Response {
   if (err instanceof BskyAuthError || err instanceof MisskeyAuthError) return c.json({ error: err.message }, 503);
   if (err instanceof MisskeyApiError) {
     return c.json({ error: err.code ?? 'misskey-error' }, err.status as ContentfulStatusCode);
+  }
+  if (err instanceof NostrError) {
+    return c.json({ error: err.message }, err.status as ContentfulStatusCode);
   }
   if (isAuthError(err)) {
     const provider = c.get('provider');
@@ -246,6 +256,8 @@ app.get(API.providers, async (c) => {
       configured: misskeyConfigured,
       compose: { charLimit: misskeyLimit, unit: 'char' },
     },
+    // nostr は読み取り専用：シークレット不要で常に configured、compose は持たない（§5.3）
+    { provider: 'nostr', configured: true },
   ];
   return c.json(providers);
 });
@@ -262,6 +274,9 @@ app.get(API.timeline, async (c) => {
   c.set('provider', provider);
   if (provider === 'bluesky') {
     return c.json(await bskyTimeline(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, source, cursor));
+  }
+  if (provider === 'nostr') {
+    return c.json(await nostrTimeline(source, cursor));
   }
   return c.json(await misskeyTimeline(c.env, source, cursor));
 });
@@ -285,7 +300,7 @@ app.get(API.destinations, async (c) => {
 
 app.post(API.media, async (c) => {
   const provider = c.req.query('provider');
-  if (!isProvider(provider)) throw new HTTPException(400, { message: 'invalid provider' });
+  if (!isWritableProvider(provider)) throw new HTTPException(400, { message: 'invalid provider' });
   const mimeType = c.req.header('content-type') || 'application/octet-stream';
   const alt = c.req.query('alt') ?? '';
   const bytes = await c.req.arrayBuffer();
@@ -299,7 +314,7 @@ app.post(API.media, async (c) => {
 app.post(API.post, async (c) => {
   const input = (await c.req.json().catch(() => null)) as PostInputWire | null;
   if (!input) throw new HTTPException(400, { message: 'invalid json' });
-  if (!isProvider(input.provider)) throw new HTTPException(400, { message: 'invalid provider' });
+  if (!isWritableProvider(input.provider)) throw new HTTPException(400, { message: 'invalid provider' });
   const destErr = validateDestination(input);
   if (destErr) throw new HTTPException(400, { message: destErr });
   c.set('provider', input.provider);
@@ -350,7 +365,7 @@ app.delete(API.likes, async (c) => {
 // --- リポスト（bsky=トグル / misskey=作成のみ。ref はプロバイダ固有の opaque 参照） ---
 app.post(API.reposts, async (c) => {
   const body = (await c.req.json().catch(() => null)) as RepostRequest | null;
-  if (!body || !isProvider(body.provider)) throw new HTTPException(400, { message: 'invalid provider' });
+  if (!body || !isWritableProvider(body.provider)) throw new HTTPException(400, { message: 'invalid provider' });
   c.set('provider', body.provider);
   if (body.provider === 'bluesky') {
     const ref = body.ref as { uri?: string; cid?: string } | null;
