@@ -1,5 +1,7 @@
 # Nostr を読み取り専用 Provider として、BFF リクエスト単位 WebSocket で統合する
 
+> **一部置換済み**: 本 ADR の**トランスポート選択（BFF リクエスト単位 WebSocket）は [ADR-0014](./0014-nostr-browser-direct-transport.md) によりブラウザ直接 WebSocket へ置換**された（JP 限定リレー到達性の問題による再審）。**読み取り専用・鍵（nsec）非保持・Destination 非保持**の判断は本 ADR が引き続き典拠。
+
 Nostr は ActivityPub ではないため ADR-0011（Threads）のような「Misskey 連合で吸収」ができず、閲覧にはリレー接続・署名検証・イベント変換の自前実装が必須。これを **`nostr` Provider の実装（ただし Destination を持たない読み取り専用）** として統合し、WebSocket はブラウザ直結でも Durable Object 常時購読でもなく **BFF（Worker）が `/api/timeline` の処理中にリレー群へリクエスト単位で開閉する**方式を採る。既存の `TimelineResponse` ポーリング契約と「UI は BFF とだけ話す」原則（ADR-0005）を壊さず、UI 変更をゼロにできるため。閲覧は署名不要なので nsec は一切扱わず、投稿対応は将来の独立 ADR に切り離す。詳細: [nostr-integration-spec.md](../nostr-integration-spec.md)。
 
 ## Considered Options

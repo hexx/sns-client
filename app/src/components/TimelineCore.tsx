@@ -5,6 +5,7 @@
  */
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
+import { fetchTimeline } from '../lib/timeline';
 import { applyReaction } from '../lib/reactions';
 import { withLike, withRenoteIncrement, withRepost } from '../lib/engagements';
 import type { Post, Provider, Source } from '../../../shared/types';
@@ -239,7 +240,7 @@ export const TimelineCore = forwardRef<
       if (!st) return;
       patch(key, (s) => ({ ...s, error: null, authFailed: false }));
       try {
-        const data = await api.timeline(st.source);
+        const data = await fetchTimeline(st.source);
         for (const p of data.posts) seenIds.current.add(pid(p));
         patch(key, (s) => ({ ...s, posts: data.posts, pending: [], cursor: data.nextCursor, error: null, authFailed: false }));
       } catch (e) {
@@ -260,7 +261,7 @@ export const TimelineCore = forwardRef<
         sources.map(async (source) => {
           const key = keyOf(source);
           try {
-            const data = await api.timeline(source);
+            const data = await fetchTimeline(source);
             if (cancelled) return;
             for (const p of data.posts) seenIds.current.add(pid(p));
             patch(key, (s) => ({ ...s, posts: data.posts, pending: [], cursor: data.nextCursor, error: null, authFailed: false }));
@@ -307,7 +308,7 @@ export const TimelineCore = forwardRef<
     loadingKeys.current.add(bestKey);
     patch(bestKey, (s) => ({ ...s, loadingMore: true }));
     try {
-      const data = await api.timeline(st.source, st.cursor ?? undefined);
+      const data = await fetchTimeline(st.source, st.cursor ?? undefined);
       for (const p of data.posts) seenIds.current.add(pid(p));
       patch(bestKey, (s) => ({
         ...s,
@@ -346,7 +347,7 @@ export const TimelineCore = forwardRef<
           const key = keyOf(st.source);
           lastPollAt.current.set(key, now);
           try {
-            const data = await api.timeline(st.source);
+            const data = await fetchTimeline(st.source);
             const fresh = data.posts.filter((p) => !seenIds.current.has(pid(p)));
             if (fresh.length > 0) {
               patch(key, (s) => ({
@@ -395,7 +396,7 @@ export const TimelineCore = forwardRef<
         .map(async (st) => {
           const key = keyOf(st.source);
           try {
-            const data = await api.timeline(st.source);
+            const data = await fetchTimeline(st.source);
             const fresh = data.posts.filter((p) => !seenIds.current.has(pid(p)));
             for (const p of fresh) seenIds.current.add(pid(p));
             patch(key, (s) => ({

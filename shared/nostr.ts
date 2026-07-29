@@ -1,18 +1,20 @@
 /**
- * Nostr 読み取り専用 Provider（docs/nostr-integration-spec.md、ADR-0013）。
+ * Nostr 読み取り専用 Provider の取得・検証・変換ロジック（shared。docs/nostr-browser-direct-spec.md、ADR-0014）。
  *
- * - BFF がリレー群へリクエスト単位で WebSocket を開き（§6.2）、NIP-01 REQ でイベントを収集する。
+ * - ブラウザがリレー群へ直接 WebSocket を開き（WsFactory 注入、§6.2）、NIP-01 REQ でイベントを収集する。
  * - 収集したイベントは id で重複排除し、schnorr 署名＋ id 再計算で全件検証する（§6.2 ステップ4-5）。
  * - kind 1 を Post に、kind 6 を repostedBy として包む（§6.5）。kind 0 で Author を解決する（§6.4）。
  * - 鍵（nsec）は一切扱わない。閲覧は署名不要。
+ * - Worker 専用 API は持たない（wsFactory は必須。ブラウザ版は app/src/lib/nostrWs.ts）。
  */
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bech32 } from '@scure/base';
-import type { Author, Media, Post, RichSegment, Source, TimelineResponse } from '../../shared/types';
+import type { Author, Media, Post, RichSegment, Source, TimelineResponse } from './types';
 
 // --- 定数（§6.1 固定リレーセット / §6.2 収集ウィンドウ） ---
 export const NOSTR_RELAYS = [
+  'wss://yabu.me',
   'wss://relay.damus.io',
   'wss://nos.lol',
   'wss://relay.nostr.band',
@@ -112,14 +114,6 @@ export type WsLike = {
 };
 export type WsFactory = (url: string) => Promise<WsLike>;
 
-const defaultWsFactory: WsFactory = async (url) => {
-  const resp = await fetch(url, { headers: { Upgrade: 'websocket' } });
-  const ws = resp.webSocket;
-  if (!ws) throw new Error(`relay did not upgrade: ${url}`);
-  ws.accept();
-  return ws as unknown as WsLike;
-};
-
 /**
  * 複数リレーへ並列に REQ を投げ、EOSE またはタイムアウトまで収集して閉じる（§6.2）。
  * 到達不能リレーは黙ってスキップ、id で重複排除、署名検証済みのイベントだけを返す。
@@ -127,12 +121,12 @@ const defaultWsFactory: WsFactory = async (url) => {
 export async function queryRelays(
   urls: string[],
   filter: NostrFilter,
-  opts?: { timeoutMs?: number; wsFactory?: WsFactory },
+  opts: { timeoutMs?: number; wsFactory: WsFactory; outcomes?: Map<string, boolean> },
 ): Promise<NostrEvent[]> {
-  const timeoutMs = opts?.timeoutMs ?? COLLECT_TIMEOUT_MS;
-  const factory = opts?.wsFactory ?? defaultWsFactory;
+  const timeoutMs = opts.timeoutMs ?? COLLECT_TIMEOUT_MS;
+  const factory = opts.wsFactory;
   const sink = new Map<string, NostrEvent>();
-  await Promise.allSettled(urls.map((u) => queryOne(u, filter, factory, sink, timeoutMs)));
+  await Promise.allSettled(urls.map((u) => queryOne(u, filter, factory, sink, timeoutMs, opts.outcomes)));
   const out: NostrEvent[] = [];
   for (const ev of sink.values()) if (verifyEvent(ev)) out.push(ev);
   return out;
@@ -144,9 +138,13 @@ function queryOne(
   factory: WsFactory,
   sink: Map<string, NostrEvent>,
   timeoutMs: number,
+  outcomes?: Map<string, boolean>,
 ): Promise<void> {
   return factory(url)
-    .catch(() => undefined)
+    .catch(() => {
+      outcomes?.set(url, false); // 接続失敗（ブラウザ直結ではネットワーク制限・リレーダウン等）
+      return undefined;
+    })
     .then(
       (ws) =>
         new Promise<void>((resolve) => {
@@ -154,6 +152,7 @@ function queryOne(
             resolve();
             return;
           }
+          outcomes?.set(url, true); // ハンドシェイク成功
           let done = false;
           const finish = () => {
             if (done) return;
@@ -231,7 +230,7 @@ export function parseProfile(content?: string): Profile {
 async function loadProfiles(
   pubkeys: string[],
   urls: string[],
-  factory?: WsFactory,
+  factory: WsFactory,
 ): Promise<Map<string, Profile>> {
   sweepExpiredProfiles(Date.now());
   const result = new Map<string, Profile>();
@@ -258,6 +257,32 @@ async function loadProfiles(
 }
 
 // --- 本文 → 統一リッチテキスト（§6.3、ADR-0005） ---
+/** URL 末尾の句読点を本文側へ剥がす（文中 URL の末尾に続く `. , ! ?` 等をリンクに巻き込まないため）。
+ *  閉じ括弧は URL 内で開きより閉じが多いときだけ剥がす（`.../Foo_(bar)` のような正規 URL を壊さない）。 */
+const URL_TRAILING_PUNCT = '.,;:!?\'"、。，．！？';
+function splitUrlPunctuation(tok: string): { url: string; rest: string } {
+  let end = tok.length;
+  while (end > 0) {
+    const ch = tok[end - 1];
+    if (URL_TRAILING_PUNCT.includes(ch)) {
+      end--;
+      continue;
+    }
+    if (ch === ')' || ch === ']' || ch === '}') {
+      const open = ch === ')' ? '(' : ch === ']' ? '[' : '{';
+      const slice = tok.slice(0, end);
+      const opens = slice.split(open).length - 1;
+      const closes = slice.split(ch).length - 1;
+      if (closes > opens) {
+        end--;
+        continue;
+      }
+    }
+    break;
+  }
+  return { url: tok.slice(0, end), rest: tok.slice(end) };
+}
+
 export function toSegments(content: string): { text: string; rich: RichSegment[]; media: Media[] } {
   const rich: RichSegment[] = [];
   const media: Media[] = [];
@@ -287,11 +312,13 @@ export function toSegments(content: string): { text: string; rich: RichSegment[]
         plain += tok;
       }
     } else if (tok.startsWith('http')) {
-      if (IMAGE_EXT.test(tok)) {
-        media.push({ type: 'image', url: tok }); // 本文からは除去（§5.2）
+      const { url, rest } = splitUrlPunctuation(tok);
+      if (IMAGE_EXT.test(url)) {
+        media.push({ type: 'image', url }); // 本文からは除去（§5.2）。末尾句読点も本文に残さない
       } else {
-        rich.push({ type: 'link', url: tok });
-        plain += tok;
+        rich.push({ type: 'link', url });
+        plain += url;
+        if (rest) pushText(rest); // 剥がした末尾句読点は本文へ戻す
       }
     } else {
       rich.push({ type: 'hashtag', tag: tok.slice(1) });
@@ -341,8 +368,9 @@ function eTagId(ev: NostrEvent): string | undefined {
 export async function getTimeline(
   source: Source,
   cursor?: string,
-  opts?: { wsFactory?: WsFactory },
+  opts?: { wsFactory: WsFactory },
 ): Promise<TimelineResponse> {
+  if (!opts) throw new NostrError(400, 'wsFactory is required');
   const until = cursor ? Number.parseInt(cursor, 10) : undefined;
   let urls: string[];
   let filter: NostrFilter;
@@ -365,7 +393,21 @@ export async function getTimeline(
   }
   if (until && !Number.isNaN(until)) filter.until = until;
 
-  const events = await queryRelays(urls, filter, { wsFactory: opts?.wsFactory });
+  const outcomes = new Map<string, boolean>();
+  const events = await queryRelays(urls, filter, { wsFactory: opts.wsFactory, outcomes });
+
+  // 接続失敗の表出（docs/nostr-browser-direct-spec.md §6.5、ADR-0014）。
+  // relay Source（単一リレー）は接続失敗を可視エラー化、pubkey Source（複数リレー）は全滅時のみエラー。
+  if (source.kind === 'relay') {
+    if (outcomes.get(urls[0]) === false) {
+      throw new NostrError(
+        502,
+        `リレーに接続できません（現在のネットワークから到達できない可能性があります）: ${urls[0]}`,
+      );
+    }
+  } else if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
+    throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
+  }
   const kind1 = events.filter((e) => e.kind === 1);
   const kind6 = events.filter((e) => e.kind === 6);
 
@@ -373,7 +415,7 @@ export async function getTimeline(
   const refs = [...new Set(kind6.map(eTagId).filter((x): x is string => Boolean(x)))];
   const originals = new Map<string, NostrEvent>();
   if (refs.length > 0) {
-    for (const ev of await queryRelays(urls, { kinds: [1], ids: refs }, { wsFactory: opts?.wsFactory })) {
+    for (const ev of await queryRelays(urls, { kinds: [1], ids: refs }, { wsFactory: opts.wsFactory })) {
       originals.set(ev.id, ev);
     }
   }
@@ -383,7 +425,7 @@ export async function getTimeline(
   for (const e of kind1) pubkeys.add(e.pubkey);
   for (const e of kind6) pubkeys.add(e.pubkey);
   for (const e of originals.values()) pubkeys.add(e.pubkey);
-  const profiles = await loadProfiles([...pubkeys], urls, opts?.wsFactory);
+  const profiles = await loadProfiles([...pubkeys], urls, opts.wsFactory);
 
   const posts: Post[] = [];
   for (const e of kind1) posts.push(buildPost(e, profiles.get(e.pubkey)));
