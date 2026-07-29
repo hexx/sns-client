@@ -238,4 +238,13 @@ describe('Compose（Destination 選択。docs/compose-destination-spec.md）', (
     const select = await screen.findByRole('combobox', { name: '投稿先' });
     expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['ホーム', 'ホーム']);
   });
+
+  it('nostr（configured だが compose 無し）は投稿先セレクタから除外される（§5.3）', async () => {
+    const withNostr: ProviderInfo[] = [...BOTH, { provider: 'nostr', configured: true }];
+    renderCompose({ providers: withNostr });
+    const select = await screen.findByRole('combobox', { name: '投稿先' });
+    const labels = within(select).getAllByRole('group').map((g) => g.getAttribute('label'));
+    expect(labels).toEqual(['Bluesky', 'Misskey']);
+    expect(labels).not.toContain('Nostr');
+  });
 });

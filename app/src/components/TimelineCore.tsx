@@ -11,7 +11,7 @@ import type { Post, Provider, Source } from '../../../shared/types';
 import { PostCard } from './PostCard';
 
 const TICK_MS = 15_000;
-const POLL_MS: Record<Provider, number> = { misskey: 15_000, bluesky: 30_000, mastodon: 30_000, mixi2: 30_000 };
+const POLL_MS: Record<Provider, number> = { misskey: 15_000, bluesky: 30_000, mastodon: 30_000, mixi2: 30_000, nostr: 30_000 };
 const PTR_THRESHOLD = 70;
 
 export type TimelineCoreHandle = { refresh: () => Promise<void> };
@@ -510,18 +510,22 @@ export const TimelineCore = forwardRef<
           </div>
         )}
 
-        {merged.map(({ post, skey }) => (
-          <PostCard
-            key={pid(post)}
-            post={post}
-            onReply={onReply}
-            onQuote={onQuote}
-            onReact={toggleReaction}
-            onLike={interactive ? () => void toggleLike(post) : undefined}
-            onRepost={interactive ? () => void toggleRepost(post) : undefined}
-            badge={badgeFor?.(skey, post.provider)}
-          />
-        ))}
+        {merged.map(({ post, skey }) => {
+          // nostr は読み取り専用：返信/引用/いいね/リポストの操作系をすべて隠す（§5.3）
+          const readOnly = post.provider === 'nostr';
+          return (
+            <PostCard
+              key={pid(post)}
+              post={post}
+              onReply={readOnly ? undefined : onReply}
+              onQuote={readOnly ? undefined : onQuote}
+              onReact={readOnly ? undefined : toggleReaction}
+              onLike={interactive && !readOnly ? () => void toggleLike(post) : undefined}
+              onRepost={interactive && !readOnly ? () => void toggleRepost(post) : undefined}
+              badge={badgeFor?.(skey, post.provider)}
+            />
+          );
+        })}
 
         {merged.length === 0 && errored.length === 0 && <p className="empty">読み込み中…</p>}
 

@@ -6,14 +6,29 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { TimelineCore } from './TimelineCore';
-import type { Provider, Source, SourceCatalogEntry, SourceOption, View } from '../../../shared/types';
+import type { Provider, Source, SourceCatalogEntry, View } from '../../../shared/types';
 
 function sourceKey(s: Source): string {
   return `${s.provider}:${s.kind}:${s.id ?? ''}`;
 }
 
-const KIND_LABEL: Record<string, string> = { home: 'ホーム', list: 'リスト', antenna: 'アンテナ', feed: 'フィード', channel: 'チャンネル' };
-const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon', mixi2: 'mixi2' };
+const KIND_LABEL: Record<string, string> = { home: 'ホーム', list: 'リスト', antenna: 'アンテナ', feed: 'フィード', channel: 'チャンネル', pubkey: 'ユーザー', relay: 'リレー' };
+const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon', mixi2: 'mixi2', nostr: 'Nostr' };
+
+/** Nostr 自由入力の形式判定（docs/nostr-integration-spec.md §6.6）。npub/nprofile → pubkey、wss:// → relay */
+function parseNostrInput(raw: string): Source | null {
+  const v = raw.trim();
+  if (/^n(?:pub|profile)1[023456789acdefghjklmnpqrstuvwxyz]+$/i.test(v)) {
+    return { provider: 'nostr', kind: 'pubkey', id: v };
+  }
+  if (/^wss:\/\/\S+$/i.test(v)) return { provider: 'nostr', kind: 'relay', id: v };
+  return null;
+}
+
+function nostrLabel(s: Source): string {
+  const id = s.id ?? '';
+  return id.length > 20 ? `${id.slice(0, 12)}…${id.slice(-4)}` : id;
+}
 
 /** カラム編集ダイアログ: 名前と Source 構成を選んで保存する */
 function ColumnEditor({
@@ -32,31 +47,54 @@ function ColumnEditor({
   const [name, setName] = useState(initial.name);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(initial.sources.map(sourceKey)));
   const [sourceOf, setSourceOf] = useState<Map<string, Source>>(() => new Map(initial.sources.map((s) => [sourceKey(s), s])));
+  const [nostrInput, setNostrInput] = useState('');
+  const [nostrError, setNostrError] = useState<string | null>(null);
 
-  const toggle = (opt: SourceOption) => {
-    const k = sourceKey(opt.source);
+  const toggle = (source: Source) => {
+    const k = sourceKey(source);
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(k)) next.delete(k);
       else next.add(k);
       return next;
     });
-    setSourceOf((prev) => new Map(prev).set(k, opt.source));
+    setSourceOf((prev) => new Map(prev).set(k, source));
+  };
+
+  const addNostr = () => {
+    const s = parseNostrInput(nostrInput);
+    if (!s) {
+      setNostrError('npub1… または wss://… の形式で入力してください');
+      return;
+    }
+    setNostrError(null);
+    setNostrInput('');
+    setSelected((prev) => new Set(prev).add(sourceKey(s)));
+    setSourceOf((prev) => new Map(prev).set(sourceKey(s), s));
   };
 
   const save = () => {
     // 表示順（カタログ順）で確定。選択のみで元の名前を復元しない（名前はユーザー入力優先）
     const sources: Source[] = [];
+    const added = new Set<string>();
+    const push = (s: Source) => {
+      const k = sourceKey(s);
+      if (added.has(k)) return;
+      added.add(k);
+      sources.push(s);
+    };
     for (const entry of catalog) {
       for (const opt of entry.options) {
         const k = sourceKey(opt.source);
-        if (selected.has(k)) sources.push(sourceOf.get(k) ?? opt.source);
+        if (selected.has(k)) push(sourceOf.get(k) ?? opt.source);
       }
     }
     // カタログ未取得で初期選択だけあるケース（既存ソースを維持）
-    for (const s of initial.sources) {
-      const k = sourceKey(s);
-      if (selected.has(k) && !sources.some((x) => sourceKey(x) === k)) sources.push(s);
+    for (const s of initial.sources) if (selected.has(sourceKey(s))) push(s);
+    // カタログに出ない Source（nostr 自由入力）を選択分から補完
+    for (const k of selected) {
+      const s = sourceOf.get(k);
+      if (s) push(s);
     }
     onSave({ ...initial, name: name.trim() || '無題', sources });
   };
@@ -89,7 +127,7 @@ function ColumnEditor({
                 const k = sourceKey(opt.source);
                 return (
                   <label key={k} className="source-opt">
-                    <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(opt)} />
+                    <input type="checkbox" checked={selected.has(k)} onChange={() => toggle(opt.source)} />
                     <span className="source-kind">{KIND_LABEL[opt.source.kind] ?? opt.source.kind}</span>
                     <span className="source-name">{opt.name}</span>
                   </label>
@@ -97,6 +135,34 @@ function ColumnEditor({
               })}
             </fieldset>
           ))}
+          <fieldset className="source-group">
+            <legend>Nostr</legend>
+            <div className="nostr-add">
+              <input
+                className="cw-input"
+                value={nostrInput}
+                onChange={(e) => setNostrInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addNostr();
+                }}
+                placeholder="npub1… または wss://…"
+                aria-label="Nostr ソース追加"
+              />
+              <button className="tool-btn" onClick={addNostr}>
+                追加
+              </button>
+            </div>
+            {nostrError && <p className="picker-error">{nostrError}</p>}
+            {[...sourceOf.values()]
+              .filter((s) => s.provider === 'nostr' && selected.has(sourceKey(s)))
+              .map((s) => (
+                <label key={sourceKey(s)} className="source-opt">
+                  <input type="checkbox" checked onChange={() => toggle(s)} />
+                  <span className="source-kind">{KIND_LABEL[s.kind] ?? s.kind}</span>
+                  <span className="source-name">{nostrLabel(s)}</span>
+                </label>
+              ))}
+          </fieldset>
         </div>
         <div className="compose-toolbar">
           <button className="primary-btn" disabled={!valid} onClick={save}>

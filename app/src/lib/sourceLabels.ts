@@ -15,6 +15,7 @@ export const PROVIDER_LABEL: Record<Provider, string> = {
   misskey: 'Misskey',
   mastodon: 'Mastodon',
   mixi2: 'mixi2',
+  nostr: 'Nostr',
 };
 
 /**

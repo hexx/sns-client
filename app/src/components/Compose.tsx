@@ -58,7 +58,8 @@ export function Compose({
   const ctxPost = replyTo ?? quote;
   // 毎レンダーの新オブジェクト生成を避け、effect の依存を安定化（無限ループ防止）
   const forced = useMemo(() => forcedDestOf(ctxPost), [replyTo, quote]);
-  const configured = providers.filter((p) => p.configured).map((p) => p.provider);
+  // compose を持たない読み取り専用 Provider（nostr）は投稿先から除外（docs/nostr-integration-spec.md §5.3）
+  const configured = providers.filter((p) => p.configured && p.compose).map((p) => p.provider);
 
   const [destination, setDestination] = useState<Destination>(
     () =>

@@ -1,0 +1,285 @@
+// @vitest-environment node
+import { beforeEach, describe, expect, it } from 'vitest';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bech32 } from '@scure/base';
+import {
+  NOSTR_RELAYS,
+  resetProfileCache,
+  decodeNpub,
+  getTimeline,
+  parseProfile,
+  queryRelays,
+  shortenNpub,
+  toSegments,
+  verifyEvent,
+  type NostrEvent,
+  type NostrFilter,
+  type WsFactory,
+  type WsLike,
+} from './nostr';
+
+beforeEach(() => {
+  resetProfileCache();
+});
+
+// --- テスト用 hex helpers ---
+function toHex(bytes: Uint8Array): string {
+  let s = '';
+  for (const b of bytes) s += b.toString(16).padStart(2, '0');
+  return s;
+}
+function fromHex(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+const PRIV = fromHex('11'.repeat(32));
+const PUB = toHex(schnorr.getPublicKey(PRIV));
+const PRIV2 = fromHex('22'.repeat(32));
+const PUB2 = toHex(schnorr.getPublicKey(PRIV2));
+
+/** 正しく署名されたイベントを生成する */
+function makeEvent(opts: {
+  priv?: Uint8Array;
+  kind?: number;
+  content?: string;
+  tags?: string[][];
+  created_at?: number;
+}): NostrEvent {
+  const priv = opts.priv ?? PRIV;
+  const pubkey = toHex(schnorr.getPublicKey(priv));
+  const kind = opts.kind ?? 1;
+  const content = opts.content ?? '';
+  const tags = opts.tags ?? [];
+  const created_at = opts.created_at ?? 1000;
+  const serialized = JSON.stringify([0, pubkey, created_at, kind, tags, content]);
+  const id = toHex(sha256(new TextEncoder().encode(serialized)));
+  const sig = toHex(schnorr.sign(fromHex(id), priv));
+  return { id, pubkey, created_at, kind, tags, content, sig };
+}
+
+function npubOf(hex: string): string {
+  return bech32.encode('npub', bech32.toWords(fromHex(hex)), 5000);
+}
+
+function matches(ev: NostrEvent, f: NostrFilter): boolean {
+  if (f.kinds && !f.kinds.includes(ev.kind)) return false;
+  if (f.authors && !f.authors.includes(ev.pubkey)) return false;
+  if (f.ids && !f.ids.includes(ev.id)) return false;
+  if (f.until !== undefined && ev.created_at > f.until) return false;
+  return true;
+}
+
+/** フィルタを考慮するフェークリレー（EOSE 付き）。url ごとにイベント集合を持つ */
+function fakeRelay(eventsByUrl: Record<string, NostrEvent[]>): WsFactory {
+  return async (url: string): Promise<WsLike> => {
+    let onMessage: ((ev: { data?: unknown }) => void) | undefined;
+    return {
+      send(data: string) {
+        const req = JSON.parse(data) as [string, string, NostrFilter];
+        const filter = req[2] ?? {};
+        let matched = (eventsByUrl[url] ?? []).filter((e) => matches(e, filter));
+        if (filter.limit) matched = matched.slice(0, filter.limit);
+        queueMicrotask(() => {
+          for (const e of matched) onMessage?.({ data: JSON.stringify(['EVENT', 'sns', e]) });
+          onMessage?.({ data: JSON.stringify(['EOSE', 'sns']) });
+        });
+      },
+      close() {},
+      addEventListener(type, listener) {
+        if (type === 'message') onMessage = listener;
+      },
+    };
+  };
+}
+
+/** 何も応答しないリレー（タイムアウト検証用） */
+const silentRelay: WsFactory = async () => ({
+  send() {},
+  close() {},
+  addEventListener() {},
+});
+
+/** 全固定リレーに同じイベント集合を配置する（pubkey Source 用） */
+function onAllRelays(events: NostrEvent[]): Record<string, NostrEvent[]> {
+  const m: Record<string, NostrEvent[]> = {};
+  for (const url of NOSTR_RELAYS) m[url] = events;
+  return m;
+}
+
+describe('bech32 / 短縮表示', () => {
+  it('decodeNpub は npub を hex pubkey に復元する', () => {
+    expect(decodeNpub(npubOf(PUB))).toBe(PUB);
+  });
+  it('decodeNpub は npub 以外を拒否する', () => {
+    const note = bech32.encode('note', bech32.toWords(fromHex('ab'.repeat(32))), 5000);
+    expect(() => decodeNpub(note)).toThrow();
+  });
+  it('shortenNpub は npub 短縮形を返す', () => {
+    const s = shortenNpub(PUB);
+    expect(s.startsWith('npub1')).toBe(true);
+    expect(s).toContain('…');
+  });
+});
+
+describe('verifyEvent', () => {
+  it('正当なイベントは true', () => {
+    expect(verifyEvent(makeEvent({ content: 'hello' }))).toBe(true);
+  });
+  it('content 改ざん（id 不一致）は false', () => {
+    const ev = makeEvent({ content: 'hello' });
+    expect(verifyEvent({ ...ev, content: 'tampered' })).toBe(false);
+  });
+  it('署名破損は false', () => {
+    const ev = makeEvent({ content: 'hello' });
+    expect(verifyEvent({ ...ev, sig: '00'.repeat(64) })).toBe(false);
+  });
+  it('id が非 hex は false', () => {
+    const ev = makeEvent({});
+    expect(verifyEvent({ ...ev, id: 'zz' })).toBe(false);
+  });
+});
+
+describe('toSegments', () => {
+  it('プレーンテキスト', () => {
+    const r = toSegments('just hello');
+    expect(r.text).toBe('just hello');
+    expect(r.rich).toEqual([{ type: 'text', text: 'just hello' }]);
+    expect(r.media).toEqual([]);
+  });
+  it('URL は link、画像 URL は media にリフト（本文から除去）', () => {
+    const r = toSegments('see https://example.com/a.jpg and https://example.com/');
+    expect(r.media).toEqual([{ type: 'image', url: 'https://example.com/a.jpg' }]);
+    expect(r.rich.some((s) => s.type === 'link' && s.url === 'https://example.com/')).toBe(true);
+    expect(r.text).not.toContain('a.jpg');
+    expect(r.text).toContain('https://example.com/');
+  });
+  it('nostr:npub メンションは mention（短縮 handle）', () => {
+    const npub = npubOf(PUB);
+    const r = toSegments(`hi nostr:${npub} !`);
+    const mention = r.rich.find((s) => s.type === 'mention');
+    expect(mention).toBeDefined();
+    expect((mention as { handle: string }).handle.startsWith('npub1')).toBe(true);
+  });
+  it('ハッシュタグは hashtag（# を除く）', () => {
+    const r = toSegments('hello #nostr world');
+    expect(r.rich).toContainEqual({ type: 'hashtag', tag: 'nostr' });
+  });
+});
+
+describe('parseProfile', () => {
+  it('display_name / picture を抽出', () => {
+    expect(parseProfile(JSON.stringify({ display_name: 'Alice', picture: 'https://x/a.png', name: 'a' }))).toEqual({
+      displayName: 'Alice',
+      picture: 'https://x/a.png',
+    });
+  });
+  it('display_name 無しは name に縮退', () => {
+    expect(parseProfile(JSON.stringify({ name: 'bob' })).displayName).toBe('bob');
+  });
+  it('不正 JSON は空', () => {
+    expect(parseProfile('not json')).toEqual({});
+    expect(parseProfile(undefined)).toEqual({});
+  });
+});
+
+describe('queryRelays', () => {
+  it('複数リレーの同一イベントを id で重複排除する', async () => {
+    const ev = makeEvent({ content: 'dup' });
+    const factory = fakeRelay(onAllRelays([ev]));
+    const res = await queryRelays(NOSTR_RELAYS, { kinds: [1] }, { wsFactory: factory });
+    expect(res).toHaveLength(1);
+    expect(res[0].id).toBe(ev.id);
+  });
+
+  it('不正署名イベントは破棄される', async () => {
+    const good = makeEvent({ content: 'good' });
+    const bad = { ...makeEvent({ content: 'bad' }), sig: '00'.repeat(64) };
+    const factory = fakeRelay({ 'wss://r': [good, bad] });
+    const res = await queryRelays(['wss://r'], { kinds: [1] }, { wsFactory: factory });
+    expect(res.map((e) => e.id)).toEqual([good.id]);
+  });
+
+  it('到達不能リレーはスキップして他から収集する', async () => {
+    const ev = makeEvent({});
+    const factory: WsFactory = async (url) => {
+      if (url === 'wss://dead') throw new Error('unreachable');
+      return fakeRelay({ 'wss://alive': [ev] })(url);
+    };
+    const res = await queryRelays(['wss://dead', 'wss://alive'], { kinds: [1] }, { wsFactory: factory });
+    expect(res).toHaveLength(1);
+  });
+
+  it('EOSE も応答もないリレーはタイムアウトで解決し、ハングしない', async () => {
+    const res = await queryRelays(['wss://silent'], { kinds: [1] }, { wsFactory: silentRelay, timeoutMs: 30 });
+    expect(res).toEqual([]);
+  });
+});
+
+describe('getTimeline', () => {
+  it('pubkey Source: kind1 を時系列降順で返し、kind0 で Author を解決する', async () => {
+    const older = makeEvent({ content: 'older', created_at: 100 });
+    const newer = makeEvent({ content: 'newer', created_at: 200 });
+    const profile = makeEvent({ kind: 0, content: JSON.stringify({ display_name: 'Alice', picture: 'https://x/a.png' }), created_at: 50 });
+    const factory = fakeRelay(onAllRelays([older, newer, profile]));
+    const res = await getTimeline({ provider: 'nostr', kind: 'pubkey', id: npubOf(PUB) }, undefined, { wsFactory: factory });
+    expect(res.posts.map((p) => p.text)).toEqual(['newer', 'older']);
+    expect(res.posts[0].provider).toBe('nostr');
+    expect(res.posts[0].author.displayName).toBe('Alice');
+    expect(res.posts[0].author.avatarUrl).toBe('https://x/a.png');
+    expect(res.posts[0].stats).toEqual({ replies: 0, reposts: 0, likes: 0 });
+    expect(res.nextCursor).toBe('100'); // 最古の created_at
+  });
+
+  it('kind0 未取得時は handle（npub 短縮）に縮退する', async () => {
+    const ev = makeEvent({ content: 'anon', created_at: 100 });
+    const factory = fakeRelay(onAllRelays([ev])); // kind0 なし
+    const res = await getTimeline({ provider: 'nostr', kind: 'pubkey', id: npubOf(PUB) }, undefined, { wsFactory: factory });
+    expect(res.posts[0].author.displayName).toBe(res.posts[0].author.handle);
+    expect(res.posts[0].author.handle.startsWith('npub1')).toBe(true);
+    expect(res.posts[0].author.avatarUrl).toBeUndefined();
+  });
+
+  it('kind6 は元ノートを repostedBy で包む', async () => {
+    const original = makeEvent({ priv: PRIV2, content: 'original', created_at: 100 });
+    const repost = makeEvent({ kind: 6, tags: [['e', original.id]], created_at: 200 });
+    const factory = fakeRelay(onAllRelays([original, repost]));
+    const res = await getTimeline({ provider: 'nostr', kind: 'pubkey', id: npubOf(PUB) }, undefined, { wsFactory: factory });
+    // kind1 フィルタに original は authors(PUB) 一致しないが、kind6 解決の ids 取得で拾われる
+    const rp = res.posts.find((p) => p.repostedBy);
+    expect(rp).toBeDefined();
+    expect(rp!.text).toBe('original');
+    expect(rp!.author.handle).toBe(shortenNpub(PUB2)); // 元ノートの著者
+    expect(rp!.repostedBy!.handle).toBe(shortenNpub(PUB)); // リポストした人
+  });
+
+  it('参照先が取得できない kind6 はスキップする', async () => {
+    const repost = makeEvent({ kind: 6, tags: [['e', 'ab'.repeat(32)]], created_at: 200 });
+    const factory = fakeRelay(onAllRelays([repost])); // 元ノート無し
+    const res = await getTimeline({ provider: 'nostr', kind: 'pubkey', id: npubOf(PUB) }, undefined, { wsFactory: factory });
+    expect(res.posts).toHaveLength(0);
+    expect(res.nextCursor).toBeNull();
+  });
+
+  it('relay Source: 指定リレー1本から kind1 のみ（kind6 は対象外）', async () => {
+    const note = makeEvent({ content: 'local', created_at: 100 });
+    const repost = makeEvent({ kind: 6, tags: [['e', 'cd'.repeat(32)]], created_at: 200 });
+    const factory = fakeRelay({ 'wss://community.relay': [note, repost] });
+    const res = await getTimeline({ provider: 'nostr', kind: 'relay', id: 'wss://community.relay' }, undefined, { wsFactory: factory });
+    expect(res.posts).toHaveLength(1);
+    expect(res.posts[0].text).toBe('local');
+    expect(res.posts[0].repostedBy).toBeUndefined();
+  });
+
+  it('id 無し pubkey Source は throw', async () => {
+    await expect(getTimeline({ provider: 'nostr', kind: 'pubkey' }, undefined, { wsFactory: fakeRelay({}) })).rejects.toThrow();
+  });
+
+  it('全リレー空でも空ページ（nextCursor null）で戻る', async () => {
+    const res = await getTimeline({ provider: 'nostr', kind: 'pubkey', id: npubOf(PUB) }, undefined, { wsFactory: fakeRelay({}) });
+    expect(res.posts).toEqual([]);
+    expect(res.nextCursor).toBeNull();
+  });
+});

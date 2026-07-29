@@ -1,6 +1,6 @@
 /** フロント・Worker 共通のドメインモデル（最小抽象） */
 
-export type Provider = 'bluesky' | 'misskey' | 'mastodon' | 'mixi2'; // mastodon・mixi2 は型上予約のみ（mixi2: docs/mixi2-integration-spec.md）
+export type Provider = 'bluesky' | 'misskey' | 'mastodon' | 'mixi2' | 'nostr'; // mastodon・mixi2 は型上予約のみ（mixi2: docs/mixi2-integration-spec.md）。nostr は読み取り専用（docs/nostr-integration-spec.md、ADR-0013）
 
 export type Media = { type: 'image'; url: string; alt?: string };
 
@@ -120,7 +120,8 @@ export type ComposeConfig = {
 export type ProviderInfo = {
   provider: Provider;
   configured: boolean;
-  compose: ComposeConfig;
+  /** 投稿設定。読み取り専用 Provider（nostr）は持たない（docs/nostr-integration-spec.md §5.3） */
+  compose?: ComposeConfig;
 };
 
 export type Health = {
