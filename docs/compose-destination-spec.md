@@ -100,20 +100,19 @@ export type PostInputWire = {
 
 ### 5.1 投稿先セレクタ
 
-- 現 Provider セレクトを **単一 Destination セレクト**に置換。Provider ごとに `optgroup` で分组:
+- 現 Provider セレクトを **単一 Destination セレクト**に置換。候補はフラットリスト（`optgroup` 分组は廃止）。ホーム候補のラベルは「**{Provider} · {name}**」、チャンネル候補は `📺 {name}`:
 
 ```
-Bluesky
-  ホーム
-Misskey
-  ホーム
-  📺 某チャンネル
-  📺 別チャンネル
+Bluesky · ホーム
+Misskey · ホーム
+📺 某チャンネル
+📺 別チャンネル
 ```
 
+- ラベル規則・ヘッダーの折り返し・中央揃え・隙間は [compose-header-layout-spec.md](./compose-header-layout-spec.md) による（§5.1 改訂: 旧来の「表示名は `name` のみ・optgroup 分组」は、閉じたセレクトから Provider を識別できないため廃止）。
 - 候補が1つのみ（configured Provider が1つでチャンネル無し）の場合はセレクタを非表示（現 UI の最適化を継承）。
 - 候補の取得元: `GET /api/destinations`。ただし **home エントリはカタログ失敗時も configured Provider 分を静的に生成**して常に提供する（チャンネルだけ欠け得る）。
-- 表示名は `name` のみ。出自バッジは付けない（§2 対象外）。
+- 表示ラベルはクライアント側で `PROVIDER_LABEL` から合成する（BFF の `name` フィールドは不変）。
 
 ### 5.2 永続化
 

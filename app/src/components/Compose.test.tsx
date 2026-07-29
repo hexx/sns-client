@@ -155,6 +155,17 @@ describe('Compose（Destination 選択。docs/compose-destination-spec.md）', (
     },
   ];
 
+  it('ホーム候補は「{Provider} · ホーム」のフラットリストで、optgroup は無い（header-layout-spec §4）', async () => {
+    vi.mocked(api.destinations).mockResolvedValue(CHANNELS);
+    renderCompose();
+    const select = (await screen.findByRole('combobox', { name: '投稿先' })) as HTMLSelectElement;
+    await screen.findByRole('option', { name: 'Misskey · ホーム' });
+    expect(screen.getByRole('option', { name: 'Bluesky · ホーム' })).toBeInTheDocument();
+    expect(screen.queryByRole('group')).not.toBeInTheDocument();
+    // 閉じたセレクトの表示値がプレフィックス付きラベル（既定選択は bluesky home）
+    expect(select.selectedOptions[0]?.textContent).toBe('Bluesky · ホーム');
+  });
+
   it('カタログから候補を描画し、チャンネル選択で visibility が隠れて注記が出る', async () => {
     vi.mocked(api.destinations).mockResolvedValue(CHANNELS);
     const user = userEvent.setup();
@@ -236,15 +247,15 @@ describe('Compose（Destination 選択。docs/compose-destination-spec.md）', (
     renderCompose();
     // bsky+misskey の home 2候補（静的フォールバック）でセレクタ表示
     const select = await screen.findByRole('combobox', { name: '投稿先' });
-    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['ホーム', 'ホーム']);
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Bluesky · ホーム', 'Misskey · ホーム']);
   });
 
   it('nostr（configured だが compose 無し）は投稿先セレクタから除外される（§5.3）', async () => {
     const withNostr: ProviderInfo[] = [...BOTH, { provider: 'nostr', configured: true }];
     renderCompose({ providers: withNostr });
     const select = await screen.findByRole('combobox', { name: '投稿先' });
-    const labels = within(select).getAllByRole('group').map((g) => g.getAttribute('label'));
-    expect(labels).toEqual(['Bluesky', 'Misskey']);
-    expect(labels).not.toContain('Nostr');
+    const labels = within(select).getAllByRole('option').map((o) => o.textContent);
+    expect(labels).toEqual(['Bluesky · ホーム', 'Misskey · ホーム']);
+    expect(labels.some((l) => l?.includes('Nostr'))).toBe(false);
   });
 });
