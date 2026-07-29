@@ -411,6 +411,16 @@ body,
   font-size: 13px;
   cursor: pointer;
   padding: 2px 4px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.link-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.modal-head .link-btn:hover {
+  text-decoration: underline;
 }
 
 .fab {
@@ -553,7 +563,9 @@ body,
   .pager-track,
   .pager-indicator,
   .pager-tab,
-  .fab {
+  .fab,
+  .primary-btn,
+  .link-btn {
     transition: none !important;
   }
   .pager-badge {
@@ -585,8 +597,10 @@ body,
 }
 .modal-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 8px 12px; /* 折り返し時 行8px / 列12px（docs/compose-header-layout-spec.md §3） */
 }
 .primary-btn {
   background: var(--accent);
@@ -596,6 +610,24 @@ body,
   padding: 8px 20px;
   font-size: 14px;
   cursor: pointer;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  min-width: 7em; /* 「投稿」↔「送信中…」の横幅差を吸収（header-layout-spec §3.1） */
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.primary-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.modal-head .primary-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.modal-head .primary-btn:active:not(:disabled) {
+  transform: scale(0.96);
 }
 .primary-btn:disabled {
   opacity: 0.5;
@@ -964,6 +996,19 @@ button.reaction:hover {
   border-radius: 8px;
   padding: 6px;
   font-size: 13px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ヘッダーの確定2行形: 1行目=アクションバー（閉じる…投稿）、2行目=全幅セレクト（docs/compose-header-layout-spec.md §3.2） */
+@media (max-width: 480px) {
+  .target-select,
+  .target-fixed {
+    order: 3;
+    flex: 1 1 100%;
+  }
 }
 .target-fixed {
   border: none;

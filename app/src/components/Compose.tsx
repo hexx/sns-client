@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import type { Destination, DestinationOption, Post, ProviderInfo } from '../../../shared/types';
 import { countGraphemes } from '../lib/graphemes';
+import { PROVIDER_LABEL } from '../lib/sourceLabels';
 
 type Visibility = 'public' | 'home' | 'followers';
 
@@ -27,8 +28,6 @@ const EMPTY: Draft = {
 const MAX_IMAGES = 4;
 const DEST_KEY = 'compose-destination';
 
-const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon', mixi2: 'mixi2' };
-
 /** Destination をセレクトの value として一意に識別するキー */
 function destKey(d: Destination): string {
   return `${d.provider}:${d.kind}:${d.id ?? ''}`;
@@ -39,6 +38,11 @@ function forcedDestOf(post?: Post): Destination | undefined {
   if (!post) return undefined;
   if (post.channel) return { provider: 'misskey', kind: 'channel', id: post.channel.id };
   return { provider: post.provider, kind: 'home' };
+}
+
+/** 投稿先ラベル合成: ホームは「{Provider} · {name}」、チャンネルは「📺 {name}」のまま（docs/compose-header-layout-spec.md §4） */
+function destLabel(o: DestinationOption): string {
+  return o.destination.kind === 'home' ? `${PROVIDER_LABEL[o.destination.provider]} · ${o.name}` : o.name;
 }
 
 export function Compose({
@@ -148,6 +152,13 @@ export function Compose({
   const target = destination.provider;
   const isChannel = destination.kind === 'channel';
 
+  // reply/quote 固定表示の正式名。省略時も title ホバーで確認できる（docs/compose-header-layout-spec.md §3.3）
+  const fixedLabel = forced
+    ? forced.kind === 'channel'
+      ? `📺 ${ctxPost?.channel?.name ?? forced.id ?? ''} へ投稿`
+      : `${PROVIDER_LABEL[forced.provider]} に投稿`
+    : '';
+
   // プロバイダ別の计数（bsky=grapheme / misskey=文字数）
   const cfg = providers.find((p) => p.provider === target)?.compose;
   const charLimit = cfg?.charLimit ?? 300;
@@ -220,10 +231,8 @@ export function Compose({
             閉じる
           </button>
           {forced ? (
-            <span className="target-fixed">
-              {forced.kind === 'channel'
-                ? `📺 ${ctxPost?.channel?.name ?? forced.id ?? ''} へ投稿`
-                : `${PROVIDER_LABEL[forced.provider] ?? forced.provider} に投稿`}
+            <span className="target-fixed" title={fixedLabel}>
+              {fixedLabel}
             </span>
           ) : (
             options.length > 1 && (
@@ -236,19 +245,13 @@ export function Compose({
                   if (next) setDestination(next.destination);
                 }}
               >
-                {configured.map((p) => {
-                  const opts = options.filter((o) => o.destination.provider === p);
-                  if (opts.length === 0) return null;
-                  return (
-                    <optgroup key={p} label={PROVIDER_LABEL[p] ?? p}>
-                      {opts.map((o) => (
-                        <option key={destKey(o.destination)} value={destKey(o.destination)}>
-                          {o.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  );
-                })}
+                {options
+                  .filter((o) => configured.includes(o.destination.provider))
+                  .map((o) => (
+                    <option key={destKey(o.destination)} value={destKey(o.destination)}>
+                      {destLabel(o)}
+                    </option>
+                  ))}
               </select>
             )
           )}
