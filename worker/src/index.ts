@@ -56,7 +56,6 @@ import {
   uploadMedia as misskeyUpload,
   type MisskeyEnv,
 } from './misskey';
-import { NostrError, getTimeline as nostrTimeline } from './nostr';
 
 export interface Env extends MisskeyEnv {
   ASSETS: Fetcher;
@@ -189,9 +188,6 @@ function mapError(err: unknown, c: Context<AppEnv>): Response {
   if (err instanceof MisskeyApiError) {
     return c.json({ error: err.code ?? 'misskey-error' }, err.status as ContentfulStatusCode);
   }
-  if (err instanceof NostrError) {
-    return c.json({ error: err.message }, err.status as ContentfulStatusCode);
-  }
   if (isAuthError(err)) {
     const provider = c.get('provider');
     if (provider === 'bluesky') {
@@ -265,6 +261,9 @@ app.get(API.providers, async (c) => {
 app.get(API.timeline, async (c) => {
   const provider = c.req.query('provider');
   if (!isProvider(provider)) throw new HTTPException(400, { message: 'invalid provider' });
+  // nostr はブラウザ直接取得（ADR-0014）。BFF は JP 限定リレーに到達できないため /api/timeline では提供しない。
+  // misskey 分岐へフォールスルーしないよう、kind/id 検証より前で明示的に 400 を返す。
+  if (provider === 'nostr') throw new HTTPException(400, { message: 'nostr is client-direct: fetch from the browser (ADR-0014)' });
   const kind = c.req.query('kind') ?? 'home';
   if (!KINDS[provider].includes(kind)) throw new HTTPException(400, { message: 'invalid kind' });
   const id = c.req.query('id') ?? undefined;
@@ -274,9 +273,6 @@ app.get(API.timeline, async (c) => {
   c.set('provider', provider);
   if (provider === 'bluesky') {
     return c.json(await bskyTimeline(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, source, cursor));
-  }
-  if (provider === 'nostr') {
-    return c.json(await nostrTimeline(source, cursor));
   }
   return c.json(await misskeyTimeline(c.env, source, cursor));
 });

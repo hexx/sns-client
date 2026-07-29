@@ -5,6 +5,8 @@
 > 作成: grill-with-docs セッション（全7問合意）に基づく。
 > 関連 ADR: [ADR-0013](./adr/0013-nostr-readonly-provider.md)。用語は [CONTEXT.md](../CONTEXT.md) 参照。
 
+> ⚠️ **transport は一部置換済み（[ADR-0014](./adr/0014-nostr-browser-direct-transport.md) / [nostr-browser-direct-spec.md](./nostr-browser-direct-spec.md)）**: 本仕様のうち**取得トランスポート**（§2 結論#3・§6.1 構成・§6.2 実行モデル・§6.6 の Worker 配管）は、JP 限定リレー到達性の問題により**「ブラウザ直接 WebSocket」へ置換**された。それ以外（読み取り専用・鍵非保持・kind 扱い・署名検証・リッチテキスト変換・`Post`/`Source`/`View` モデル）は本仕様が引き続き有効。
+
 ---
 
 ## 1. 背景・問い
@@ -17,7 +19,7 @@
 
 1. **`nostr` を Provider として統合する（読み取り専用）。** `Provider` union に `'nostr'` を追加する。mixi2 のような型予約ではなく実装を伴う統合だが、**Destination は持たない**（投稿不可）。`ProviderInfo.configured` は常に `true`（認証不要）。
 2. **Source は2種別。** `pubkey`（特定ユーザーの投稿＋リポスト）と `relay`（コミュニティリレーのローカル TL 相当）。
-3. **BFF がリレー群へリクエスト単位で WebSocket を開く。** ブラウザ直接接続・Durable Object 常時購読は採用しない。`TimelineResponse` 契約は不変で、UI の Provider 別分岐は描画バッジ程度。
+3. **BFF がリレー群へリクエスト単位で WebSocket を開く。** ブラウザ直接接続・Durable Object 常時購読は採用しない。`TimelineResponse` 契約は不変で、UI の Provider 別分岐は描画バッジ程度。（※ transport は [ADR-0014](./adr/0014-nostr-browser-direct-transport.md) によりブラウザ直接 WebSocket へ置換済み。§6.2 参照）
 4. **鍵（nsec）は一切扱わない。** 閲覧は署名不要なため、NIP-07 / NIP-46 / nsec 入力のいずれも実装しない。
 
 ## 3. 事実根拠
@@ -70,6 +72,8 @@ Threads は ActivityPub を話すため Misskey 連合が投稿を運んでき�
 
 ### 4.6 ブラウザ直接接続 / Durable Object 常時購読 — 却下
 
+> **注（[ADR-0014](./adr/0014-nostr-browser-direct-transport.md) / [nostr-browser-direct-spec.md](./nostr-browser-direct-spec.md)）**: 本項で却下した「ブラウザ直接接続」は、JP 限定リレー到達性の問題（再審トリガー発火）により **Nostr に限り採用**された。Durable Object 常時購読は引き続き不採用。
+
 実行モデルの比較は [ADR-0013](./adr/0013-nostr-readonly-provider.md) に記録。要旨: ブラウザ直接接続は「UI は BFF とだけ話す」原則（ADR-0005 の変換責務を含む）を Nostr だけ破る負債、Durable Object はポーリング＋ピルの既存 UX（[CONTEXT.md](../CONTEXT.md) の Timeline）を変えずにインフラだけ増えるため却下。
 
 ### 4.7 NIP-05 識別子の表示 — 対象外（拡張候補）
@@ -121,6 +125,8 @@ NIP-18 の引用を `Post.quote` として埋め込むには参照イベント�
 
 ### 6.1 固定リレーセット
 
+> **注（[ADR-0014](./adr/0014-nostr-browser-direct-transport.md)）**: 仕組み（コード定数）は本節どおり。ただしブラウザ直結化に伴い、**構成に JP 限定リレー（少なくとも `wss://yabu.me`）を追加**する。最終構成は [nostr-browser-direct-spec.md §6.1](./nostr-browser-direct-spec.md) を正とする。
+
 `pubkey` Source の問い合わせ先（および kind 0 取得先）は以下の固定セットとする。グローバルなカバレッジの大きいリレーと日本語圏コミュニティリレーの混合。
 
 | リレー | 選定理由 |
@@ -134,6 +140,8 @@ NIP-18 の引用を `Post.quote` として埋め込むには参照イベント�
 セットはコードに定数として固定する。変更・拡張（NIP-65 含む）の条件は §8。
 
 ### 6.2 実行モデル（BFF リクエスト単位 WebSocket）
+
+> **置換済み（[ADR-0014](./adr/0014-nostr-browser-direct-transport.md) / [nostr-browser-direct-spec.md §6.2](./nostr-browser-direct-spec.md)）**: 本節の「BFF（Worker）が outbound WebSocket を開く」実行モデルは廃止。**ブラウザが直接 WebSocket を開く**方式に置換された。収集→重複排除→署名検証→ソート→ページングの手順（1-6）と `TimelineResponse` 契約はそのまま継承される（transport のみ差し替え）。
 
 `/api/timeline` が nostr Source を処理するとき:
 
@@ -173,6 +181,8 @@ kind 1 `content` を走査し、`RichSegment[]` を生成する:
 3. 取得できたものだけ、`repostedBy` = kind 6 著者の `Post` として組み立てる。**未取得の kind 6 はスキップ**（ログは残すが利用者には見せない）。
 
 ### 6.6 配管（Worker / 共有型 / UI）
+
+> **注（[ADR-0014](./adr/0014-nostr-browser-direct-transport.md) / [nostr-browser-direct-spec.md §6.4](./nostr-browser-direct-spec.md)）**: 取得・検証・変換ロジックは `shared/nostr.ts` に単一ソース化され、**Worker の nostr timeline ハンドラ（本節の Worker 項目）は廃止**。`/api/timeline?provider=nostr` は `400` を返す（`KINDS.nostr` は `/api/views` 検証用に維持）。UI（自由入力・バッジ）と共有型（`Provider='nostr'`・`compose` 任意化）は継承。
 
 - `shared/types.ts`: `Provider` union に `'nostr'` 追加。`ProviderInfo.compose` を `compose?: ComposeConfig` に任意化。
 - Worker: nostr 用 timeline ハンドラ（§6.2）と kind 0 解決、Source バリデーション（`pubkey`/`relay`・両方 id 必須）を追加。`/api/sources` のカタログには nostr エントリを**出さない**（セッション由来の選択肢が無いため。追加は自由入力経由、下記）。

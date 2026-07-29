@@ -102,6 +102,11 @@ const silentRelay: WsFactory = async () => ({
   addEventListener() {},
 });
 
+/** 接続失敗するリレー（ネットワーク制限・リレーダウンの模倣） */
+const blockedRelay: WsFactory = async () => {
+  throw new Error('blocked');
+};
+
 /** 全固定リレーに同じイベント集合を配置する（pubkey Source 用） */
 function onAllRelays(events: NostrEvent[]): Record<string, NostrEvent[]> {
   const m: Record<string, NostrEvent[]> = {};
@@ -166,6 +171,27 @@ describe('toSegments', () => {
   it('ハッシュタグは hashtag（# を除く）', () => {
     const r = toSegments('hello #nostr world');
     expect(r.rich).toContainEqual({ type: 'hashtag', tag: 'nostr' });
+  });
+  it('URL 末尾の句読点はリンクから剥がして本文へ戻す', () => {
+    const r = toSegments('see https://example.com/a. ok');
+    const linkIdx = r.rich.findIndex((s) => s.type === 'link');
+    expect((r.rich[linkIdx] as { url: string }).url).toBe('https://example.com/a'); // リンクは句読点不含
+    expect(r.rich[linkIdx + 1]).toEqual({ type: 'text', text: '. ok' }); // 剥がした句読点はテキストで戻る
+  });
+  it('URL のバランスの取れた括弧は剥がさない（Wikipedia 風）', () => {
+    const r = toSegments('https://en.wikipedia.org/wiki/Foo_(bar)');
+    const link = r.rich.find((s) => s.type === 'link') as { url: string };
+    expect(link.url).toBe('https://en.wikipedia.org/wiki/Foo_(bar)');
+  });
+  it('URL を囲む閉じ括弧は剥がす', () => {
+    const r = toSegments('(https://example.com/x)');
+    const link = r.rich.find((s) => s.type === 'link') as { url: string };
+    expect(link.url).toBe('https://example.com/x');
+    expect(r.text).toContain(')');
+  });
+  it('画像 URL の末尾句読点を剥がして media 判定する', () => {
+    const r = toSegments('https://example.com/a.jpg.');
+    expect(r.media).toEqual([{ type: 'image', url: 'https://example.com/a.jpg' }]);
   });
 });
 
@@ -281,5 +307,43 @@ describe('getTimeline', () => {
     const res = await getTimeline({ provider: 'nostr', kind: 'pubkey', id: npubOf(PUB) }, undefined, { wsFactory: fakeRelay({}) });
     expect(res.posts).toEqual([]);
     expect(res.nextCursor).toBeNull();
+  });
+});
+
+describe('接続失敗の表出（docs/nostr-browser-direct-spec.md §6.5）', () => {
+  it('relay Source: 接続失敗はネットワークヒント付きで throw', async () => {
+    await expect(
+      getTimeline({ provider: 'nostr', kind: 'relay', id: 'wss://blocked' }, undefined, { wsFactory: blockedRelay }),
+    ).rejects.toThrow(/接続できません/);
+  });
+
+  it('relay Source: 接続成功・0件は空ページ（エラー非表示）', async () => {
+    const res = await getTimeline(
+      { provider: 'nostr', kind: 'relay', id: 'wss://empty' },
+      undefined,
+      { wsFactory: fakeRelay({ 'wss://empty': [] }) },
+    );
+    expect(res.posts).toEqual([]);
+    expect(res.nextCursor).toBeNull();
+  });
+
+  it('pubkey Source: 全リレー接続失敗は throw', async () => {
+    await expect(
+      getTimeline({ provider: 'nostr', kind: 'pubkey', id: npubOf(PUB) }, undefined, { wsFactory: blockedRelay }),
+    ).rejects.toThrow(/接続できません/);
+  });
+
+  it('pubkey Source: 一部リレー不通でも他から取得して throw しない', async () => {
+    const ev = makeEvent({ content: 'x', created_at: 100 });
+    const factory: WsFactory = async (url) => {
+      if (url === NOSTR_RELAYS[0]) throw new Error('dead');
+      return fakeRelay(onAllRelays([ev]))(url);
+    };
+    const res = await getTimeline(
+      { provider: 'nostr', kind: 'pubkey', id: npubOf(PUB) },
+      undefined,
+      { wsFactory: factory },
+    );
+    expect(res.posts.length).toBeGreaterThan(0);
   });
 });

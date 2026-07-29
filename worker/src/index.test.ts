@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
 import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, likePost as bskyLike, listSources as bskySources, repostPost as bskyRepost, resetSession, unlikePost as bskyUnlike, unrepostPost as bskyUnrepost, uploadMedia as bskyUpload } from './bsky';
 import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, listDestinations as misskeyDestinations, listSources as misskeySources, react as misskeyReact, renote as misskeyRenote, uploadMedia as misskeyUpload } from './misskey';
-import { getTimeline as nostrTimeline } from './nostr';
 
 // モジュール境界でモック（instanceof のため AuthError 系は実物を維持）
 vi.mock('./bsky', async (importOriginal) => {
@@ -35,11 +34,6 @@ vi.mock('./misskey', async (importOriginal) => {
     listDestinations: vi.fn(),
     renote: vi.fn(),
   };
-});
-// nostr は実体が WebSocket を開くため、ルーティングテストではモック（実挙動は nostr.test.ts で検証）
-vi.mock('./nostr', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./nostr')>();
-  return { ...actual, getTimeline: vi.fn() };
 });
 
 function makeEnv(assetsFetch = vi.fn()): Env {
@@ -101,14 +95,13 @@ describe('health / views / providers', () => {
 });
 
 describe('nostr ルーティング（読み取り専用）', () => {
-  it('timeline: pubkey + id → nostrTimeline に dispatch', async () => {
-    vi.mocked(nostrTimeline).mockResolvedValue({ posts: [], nextCursor: null });
+  it('timeline: provider=nostr → 400（client-direct。ブラウザで直接取得、ADR-0014）', async () => {
     const res = await worker.fetch(
       new Request('https://x/api/timeline?provider=nostr&kind=pubkey&id=npub1abc'),
       makeEnv(),
     );
-    expect(res.status).toBe(200);
-    expect(nostrTimeline).toHaveBeenCalledWith({ provider: 'nostr', kind: 'pubkey', id: 'npub1abc' }, undefined);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('client-direct');
   });
 
   it('timeline: pubkey で id 無し → 400', async () => {
@@ -119,19 +112,6 @@ describe('nostr ルーティング（読み取り専用）', () => {
   it('timeline: 不正な kind → 400', async () => {
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=nostr&kind=home'), makeEnv());
     expect(res.status).toBe(400);
-  });
-
-  it('timeline: 不正な npub → 400（NostrError をマップ）', async () => {
-    vi.mocked(nostrTimeline).mockImplementation(async () => {
-      const { NostrError } = await import('./nostr');
-      throw new NostrError(400, 'invalid npub');
-    });
-    const res = await worker.fetch(
-      new Request('https://x/api/timeline?provider=nostr&kind=pubkey&id=npub1bad'),
-      makeEnv(),
-    );
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe('invalid npub');
   });
 
   it('post: nostr は投稿不可 → 400', async () => {
