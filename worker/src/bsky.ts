@@ -1,5 +1,14 @@
-import { AtpAgent, RichText, type AppBskyFeedDefs, type AtpSessionData } from '@atproto/api';
-import type { LinkCard, Media, Post, PostInputWire, Source, SourceOption, TimelineResponse } from '../../shared/types';
+import { AtpAgent, AppBskyRichtextFacet, RichText, type AppBskyFeedDefs, type AtpSessionData } from '@atproto/api';
+import type {
+  LinkCard,
+  Media,
+  Post,
+  PostInputWire,
+  RichSegment,
+  Source,
+  SourceOption,
+  TimelineResponse,
+} from '../../shared/types';
 
 const SERVICE = 'https://bsky.social';
 const COL_LIKE = 'app.bsky.feed.like';
@@ -47,6 +56,86 @@ export function resetSession(): void {
   agent = undefined;
 }
 
+// --- facets → 統一 RichSegment（ADR-0005、docs/bsky-facets-spec.md） ---
+
+/** 隣接する text セグメントを連結して間引く（misskey.ts の mergeText と同じ方針） */
+function mergeText(segs: RichSegment[]): RichSegment[] {
+  const out: RichSegment[] = [];
+  for (const s of segs) {
+    const last = out[out.length - 1];
+    if (s.type === 'text' && last?.type === 'text') last.text += s.text;
+    else out.push(s);
+  }
+  return out;
+}
+
+/**
+ * 投稿レコードの facets を統一インラインリッチテキストへ変換する純粋関数。
+ * - index は UTF-8 バイトオフセット（TextEncoder/Decoder 経由でスライス）
+ * - 対応 feature: link / mention / tag。未知の feature はその範囲をプレーンテキストとして残す
+ * - mention は hydration せず、表示テキスト由来の handle と DID 由来の bsky.app URL を付与
+ * - 不正範囲・重複 facet はスキップ（先勝ち）。決してスローせず、異常時は undefined
+ * - facets 無し/空/結果が全プレーンのみなら undefined（Post.rich を載せない）
+ */
+export function facetsToRich(text: string, facets: AppBskyRichtextFacet.Main[] | undefined): RichSegment[] | undefined {
+  if (!facets?.length) return undefined;
+  try {
+    const bytes = new TextEncoder().encode(text);
+    const decoder = new TextDecoder();
+    const sorted = facets.toSorted((a, b) => (a.index?.byteStart ?? 0) - (b.index?.byteStart ?? 0));
+    const out: RichSegment[] = [];
+    let cursor = 0; // 採用済みのバイト位置
+    for (const f of sorted) {
+      const start = f.index?.byteStart;
+      const end = f.index?.byteEnd;
+      // 範囲不正（非数・負値・逆順・超過）や採用済み範囲との重複はスキップ
+      if (
+        typeof start !== 'number' ||
+        typeof end !== 'number' ||
+        start < cursor ||
+        start > end ||
+        end > bytes.length
+      )
+        continue;
+      // バイト境界がマルチバイト文字の途中（UTF-8 継続バイト 0x80-0xBF）に落ちる場合はスキップ
+      if ((start > 0 && (bytes[start] & 0xc0) === 0x80) || (end < bytes.length && (bytes[end] & 0xc0) === 0x80))
+        continue;
+
+      const segText = decoder.decode(bytes.subarray(start, end));
+      if (start > cursor) out.push({ type: 'text', text: decoder.decode(bytes.subarray(cursor, start)) });
+
+      let seg: RichSegment = { type: 'text', text: segText };
+      for (const ft of f.features ?? []) {
+        // 型ガードで union を絞る（ガードは $type のみ検証するため、必須フィールドは明示チェック）。
+        // 必須フィールド欠落 facet は seg を代入せずプレーンテキストのまま（壊れリンクを生成しない）
+        if (AppBskyRichtextFacet.isLink(ft)) {
+          if (ft.uri) seg = { type: 'link', url: ft.uri, text: segText };
+          break;
+        }
+        if (AppBskyRichtextFacet.isMention(ft)) {
+          if (ft.did)
+            seg = { type: 'mention', handle: segText.replace(/^@/, ''), url: `https://bsky.app/profile/${ft.did}` };
+          break;
+        }
+        if (AppBskyRichtextFacet.isTag(ft)) {
+          if (ft.tag) seg = { type: 'hashtag', tag: ft.tag };
+          break;
+        }
+      }
+      out.push(seg);
+      cursor = end;
+    }
+    if (cursor < bytes.length) out.push({ type: 'text', text: decoder.decode(bytes.subarray(cursor)) });
+
+    const merged = mergeText(out);
+    if (merged.length === 1 && merged[0].type === 'text') return undefined;
+    return merged;
+  } catch (e) {
+    console.error('[bsky] facetsToRich failed', e);
+    return undefined;
+  }
+}
+
 // --- ドメインモデルへのマッピング ---
 
 function extractMedia(embed: unknown): Media[] {
@@ -90,7 +179,9 @@ function extractLinkCard(embed: unknown): LinkCard | undefined {
 }
 
 export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
-  const rec = pv.record as { text?: string } | null | undefined;
+  const rec = pv.record as { text?: string; facets?: AppBskyRichtextFacet.Main[] } | null | undefined;
+  const text = rec?.text ?? '';
+  const rich = facetsToRich(text, rec?.facets);
   return {
     id: pv.uri,
     provider: 'bluesky',
@@ -99,7 +190,8 @@ export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
       displayName: pv.author.displayName || pv.author.handle,
       avatarUrl: pv.author.avatar,
     },
-    text: rec?.text ?? '',
+    text,
+    ...(rich ? { rich } : {}),
     createdAt: pv.indexedAt,
     media: extractMedia(pv.embed),
     linkCard: extractLinkCard(pv.embed),
@@ -373,6 +465,7 @@ export async function createPost(
   // フォールバック: 手元情報で組み立て（メディア URL は空、UI 側で空 URL は表示しない）
   const createdAt = new Date().toISOString();
   const sess = a.session;
+  const fallbackRich = facetsToRich(rt.text, rt.facets);
   return {
     id: res.uri,
     provider: 'bluesky',
@@ -381,6 +474,7 @@ export async function createPost(
       displayName: sess?.handle ?? handle ?? '',
     },
     text: rt.text,
+    ...(fallbackRich ? { rich: fallbackRich } : {}),
     createdAt,
     media: images.map((i) => ({ type: 'image' as const, url: '', alt: i.alt })),
     stats: { replies: 0, reposts: 0, likes: 0 },
