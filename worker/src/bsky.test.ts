@@ -1,8 +1,15 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { RichText } from '@atproto/api';
-import type { AppBskyFeedDefs } from '@atproto/api';
-import { buildPostRecord, mapPost } from './bsky';
+import type { AppBskyFeedDefs, AppBskyRichtextFacet } from '@atproto/api';
+import { buildPostRecord, facetsToRich, mapPost } from './bsky';
+
+type Facets = AppBskyRichtextFacet.Main[];
+const enc = new TextEncoder();
+const blen = (s: string) => enc.encode(s).length;
+function facet(byteStart: number, byteEnd: number, ...features: Record<string, unknown>[]): Facets[number] {
+  return { index: { byteStart, byteEnd }, features } as unknown as Facets[number];
+}
 
 function makeRt(text: string, facets?: unknown): RichText {
   const rt = new RichText({ text });
@@ -152,6 +159,118 @@ describe('mapPost', () => {
       makePostView({ replyCount: undefined, repostCount: undefined, likeCount: undefined }),
     );
     expect(post.stats).toEqual({ replies: 0, reposts: 0, likes: 0 });
+  });
+
+  it('record.facets から rich を生成する', () => {
+    const url = 'https://example.com';
+    const post = mapPost(
+      makePostView({
+        record: { text: url, facets: [facet(0, blen(url), { $type: 'app.bsky.richtext.facet#link', uri: url })] },
+      }),
+    );
+    expect(post.rich).toEqual([{ type: 'link', url, text: url }]);
+  });
+
+  it('facets 無しなら rich は無い', () => {
+    expect(mapPost(makePostView()).rich).toBeUndefined();
+  });
+});
+
+describe('facetsToRich（docs/bsky-facets-spec.md）', () => {
+  it('link を変換する', () => {
+    const url = 'https://example.com';
+    const rich = facetsToRich(`see ${url} now`, [
+      facet(4, 4 + blen(url), { $type: 'app.bsky.richtext.facet#link', uri: url }),
+    ]);
+    expect(rich).toEqual([
+      { type: 'text', text: 'see ' },
+      { type: 'link', url, text: url },
+      { type: 'text', text: ' now' },
+    ]);
+  });
+
+  it('マルチバイト（絵文字・日本語）境界をバイトオフセットで正しく扱う', () => {
+    const pre = '🎉日本語 ';
+    const url = 'https://example.com';
+    const rich = facetsToRich(`${pre}${url}`, [
+      facet(blen(pre), blen(pre) + blen(url), { $type: 'app.bsky.richtext.facet#link', uri: url }),
+    ]);
+    expect(rich).toEqual([
+      { type: 'text', text: pre },
+      { type: 'link', url, text: url },
+    ]);
+  });
+
+  it('mention は表示テキスト由来 handle と bsky.app URL', () => {
+    const m = '@alice.bsky.social';
+    const rich = facetsToRich(`${m} hi`, [
+      facet(0, blen(m), { $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:abc' }),
+    ]);
+    expect(rich).toEqual([
+      { type: 'mention', handle: 'alice.bsky.social', url: 'https://bsky.app/profile/did:plc:abc' },
+      { type: 'text', text: ' hi' },
+    ]);
+  });
+
+  it('tag を hashtag に変換する', () => {
+    const rich = facetsToRich('#hello world', [
+      facet(0, 6, { $type: 'app.bsky.richtext.facet#tag', tag: 'hello' }),
+    ]);
+    expect(rich).toEqual([
+      { type: 'hashtag', tag: 'hello' },
+      { type: 'text', text: ' world' },
+    ]);
+  });
+
+  it('未ソート入力は byteStart 昇順で処理する', () => {
+    const url = 'https://example.com';
+    const text = `a ${url} #t`;
+    const tagStart = blen(`a ${url} `);
+    const rich = facetsToRich(text, [
+      facet(tagStart, tagStart + 2, { $type: 'app.bsky.richtext.facet#tag', tag: 't' }),
+      facet(2, 2 + blen(url), { $type: 'app.bsky.richtext.facet#link', uri: url }),
+    ]);
+    expect(rich).toEqual([
+      { type: 'text', text: 'a ' },
+      { type: 'link', url, text: url },
+      { type: 'text', text: ' ' },
+      { type: 'hashtag', tag: 't' },
+    ]);
+  });
+
+  it('重複 facet は先勝ち', () => {
+    const url = 'https://example.com';
+    const rich = facetsToRich(url, [
+      facet(0, blen(url), { $type: 'app.bsky.richtext.facet#link', uri: url }),
+      facet(0, 5, { $type: 'app.bsky.richtext.facet#tag', tag: 'x' }),
+    ]);
+    expect(rich).toEqual([{ type: 'link', url, text: url }]);
+  });
+
+  it('範囲超過 facet はスキップしてプレーンテキスト（全体プレーンなら undefined）', () => {
+    expect(
+      facetsToRich('hello', [facet(0, 999, { $type: 'app.bsky.richtext.facet#link', uri: 'u' })]),
+    ).toBeUndefined();
+  });
+
+  it('マルチバイト文字の途中に境界が落ちる facet はスキップ', () => {
+    // '日' は UTF-8 で 3バイト。byteEnd=1 は文字の途中
+    expect(
+      facetsToRich('日本語', [facet(0, 1, { $type: 'app.bsky.richtext.facet#link', uri: 'u' })]),
+    ).toBeUndefined();
+  });
+
+  it('未知の feature はプレーンテキストとして残す', () => {
+    expect(facetsToRich('hello', [facet(0, 5, { $type: 'app.bsky.richtext.facet#future' })])).toBeUndefined();
+  });
+
+  it('必須フィールド欠落 facet はプレーンテキスト（link に uri 無し）', () => {
+    expect(facetsToRich('hello', [facet(0, 5, { $type: 'app.bsky.richtext.facet#link' })])).toBeUndefined();
+  });
+
+  it('facets 無し/空は undefined', () => {
+    expect(facetsToRich('hello', undefined)).toBeUndefined();
+    expect(facetsToRich('hello', [])).toBeUndefined();
   });
 });
 
