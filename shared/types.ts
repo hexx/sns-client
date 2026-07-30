@@ -62,9 +62,12 @@ export type Post = {
   text: string; // プレーンテキスト（フォールバック/検索用）
   rich?: RichSegment[]; // リッチ本文（あれば UI はこちらを描画）
   createdAt: string; // ISO 8601
+  cw?: string; // コンテンツ警告（あれば既定で折りたたみ。docs/cw-display-spec.md）
   media: Media[];
   linkCard?: LinkCard;
-  quote?: Post; // 引用で埋め込まれた投稿（描画は1階層のみ）
+  quote?: Post; // 引用で埋め込まれた投稿（描画は1階層のみ。docs/quote-display-spec.md）
+  quoteUnavailable?: boolean; // 引用先が取得不能（削除/ブロック/切り離し）。quote と排他
+  url?: string; // Provider 上の permalink（BFF 生成。bsky/misskey のみ）
   stats: { replies: number; reposts: number; likes: number }; // likes=反応総数
   reactions?: Reaction[]; // 絵文字別内訳（Misskey のみ）
   visibility?: Visibility; // 任意（Misskey）

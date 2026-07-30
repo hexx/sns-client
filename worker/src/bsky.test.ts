@@ -139,6 +139,7 @@ describe('mapPost', () => {
       stats: { replies: 1, reposts: 2, likes: 3 },
       ref: { uri: 'at://did/app.bsky.feed.post/abc', cid: 'cid1' },
       source: { uri: 'at://did/app.bsky.feed.post/abc', cid: 'cid1' },
+      url: 'https://bsky.app/profile/did/post/abc',
     });
   });
 
@@ -385,22 +386,30 @@ describe('mapPost の LinkCard 抽出（extractLinkCard）', () => {
     expect(post.linkCard).toEqual({ url: 'https://example.com/q', title: 'qt', description: 'qd' });
   });
 
-  it('record#view（引用）→ 抽出しない（スコープ外）', () => {
+  it('record#view（引用）→ 外側 linkCard は抽出しないが quote は映射する（docs/quote-display-spec.md）', () => {
     const post = mapPost(
       makePostView({
         embed: {
           $type: 'app.bsky.embed.record#view',
           record: {
             $type: 'app.bsky.embed.record#viewRecord',
-            embed: {
-              $type: 'app.bsky.embed.external#view',
-              external: { uri: 'https://example.com/nested', title: 'n', description: '' },
-            },
+            uri: 'at://did:q/app.bsky.feed.post/q1',
+            cid: 'cq',
+            author: { did: 'did:q', handle: 'q.bsky.social', displayName: 'Q' },
+            value: { text: 'quoted', createdAt: '2026-06-30T00:00:00Z' },
+            embeds: [
+              {
+                $type: 'app.bsky.embed.external#view',
+                external: { uri: 'https://example.com/nested', title: 'n', description: '' },
+              },
+            ],
           },
         },
       }),
     );
     expect(post.linkCard).toBeUndefined();
+    expect(post.quote?.text).toBe('quoted');
+    expect(post.quote?.linkCard).toBeUndefined(); // 引用先の外部カードは描画対象外
   });
 
   it('uri 欠損 → undefined', () => {
@@ -417,5 +426,171 @@ describe('mapPost の LinkCard 抽出（extractLinkCard）', () => {
 
   it('embed 無し → undefined', () => {
     expect(mapPost(makePostView()).linkCard).toBeUndefined();
+  });
+});
+
+// --- 引用表示（docs/quote-display-spec.md）/ CW（docs/cw-display-spec.md） ---
+
+function makeViewRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    $type: 'app.bsky.embed.record#viewRecord',
+    uri: 'at://did:plc:q/app.bsky.feed.post/q1',
+    cid: 'cq',
+    author: { did: 'did:plc:q', handle: 'q.bsky.social', displayName: 'Q' },
+    value: { text: 'quoted body', createdAt: '2026-06-30T09:00:00Z' },
+    replyCount: 4,
+    repostCount: 5,
+    likeCount: 6,
+    ...overrides,
+  };
+}
+
+describe('mapPost の引用抽出（extractQuote）', () => {
+  it('record#view の viewRecord → quote に映射（stats・url・createdAt 込み）', () => {
+    const post = mapPost(
+      makePostView({ embed: { $type: 'app.bsky.embed.record#view', record: makeViewRecord() } }),
+    );
+    expect(post.quote).toMatchObject({
+      id: 'at://did:plc:q/app.bsky.feed.post/q1',
+      provider: 'bluesky',
+      text: 'quoted body',
+      createdAt: '2026-06-30T09:00:00Z',
+      stats: { replies: 4, reposts: 5, likes: 6 },
+      url: 'https://bsky.app/profile/did:plc:q/post/q1',
+    });
+    expect(post.quoteUnavailable).toBeUndefined();
+  });
+
+  it('recordWithMedia#view → media は外側・record は quote に分離', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.recordWithMedia#view',
+          media: {
+            $type: 'app.bsky.embed.images#view',
+            images: [{ fullsize: 'https://i.png', thumb: 'https://t.png', alt: 'a' }],
+          },
+          record: { $type: 'app.bsky.embed.record#view', record: makeViewRecord() },
+        },
+      }),
+    );
+    expect(post.media).toEqual([{ type: 'image', url: 'https://i.png', alt: 'a' }]);
+    expect(post.quote?.text).toBe('quoted body');
+  });
+
+  it('引用先 viewRecord の media（embeds[0]）を quote.media に映射', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.record#view',
+          record: makeViewRecord({
+            embeds: [
+              {
+                $type: 'app.bsky.embed.images#view',
+                images: [{ fullsize: 'https://qi.png', thumb: 'https://qt.png', alt: '' }],
+              },
+            ],
+          }),
+        },
+      }),
+    );
+    expect(post.quote?.media).toEqual([{ type: 'image', url: 'https://qi.png', alt: '' }]);
+  });
+
+  it('ネスト引用（引用の引用）は捨てる（1階層のみ）', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.record#view',
+          record: makeViewRecord({
+            embeds: [
+              { $type: 'app.bsky.embed.record#view', record: makeViewRecord({ uri: 'at://nested' }) },
+            ],
+          }),
+        },
+      }),
+    );
+    expect(post.quote?.quote).toBeUndefined();
+  });
+
+  it.each(['viewNotFound', 'viewBlocked', 'viewDetached'])(
+    '%s → quoteUnavailable',
+    (kind) => {
+      const post = mapPost(
+        makePostView({
+          embed: {
+            $type: 'app.bsky.embed.record#view',
+            record: { $type: `app.bsky.embed.record#${kind}`, uri: 'at://x', notFound: true },
+          },
+        }),
+      );
+      expect(post.quoteUnavailable).toBe(true);
+      expect(post.quote).toBeUndefined();
+    },
+  );
+
+  it('recordWithMedia の不正連鎖（2段目）は展開せず quote 無し', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.recordWithMedia#view',
+          media: { $type: 'app.bsky.embed.images#view', images: [] },
+          record: {
+            $type: 'app.bsky.embed.recordWithMedia#view',
+            media: { $type: 'app.bsky.embed.images#view', images: [] },
+            record: { $type: 'app.bsky.embed.record#view', record: makeViewRecord() },
+          },
+        },
+      }),
+    );
+    expect(post.quote).toBeUndefined();
+    expect(post.quoteUnavailable).toBeUndefined();
+  });
+
+  it('投稿以外のレコード（feed generator）→ skip', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.record#view',
+          record: { $type: 'app.bsky.embed.record#viewGenerator', uri: 'at://gen', displayName: 'G' },
+        },
+      }),
+    );
+    expect(post.quote).toBeUndefined();
+    expect(post.quoteUnavailable).toBeUndefined();
+  });
+});
+
+describe('mapPost の CW / url', () => {
+  it('self-labels を cw に連結（複数なら ", " 区切り、ADR-0016）', () => {
+    const post = mapPost(
+      makePostView({ labels: [{ val: 'porn' }, { val: 'graphic-media' }] }),
+    );
+    expect(post.cw).toBe('porn, graphic-media');
+  });
+
+  it('labels 無し → cw 無し', () => {
+    expect(mapPost(makePostView()).cw).toBeUndefined();
+  });
+
+  it('引用先 viewRecord の labels も cw に映射', () => {
+    const post = mapPost(
+      makePostView({
+        embed: {
+          $type: 'app.bsky.embed.record#view',
+          record: makeViewRecord({ labels: [{ val: 'sexual' }] }),
+        },
+      }),
+    );
+    expect(post.quote?.cw).toBe('sexual');
+  });
+
+  it('at:// URI から bsky.app permalink を生成', () => {
+    expect(mapPost(makePostView()).url).toBe('https://bsky.app/profile/did/post/abc');
+  });
+
+  it('app.bsky.feed.post 以外の URI → url 無し', () => {
+    const post = mapPost(makePostView({ uri: 'at://did/app.bsky.feed.like/xyz' }));
+    expect(post.url).toBeUndefined();
   });
 });

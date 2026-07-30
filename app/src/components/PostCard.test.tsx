@@ -611,3 +611,121 @@ describe('表示名（docs/name-display-spec.md）', () => {
     expect(attr?.querySelector('.provider-badge')).not.toBeNull();
   });
 });
+
+describe('引用カード（docs/quote-display-spec.md）', () => {
+  function makeQuote(overrides: Partial<Post> = {}): Post {
+    return {
+      id: 'q1',
+      provider: 'bluesky',
+      author: { handle: 'q.bsky.social', displayName: 'Q', avatarUrl: 'https://example.com/q.png' },
+      text: '引用される本文',
+      createdAt: NOW.toISOString(),
+      media: [],
+      stats: { replies: 4, reposts: 5, likes: 6 },
+      url: 'https://bsky.app/profile/did:plc:q/post/q1',
+      source: { uri: 'at://q', cid: 'cq' },
+      ...overrides,
+    };
+  }
+
+  it('quote があると引用カードを描画し、本文は5行截断クラス付き', () => {
+    render(<PostCard post={makePost({ quote: makeQuote() })} />);
+    expect(screen.getByText('引用される本文')).toBeInTheDocument();
+    expect(screen.getByText('もっと見る')).toBeInTheDocument();
+    const clamp = document.querySelector('.quote-body-clamp');
+    expect(clamp).not.toBeNull();
+  });
+
+  it('「もっと見る」で展開 → stats・日時・外部リンクが表示され截断が外れる', () => {
+    render(<PostCard post={makePost({ quote: makeQuote() })} />);
+    expect(document.querySelector('.quote-meta')).toBeNull();
+    fireEvent.click(screen.getByText('もっと見る'));
+    const meta = document.querySelector('.quote-meta');
+    expect(meta).not.toBeNull();
+    expect(within(meta as HTMLElement).getByText('❤️ 6')).toBeInTheDocument();
+    const link = document.querySelector('.quote-ext-link') as HTMLAnchorElement;
+    expect(link.href).toBe('https://bsky.app/profile/did:plc:q/post/q1');
+    expect(link.target).toBe('_blank');
+    expect(document.querySelector('.quote-body-clamp')).toBeNull();
+    fireEvent.click(screen.getByText('閉じる'));
+    expect(document.querySelector('.quote-meta')).toBeNull();
+  });
+
+  it('quoteUnavailable → 取得不能の案内行', () => {
+    render(<PostCard post={makePost({ quoteUnavailable: true })} />);
+    expect(screen.getByText('元の投稿は表示できません')).toBeInTheDocument();
+    expect(document.querySelector('.quote-card')).toBeNull();
+  });
+
+  it('引用先への操作ボタン（返信・引用）は描画しない', () => {
+    render(<PostCard post={makePost({ quote: makeQuote() })} onReply={() => {}} onQuote={() => {}} />);
+    fireEvent.click(screen.getByText('もっと見る'));
+    const meta = document.querySelector('.quote-meta') as HTMLElement;
+    expect(within(meta).queryByText('返信')).toBeNull();
+    expect(within(meta).queryByText('引用')).toBeNull();
+  });
+});
+
+describe('CW 折りたたみ（docs/cw-display-spec.md）', () => {
+  it('cw があると既定で折りたたまれ、本文・Media・quote が隠れる', () => {
+    const post = makePost({
+      cw: 'ネタバレ',
+      quote: {
+        id: 'q1',
+        provider: 'bluesky',
+        author: { handle: 'q', displayName: 'Q' },
+        text: 'inner',
+        createdAt: NOW.toISOString(),
+        media: [],
+        stats: { replies: 0, reposts: 0, likes: 0 },
+        source: {},
+      },
+    });
+    render(<PostCard post={post} />);
+    expect(screen.getByText('ネタバレ')).toBeInTheDocument();
+    expect(screen.queryByText('こんにちは世界')).toBeNull();
+    expect(screen.queryByText('inner')).toBeNull();
+    expect(screen.getByText('表示する')).toBeInTheDocument();
+  });
+
+  it('「表示する」で本文が表示され、「隠す」で戻る', () => {
+    render(<PostCard post={makePost({ cw: 'CW テキスト' })} />);
+    fireEvent.click(screen.getByText('表示する'));
+    expect(screen.getByText('こんにちは世界')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('隠す'));
+    expect(screen.queryByText('こんにちは世界')).toBeNull();
+  });
+
+  it('cw 空文字 → ピルは「CW」表示で折りたたみ（防御的フォールバック）', () => {
+    render(<PostCard post={makePost({ cw: '' })} />);
+    expect(screen.getByText('CW')).toBeInTheDocument();
+    expect(screen.queryByText('こんにちは世界')).toBeNull();
+    fireEvent.click(screen.getByText('表示する'));
+    expect(screen.getByText('こんにちは世界')).toBeInTheDocument();
+  });
+
+  it('引用カード内の CW は親と独立して折りたたまれる', () => {
+    const quote: Post = {
+      id: 'q1',
+      provider: 'misskey',
+      author: { handle: 'q', displayName: 'Q' },
+      text: '秘密の引用本文',
+      createdAt: NOW.toISOString(),
+      cw: '閲覧注意',
+      media: [],
+      stats: { replies: 0, reposts: 0, likes: 0 },
+      source: {},
+    };
+    render(<PostCard post={makePost({ quote })} />);
+    // 親の本文は見えるが、引用内の本文は伏せられたまま
+    expect(screen.getByText('こんにちは世界')).toBeInTheDocument();
+    expect(screen.queryByText('秘密の引用本文')).toBeNull();
+    expect(screen.getByText('閲覧注意')).toBeInTheDocument();
+    // 引用カード内のトグルで開く（親の本文と区別するため within でカード内を検索）
+    const card = document.querySelector('.quote-card') as HTMLElement;
+    fireEvent.click(within(card).getByText('表示する'));
+    expect(within(card).getByText('秘密の引用本文')).toBeInTheDocument();
+    // CW 展開後は截断なし（quote-body-clamp が付かない）
+    expect(card.querySelector('.quote-body-clamp')).toBeNull();
+  });
+});
