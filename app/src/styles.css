@@ -362,6 +362,179 @@ body,
   grid-row: span 2;
 }
 
+/* --- Lightbox（投稿画像の拡大表示、docs/lightbox-spec.md） --- */
+.media-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+}
+.media-thumb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: lightbox-fade-in 0.15s ease;
+}
+.lightbox-closing {
+  animation: lightbox-fade-out 0.15s ease forwards;
+}
+@keyframes lightbox-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes lightbox-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+.lightbox-stage {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 56px 12px 24px;
+}
+.lightbox-imgwrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lightbox-imgwrap img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: zoom-out;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.lightbox-imgwrap img.is-loaded {
+  opacity: 1;
+}
+.lightbox-spinner {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  animation: lightbox-spin 0.8s linear infinite;
+}
+@keyframes lightbox-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.lightbox-alt {
+  flex: 0 1 auto;
+  max-width: 720px;
+  padding: 0 16px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+.lightbox-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: center;
+}
+.lightbox-error p {
+  margin: 0;
+}
+.lightbox-retry {
+  margin-top: 4px;
+  padding: 6px 20px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.lightbox-retry:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.lightbox-counter {
+  position: absolute;
+  top: 22px;
+  left: 16px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.lightbox-close,
+.lightbox-nav {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.lightbox-close:hover,
+.lightbox-nav:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+}
+.lightbox-close:focus-visible,
+.lightbox-nav:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.lightbox-close {
+  top: 12px;
+  right: 12px;
+}
+.lightbox-prev {
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.lightbox-next {
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.lightbox-nav:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
 /* --- LinkCard（外部リンクプレビュー） --- */
 .link-card {
   display: block;
@@ -588,10 +761,17 @@ body,
   .pager-tab,
   .fab,
   .primary-btn,
-  .link-btn {
+  .link-btn,
+  .lightbox-imgwrap img,
+  .lightbox-retry,
+  .lightbox-close,
+  .lightbox-nav {
     transition: none !important;
   }
-  .pager-badge {
+  .pager-badge,
+  .lightbox,
+  .lightbox-closing,
+  .lightbox-spinner {
     animation: none;
   }
 }

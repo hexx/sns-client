@@ -1,10 +1,10 @@
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PostCard } from './PostCard';
 import { resetEmojiCache } from './ReactionPicker';
 import { api } from '../api';
-import type { Post } from '../../../shared/types';
+import type { Media, Post } from '../../../shared/types';
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
@@ -397,6 +397,153 @@ describe('PostCard の操作ボタン（docs/deck-view-spec.md §6）', () => {
   it('帰属バッジを描画する', () => {
     render(<PostCard post={makePost()} badge="Misskey · 技術リスト" />);
     expect(screen.getByText('Misskey · 技術リスト')).toBeInTheDocument();
+  });
+});
+
+function openLightboxAt(name: string) {
+  fireEvent.click(screen.getByRole('button', { name }));
+}
+
+/** Lightbox のクローズは 150ms フェード後にアンマウントする（fake timers を進める） */
+function closeLightboxAndWait() {
+  act(() => {
+    vi.advanceTimersByTime(200);
+  });
+}
+
+describe('Lightbox（投稿画像の拡大表示、docs/lightbox-spec.md）', () => {
+  const fourMedia: Media[] = [
+    { type: 'image', url: 'https://example.com/1.png', alt: 'one' },
+    { type: 'image', url: 'https://example.com/2.png', alt: 'two' },
+    { type: 'image', url: 'https://example.com/3.png' },
+    { type: 'image', url: 'https://example.com/4.png', alt: 'four' },
+  ];
+
+  it('サムネイルクリックで aria 属性付きのダイアログが開く', () => {
+    render(<PostCard post={makePost({ media: fourMedia })} />);
+    openLightboxAt('one');
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAttribute('aria-label', '画像の拡大表示');
+  });
+
+  it('クリックした画像を1枚目として開き、位置表示を出す。←/→で切替', () => {
+    render(<PostCard post={makePost({ media: fourMedia })} />);
+    openLightboxAt('two');
+    expect(screen.getByText('2 / 4')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '次の画像' }));
+    expect(screen.getByText('3 / 4')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '前の画像' }));
+    expect(screen.getByText('2 / 4')).toBeInTheDocument();
+  });
+
+  it('端では ←/→ が無効で循環しない。矢印キーでも切替', () => {
+    render(<PostCard post={makePost({ media: fourMedia })} />);
+    openLightboxAt('one');
+    expect(screen.getByRole('button', { name: '前の画像' })).toBeDisabled();
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(screen.getByText('2 / 4')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(screen.getByText('4 / 4')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '次の画像' })).toBeDisabled();
+    fireEvent.keyDown(window, { key: 'ArrowRight' }); // 循環しない
+    expect(screen.getByText('4 / 4')).toBeInTheDocument();
+  });
+
+  it('左スワイプ（水平 50px 以上）で次の画像へ切替', () => {
+    render(<PostCard post={makePost({ media: fourMedia })} />);
+    openLightboxAt('one');
+    const dialog = screen.getByRole('dialog');
+    fireEvent.touchStart(dialog, { touches: [{ clientX: 300, clientY: 100 }] });
+    fireEvent.touchEnd(dialog, { changedTouches: [{ clientX: 200, clientY: 105 }] });
+    expect(screen.getByText('2 / 4')).toBeInTheDocument();
+  });
+
+  it('画像1枚の投稿では ←/→ も位置表示も出ない', () => {
+    render(
+      <PostCard
+        post={makePost({ media: [{ type: 'image', url: 'https://example.com/solo.png', alt: 'solo' }] })}
+      />,
+    );
+    openLightboxAt('solo');
+    expect(screen.queryByRole('button', { name: '前の画像' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '次の画像' })).not.toBeInTheDocument();
+    expect(screen.queryByText('1 / 1')).not.toBeInTheDocument();
+  });
+
+  it('alt は画像下に表示。alt がなければ要素自体がない', () => {
+    const { container } = render(<PostCard post={makePost({ media: fourMedia })} />);
+    openLightboxAt('one');
+    expect(container.querySelector('.lightbox-alt')).toHaveTextContent('one');
+    fireEvent.click(screen.getByRole('button', { name: '次の画像' }));
+    fireEvent.click(screen.getByRole('button', { name: '次の画像' }));
+    // 3枚目は alt なし
+    expect(container.querySelector('.lightbox-alt')).not.toBeInTheDocument();
+  });
+
+  it('×・Esc・背景クリック・画像クリックのそれぞれで閉じる', () => {
+    render(<PostCard post={makePost({ media: fourMedia })} />);
+    // ×
+    openLightboxAt('one');
+    fireEvent.click(screen.getByRole('button', { name: '閉じる' }));
+    closeLightboxAndWait();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Esc
+    openLightboxAt('one');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    closeLightboxAndWait();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // 背景クリック
+    openLightboxAt('one');
+    fireEvent.click(screen.getByRole('dialog'));
+    closeLightboxAndWait();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // 画像クリック（サムネと区別するためダイアログ内にスコープ）
+    openLightboxAt('one');
+    fireEvent.click(within(screen.getByRole('dialog')).getByAltText('one'));
+    closeLightboxAndWait();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('開いたとき × にフォーカスし、閉じたら開き元サムネイルに返す。スクロールロックも復元', () => {
+    render(<PostCard post={makePost({ media: fourMedia })} />);
+    const thumb = screen.getByRole('button', { name: 'two' });
+    thumb.focus();
+    fireEvent.click(thumb);
+    expect(screen.getByRole('button', { name: '閉じる' })).toHaveFocus();
+    expect(document.body.style.overflow).toBe('hidden');
+    fireEvent.click(screen.getByRole('button', { name: '閉じる' }));
+    closeLightboxAndWait();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(document.body.style.overflow).toBe('');
+    expect(thumb).toHaveFocus();
+  });
+
+  it('Tab は Lightbox 内で循環する（フォーカストラップ）', () => {
+    render(<PostCard post={makePost({ media: fourMedia })} />);
+    openLightboxAt('one');
+    // 1枚目では prev 無効 → フォーカス可能は [閉じる, 次の画像]
+    const close = screen.getByRole('button', { name: '閉じる' });
+    const next = screen.getByRole('button', { name: '次の画像' });
+    const dialog = screen.getByRole('dialog');
+    next.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(next).toHaveFocus();
+  });
+
+  it('読込失敗時はメッセージ + alt + 再試行ボタン。再試行で再読込', () => {
+    render(<PostCard post={makePost({ media: fourMedia })} />);
+    openLightboxAt('one');
+    const dialog = screen.getByRole('dialog');
+    fireEvent.error(within(dialog).getByAltText('one'));
+    expect(screen.getByText('画像を読み込めませんでした')).toBeInTheDocument();
+    expect(screen.getByText('one')).toBeInTheDocument(); // エラーブロック内の alt
+    fireEvent.click(screen.getByRole('button', { name: '再試行' }));
+    expect(screen.queryByText('画像を読み込めませんでした')).not.toBeInTheDocument();
+    expect(within(dialog).getByAltText('one')).toBeInTheDocument(); // img 再マウント
   });
 });
 

@@ -44,6 +44,10 @@ _Avoid_: group, community, circle
 投稿に添付された画像。表示用の URL と alt（説明）を持つ。
 _Avoid_: attachment, blob, asset
 
+**Lightbox（ライトボックス）**:
+投稿に添付された Media を拡大して見せる重ね合わせ表示。投稿内の画像を選択すると開き、背景を暗くして、画面に収まる最大サイズで1枚ずつ表示し、同じ投稿内の複数画像を切り替えられる。識別子・正式名が Lightbox で、日本語の「拡大表示」は説明語。
+_Avoid_: MediaViewer, ImageViewer, gallery, modal
+
 **Timeline**:
 1つの View に属し、その View を構成する Source 群の投稿を時系列に合成して描画した一覧。無限スクロールで継ぎ足し、新着は自動挿入せずピルで知らせる。
 _Avoid_: feed, home, list, view

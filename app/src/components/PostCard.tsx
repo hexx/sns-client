@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import type { Author, Post } from '../../../shared/types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, TouchEvent as ReactTouchEvent } from 'react';
+import type { Author, Media, Post } from '../../../shared/types';
 import { ReactionPicker } from './ReactionPicker';
 import { RichText } from './RichText';
 
@@ -67,15 +68,237 @@ function Body({ post }: { post: Post }) {
   return post.text ? <p className="text">{post.text}</p> : null;
 }
 
+/** reduced-motion 設定（docs/lightbox-spec.md §9）。有効時は閉じる動作が即時になる */
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+type LoadStatus = 'loading' | 'done' | 'error';
+
+/**
+ * Lightbox: 投稿画像の拡大表示（docs/lightbox-spec.md）。
+ * ギャラリー型 — 同一投稿内の複数 Media を ←/→ で切替。alt 常時表示。
+ * 閉じる: 背景タップ / × / Esc / 画像タップ。フォーカストラップ・スクロールロック・フォーカス返却付き。
+ */
+function Lightbox({
+  media,
+  initialIndex,
+  onClose,
+}: {
+  media: Media[];
+  initialIndex: number;
+  onClose: () => void;
+}) {
+  const [index, setIndex] = useState(initialIndex);
+  const [status, setStatus] = useState<Record<string, LoadStatus>>({});
+  const [nonce, setNonce] = useState<Record<string, number>>({});
+  const [closing, setClosing] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const startedRef = useRef(new Set<string>());
+  const touchRef = useRef<{ x: number; y: number } | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const count = media.length;
+  const current = media[index];
+  const currentStatus = status[current.url] ?? 'loading';
+
+  // アンマウント時にクローズタイマーを破棄する（App.tsx 等と同じ規約）
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
+  /** フェードアウトを伴うクローズ。reduced-motion では即時（docs/lightbox-spec.md §9） */
+  const requestClose = useCallback(() => {
+    if (prefersReducedMotion()) {
+      onClose();
+      return;
+    }
+    setClosing(true);
+    closeTimerRef.current = window.setTimeout(onClose, 150);
+  }, [onClose]);
+
+  /** 画像切替。端ではクランプし循環しない（docs/lightbox-spec.md §6.2） */
+  const go = useCallback(
+    (delta: number) => {
+      setIndex((i) => {
+        const next = i + delta;
+        return next < 0 || next >= count ? i : next;
+      });
+    },
+    [count],
+  );
+
+  // キーボード: Esc で閉じる、←/→ で切替（docs/lightbox-spec.md §8.4）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') requestClose();
+      else if (e.key === 'ArrowLeft') go(-1);
+      else if (e.key === 'ArrowRight') go(1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [go, requestClose]);
+
+  // 開いたとき: × にフォーカス移動 + 背景スクロールロック。閉じたら復元 + 開き元へフォーカス返却（§8.2・§8.3）
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    closeBtnRef.current?.focus();
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      opener?.focus?.();
+    };
+  }, []);
+
+  // 現在画像と隣（±1）の先読み（docs/lightbox-spec.md §7）
+  useEffect(() => {
+    for (const i of [index - 1, index, index + 1]) {
+      if (i < 0 || i >= count) continue;
+      const url = media[i].url;
+      if (startedRef.current.has(url)) continue;
+      startedRef.current.add(url);
+      setStatus((s) => (s[url] ? s : { ...s, [url]: 'loading' }));
+      const probe = new Image();
+      probe.addEventListener('load', () => setStatus((s) => ({ ...s, [url]: 'done' })), { once: true });
+      probe.addEventListener('error', () => setStatus((s) => ({ ...s, [url]: 'error' })), { once: true });
+      probe.src = url;
+    }
+  }, [index, count, media]);
+
+  /** 再試行: nonce で img をリマウントして再読込（docs/lightbox-spec.md §7） */
+  const retry = () => {
+    const url = current.url;
+    setNonce((n) => ({ ...n, [url]: (n[url] ?? 0) + 1 }));
+    setStatus((s) => ({ ...s, [url]: 'loading' }));
+  };
+
+  // フォーカストラップ: Tab は ×・←・→ を循環（docs/lightbox-spec.md §8.2）
+  const trapTab = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab' || !rootRef.current) return;
+    const focusables = Array.from(rootRef.current.querySelectorAll<HTMLElement>('button:not(:disabled)'));
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !rootRef.current.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  // スワイプ: 水平 50px 以上かつ水平 > 垂直で切替（docs/lightbox-spec.md §10.6）
+  const onTouchStart = (e: ReactTouchEvent) => {
+    const t = e.touches[0];
+    touchRef.current = { x: t.clientX, y: t.clientY };
+  };
+  const onTouchEnd = (e: ReactTouchEvent) => {
+    const start = touchRef.current;
+    touchRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy)) go(dx < 0 ? 1 : -1);
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      className={`lightbox${closing ? ' lightbox-closing' : ''}`}
+      role="dialog"
+      aria-modal="true"
+      aria-label="画像の拡大表示"
+      onClick={(e) => {
+        // 背景（画像・コントロール以外）クリックで閉じる。画像タップも閉じる（§5.2）
+        const el = e.target as HTMLElement;
+        if (el.closest('button') || el.closest('.lightbox-error')) return;
+        requestClose();
+      }}
+      onKeyDown={trapTab}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
+      {count > 1 && <span className="lightbox-counter">{`${index + 1} / ${count}`}</span>}
+      <button ref={closeBtnRef} type="button" className="lightbox-close" aria-label="閉じる" onClick={requestClose}>
+        ×
+      </button>
+      {count > 1 && (
+        <>
+          <button
+            type="button"
+            className="lightbox-nav lightbox-prev"
+            aria-label="前の画像"
+            disabled={index === 0}
+            onClick={() => go(-1)}
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            className="lightbox-nav lightbox-next"
+            aria-label="次の画像"
+            disabled={index === count - 1}
+            onClick={() => go(1)}
+          >
+            ›
+          </button>
+        </>
+      )}
+      <figure className="lightbox-stage">
+        <div className="lightbox-imgwrap">
+          {currentStatus === 'loading' && <span className="lightbox-spinner" aria-hidden="true" />}
+          {currentStatus === 'error' ? (
+            <div className="lightbox-error" role="alert">
+              <p>画像を読み込めませんでした</p>
+              {current.alt ? <p className="lightbox-error-alt">{current.alt}</p> : null}
+              <button type="button" className="lightbox-retry" onClick={retry}>
+                再試行
+              </button>
+            </div>
+          ) : (
+            <img
+              key={`${current.url}#${nonce[current.url] ?? 0}`}
+              className={currentStatus === 'done' ? 'is-loaded' : ''}
+              src={current.url}
+              alt={current.alt || ''}
+              onLoad={() => setStatus((s) => ({ ...s, [current.url]: 'done' }))}
+              onError={() => setStatus((s) => ({ ...s, [current.url]: 'error' }))}
+            />
+          )}
+        </div>
+        {currentStatus !== 'error' && current.alt ? (
+          <figcaption className="lightbox-alt">{current.alt}</figcaption>
+        ) : null}
+      </figure>
+    </div>
+  );
+}
+
 function MediaGrid({ post }: { post: Post }) {
   const media = post.media.filter((m) => m.url).slice(0, 4);
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  // onClose を安定化し、Lightbox 内のキーボード効果の再購読を避ける
+  const handleClose = useCallback(() => setOpenIndex(null), []);
   if (media.length === 0) return null;
   return (
-    <div className={`media media-${media.length}`}>
-      {media.map((m, i) => (
-        <img key={i} src={m.url} alt={m.alt || ''} loading="lazy" />
-      ))}
-    </div>
+    <>
+      <div className={`media media-${media.length}`}>
+        {media.map((m, i) => (
+          <button key={i} type="button" className="media-thumb" onClick={() => setOpenIndex(i)}>
+            <img src={m.url} alt={m.alt || ''} loading="lazy" />
+          </button>
+        ))}
+      </div>
+      {openIndex !== null && (
+        <Lightbox media={media} initialIndex={openIndex} onClose={handleClose} />
+      )}
+    </>
   );
 }
 
