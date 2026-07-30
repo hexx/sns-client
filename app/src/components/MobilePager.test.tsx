@@ -164,6 +164,45 @@ describe('MobilePager（単一 Source）', () => {
     expect(articles[0]).toHaveTextContent('second');
     expect(articles[1]).toHaveTextContent('first');
     expect(screen.queryByRole('button', { name: /新着/ })).not.toBeInTheDocument();
+    // 取り込んだ新着だけ未読強調され、最古の未読の直下に区切り線が入る（docs/unread-divider-spec.md §3）
+    expect(articles[0]).toHaveClass('unread');
+    expect(articles[1]).not.toHaveClass('unread');
+    expect(screen.getByText('新着はここまで')).toBeInTheDocument();
+  });
+
+  it('区切り線が可視領域に入ると未読がフェードアウトして消える（§3.4）', async () => {
+    vi.useFakeTimers();
+    const p1 = makePost({ id: 'p1', text: 'first' });
+    const p2 = makePost({ id: 'p2', text: 'second' });
+    vi.mocked(api.timeline)
+      .mockResolvedValueOnce({ posts: [p1], nextCursor: null })
+      .mockResolvedValue({ posts: [p1, p2], nextCursor: null });
+
+    render(<Pager views={[bskyView]} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(75_000);
+    });
+    await act(async () => {
+      screen.getByRole('button', { name: /新着 1 件/ }).click();
+    });
+    expect(screen.getByText('新着はここまで')).toBeInTheDocument();
+
+    // 区切り線が可視領域に入る → フェード開始
+    await act(async () => {
+      triggerIntersection();
+    });
+    expect(screen.getByText('新着はここまで')).toHaveClass('clearing');
+    expect(screen.getAllByRole('article')[0]).toHaveClass('unread-fading');
+
+    // フェード完了 → 区切り線と強調が破棄される
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.queryByText('新着はここまで')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('article')[0]).not.toHaveClass('unread');
   });
 });
 
@@ -277,7 +316,7 @@ describe('MobilePager（ページング操作。docs/mobile-paging-spec.md §4�
     expect(onSwitchView).not.toHaveBeenCalled();
   });
 
-  it('非アクティブ View の新着はタブバッジで知らせ、切替で消えてピルに引き継ぐ', async () => {
+  it('非アクティブ View の新着はタブバッジで知らせ、タブタップで自動取り込み＋未読境界を表示する（§4.4 三層）', async () => {
     vi.useFakeTimers();
     const p1 = makePost({ id: 'p1', text: 'first' });
     const p2 = makePost({ id: 'p2', text: 'second' });
@@ -303,12 +342,52 @@ describe('MobilePager（ページング操作。docs/mobile-paging-spec.md §4�
     expect(screen.getByRole('tab', { name: /ホーム/ })).toHaveTextContent('1');
     expect(screen.getByRole('tab', { name: '技術' })).not.toHaveTextContent('1');
 
-    // ホームへ切替 → バッジ消去、ページ内ピルが現れる（§4.4）
+    // ホームのタブをタップ → 自動取り込み: バッジ消去、ピルは出ず、投稿挿入＋区切り線（unread-divider-spec §4.2）
     await act(async () => {
       screen.getByRole('tab', { name: /ホーム/ }).click();
     });
     expect(screen.getByRole('tab', { name: 'ホーム' })).not.toHaveTextContent('1');
+    expect(screen.queryByRole('button', { name: /新着/ })).not.toBeInTheDocument();
+    expect(screen.getByText('second')).toBeInTheDocument();
+    expect(screen.getByText('新着はここまで')).toBeInTheDocument();
+    // 未読強調は新着投稿のみ
+    const unreadArticles = screen.getAllByRole('article').filter((a) => a.classList.contains('unread'));
+    expect(unreadArticles).toHaveLength(1);
+    expect(unreadArticles[0]).toHaveTextContent('second');
+  });
+
+  it('スワイプ移動では自動取り込みせず、ピルに引き継ぐ（unread-divider-spec §4.2）', async () => {
+    vi.useFakeTimers();
+    const p1 = makePost({ id: 'p1', text: 'first' });
+    const p2 = makePost({ id: 'p2', text: 'second' });
+    let bskyCalls = 0;
+    vi.mocked(api.timeline).mockImplementation(async (source) => {
+      if (source.provider !== 'bluesky') return { posts: [], nextCursor: null };
+      bskyCalls += 1;
+      return bskyCalls <= 1 ? { posts: [p1], nextCursor: null } : { posts: [p1, p2], nextCursor: null };
+    });
+
+    render(<Pager views={twoViews} initial="tech" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(75_000);
+    });
+    expect(screen.getByRole('tab', { name: /ホーム/ })).toHaveTextContent('1');
+
+    // 左スワイプでホームへ（距離十分）
+    const viewport = document.querySelector('.pager-viewport') as HTMLElement;
+    await act(async () => {
+      touch(viewport, 'touchStart', 300, 100, 0);
+      touch(viewport, 'touchMove', 290, 100, 100); // スロップ超 → 横ロック
+      touch(viewport, 'touchMove', 0, 102, 500); // dx=-300
+      touch(viewport, 'touchEnd', 0, 102, 1000);
+    });
+
+    // 自動取り込みは起きず、ページ内ピルがシグナルを引き継ぐ。区切り線はまだ無い
     expect(screen.getByRole('button', { name: /新着 1 件/ })).toBeInTheDocument();
+    expect(screen.queryByText('新着はここまで')).not.toBeInTheDocument();
   });
 });
 

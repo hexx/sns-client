@@ -2,10 +2,11 @@
  * MobilePager: スマホ（<1024px）UI（docs/mobile-paging-spec.md、ADR-0010）。
  * 全 View を横並びページとして常時マウントし（ポーリング・スクロール位置・未取り込み新着を保持）、
  * 横スワイプで隣接 View、上部タブストリップのタップで任意 View へ移動する。
- * 新着は「アクティブページはピル・非アクティブはタブバッジ」の二層で通知する（§4.4）。
+ * 新着通知は三層（§4.4）: 非アクティブはタブバッジ（タップで自動取り込み）・
+ * アクティブはピル・取り込み済み未読は区切り線＋強調（docs/unread-divider-spec.md）。
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { TimelineCore } from './TimelineCore';
+import { TimelineCore, type TimelineCoreHandle } from './TimelineCore';
 import { useBadgeFor } from '../lib/sourceLabels';
 import type { Post, View } from '../../../shared/types';
 
@@ -49,6 +50,8 @@ export function MobilePager({
   const gesture = useRef<Gesture | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  // タブタップ時の自動取り込み用（docs/unread-divider-spec.md §4.2）。全ページ常時マウントのため参照は常に存在する
+  const timelineRefs = useRef<Map<string, TimelineCoreHandle>>(new Map());
 
   const goTo = useCallback(
     (i: number) => {
@@ -148,6 +151,10 @@ export function MobilePager({
         <section className="pager-page" key={view.id} aria-label={view.name}>
           {view.sources.length > 0 ? (
             <TimelineCore
+              ref={(h) => {
+                if (h) timelineRefs.current.set(view.id, h);
+                else timelineRefs.current.delete(view.id);
+              }}
               sources={view.sources}
               justPosted={justPosted}
               onReply={onReply}
@@ -181,7 +188,12 @@ export function MobilePager({
               className={`pager-tab${i === index ? ' active' : ''}`}
               role="tab"
               aria-selected={i === index}
-              onClick={() => goTo(i)}
+              onClick={() => {
+                // タブタップは「新着を見たい」意図 → 自動取り込み＋先頭スクロール＋未読表示
+                // （docs/unread-divider-spec.md §4.2。スワイプは対象外）
+                if ((pending[v.id] ?? 0) > 0) timelineRefs.current.get(v.id)?.applyPending();
+                goTo(i);
+              }}
             >
               {v.name}
               {count > 0 && <span className="pager-badge">{count > 99 ? '99+' : count}</span>}

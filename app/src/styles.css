@@ -217,6 +217,37 @@ body,
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
+/* 新着境界（docs/unread-divider-spec.md）: 最古の未読投稿の直下の区切り線＋未読投稿の薄い背景 */
+.unread-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+  padding: 0 12px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: opacity 0.4s;
+}
+.unread-divider::before,
+.unread-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--accent);
+}
+.unread-divider.clearing {
+  opacity: 0;
+}
+.card.unread {
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+  transition: background-color 0.4s;
+}
+.card.unread.unread-fading {
+  background-color: var(--card);
+}
+
 .scroll {
   flex: 1;
   overflow-y: auto;
@@ -570,6 +601,10 @@ body,
   }
   .pager-badge {
     animation: none;
+  }
+  .unread-divider,
+  .card.unread {
+    transition: none !important;
   }
 }
 
