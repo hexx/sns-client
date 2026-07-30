@@ -190,6 +190,8 @@ export function PostCard({
   onLike,
   onRepost,
   badge,
+  unread,
+  unreadFading,
 }: {
   post: Post;
   onReply?: (p: Post) => void;
@@ -201,12 +203,16 @@ export function PostCard({
   onRepost?: (p: Post) => void;
   /** 帰属バッジ（プラットフォーム名 + 由来ソース名。デッキ表示用） */
   badge?: string;
+  /** 未読強調（docs/unread-divider-spec.md） */
+  unread?: boolean;
+  /** 未読の既読クリア中（フェードアウト） */
+  unreadFading?: boolean;
 }) {
   const hasReactions = !!post.reactions && post.reactions.length > 0;
   const liked = Boolean(post.viewer?.likeUri);
   const reposted = Boolean(post.viewer?.repostUri);
   return (
-    <article className="card">
+    <article className={`card${unread ? ' unread' : ''}${unreadFading ? ' unread-fading' : ''}`}>
       {post.repostedBy && (
         <div className="repost-badge">
           🔁 <DisplayName author={post.repostedBy} className="repost-name" /> がリポスト

@@ -15,6 +15,7 @@
 
 ## UI
 - [mobile-paging-spec.md](mobile-paging-spec.md) — スマホ UI 仕様書（スワイプページングによる複数 View 閲覧）
+- [unread-divider-spec.md](unread-divider-spec.md) — 新着境界仕様（取り込み後の未読範囲の可視化＋タブタップでの自動取り込み）
 - [deck-compose-spec.md](deck-compose-spec.md) — デッキ UI からの Compose（新規投稿）仕様書
 - [linkcard-display-spec.md](linkcard-display-spec.md) — LinkCard（リンクプレビューカード）表示機能 仕様
 - [name-display-spec.md](name-display-spec.md) — 投稿者名表示 仕様書（長い名前の縦伸び解消＋名前絵文字の解決）

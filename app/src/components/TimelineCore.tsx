@@ -2,8 +2,10 @@
  * TimelineCore: Source 群の fetch・ポーリング・時系列合成・描画の本体。
  * モバイルの Timeline（トップバー/FAB 付き）とデスクトップの Deck（カラム）の両方から再利用される。
  * ポーリング間隔はプロバイダ別（Misskey 15秒 / Bluesky 30秒。docs/deck-view-spec.md §3）。
+ * 新着の取り込み後は未読強調＋区切り線「新着はここまで」を表示し、
+ * 区切り線が可視領域に入ったら既読クリアする（docs/unread-divider-spec.md）。
  */
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { Fragment, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { fetchTimeline } from '../lib/timeline';
 import { applyReaction } from '../lib/reactions';
@@ -14,8 +16,10 @@ import { PostCard } from './PostCard';
 const TICK_MS = 15_000;
 const POLL_MS: Record<Provider, number> = { misskey: 15_000, bluesky: 30_000, mastodon: 30_000, mixi2: 30_000, nostr: 30_000 };
 const PTR_THRESHOLD = 70;
+/** 未読の既読クリア時のフェード時間（docs/unread-divider-spec.md §5） */
+const UNREAD_FADE_MS = 400;
 
-export type TimelineCoreHandle = { refresh: () => Promise<void> };
+export type TimelineCoreHandle = { refresh: () => Promise<void>; applyPending: () => void };
 
 function keyOf(s: Source): string {
   return `${s.provider}:${s.kind}:${s.id ?? ''}`;
@@ -89,6 +93,10 @@ export const TimelineCore = forwardRef<
   const [online, setOnline] = useState(navigator.onLine);
   const [pull, setPull] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+  /** 未読投稿のグローバル id セット（docs/unread-divider-spec.md §3。セッション内のみ） */
+  const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
+  /** 既読クリアのフェード中（区切り線表示済み → 強調を薄めてから破棄） */
+  const [clearingUnread, setClearingUnread] = useState(false);
 
   const seenIds = useRef<Set<string>>(new Set());
   const statesRef = useRef(states);
@@ -102,6 +110,15 @@ export const TimelineCore = forwardRef<
   const loadingKeys = useRef<Set<string>>(new Set());
   const refreshingRef = useRef(false);
   const lastPollAt = useRef<Map<string, number>>(new Map());
+  const fadeTimer = useRef<number | null>(null);
+  const dividerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(
+    () => () => {
+      if (fadeTimer.current != null) clearTimeout(fadeTimer.current);
+    },
+    [],
+  );
 
   const patch = useCallback((key: string, fn: (s: SourceState) => SourceState) => {
     setStates((prev) => prev.map((s) => (keyOf(s.source) === key ? fn(s) : s)));
@@ -256,6 +273,8 @@ export const TimelineCore = forwardRef<
     setStates(initStates(sources));
     seenIds.current = new Set();
     lastPollAt.current = new Map();
+    setUnreadIds(new Set());
+    setClearingUnread(false);
     void (async () => {
       await Promise.allSettled(
         sources.map(async (source) => {
@@ -371,17 +390,39 @@ export const TimelineCore = forwardRef<
     return () => clearInterval(t);
   }, [checkNew]);
 
-  // --- 新着を適用（各 Source の先頭に挿入＋先頭へスクロール） ---
-  const applyPending = useCallback(() => {
-    setStates((prev) =>
-      prev.map((s) => {
-        if (s.pending.length === 0) return s;
-        for (const p of s.pending) seenIds.current.add(pid(p));
-        return { ...s, posts: [...s.pending, ...s.posts], pending: [] };
-      }),
-    );
-    scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  // --- 未読のフェード制御（docs/unread-divider-spec.md §3.4） ---
+  /** フェード中に新着が来ても消えないよう、進行中のフェードを取り消す */
+  const cancelFade = useCallback(() => {
+    if (fadeTimer.current != null) {
+      clearTimeout(fadeTimer.current);
+      fadeTimer.current = null;
+    }
+    setClearingUnread(false);
   }, []);
+
+  /** 既読クリア: フェードアウト開始 → 完了後に未読セットを破棄 */
+  const clearUnread = useCallback(() => {
+    if (fadeTimer.current != null) return;
+    setClearingUnread(true);
+    fadeTimer.current = window.setTimeout(() => {
+      fadeTimer.current = null;
+      setUnreadIds(new Set());
+      setClearingUnread(false);
+    }, UNREAD_FADE_MS);
+  }, []);
+
+  // --- 新着を適用（各 Source の先頭に挿入＋未読マーク＋先頭へスクロール） ---
+  const applyPending = useCallback(() => {
+    const newUnread = statesRef.current.flatMap((s) => s.pending).map(pid);
+    if (newUnread.length === 0) return;
+    for (const id of newUnread) seenIds.current.add(id);
+    setStates((prev) =>
+      prev.map((s) => (s.pending.length === 0 ? s : { ...s, posts: [...s.pending, ...s.posts], pending: [] })),
+    );
+    cancelFade();
+    setUnreadIds((prev) => new Set([...prev, ...newUnread]));
+    scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [cancelFade]);
 
   // --- 手動更新 / pull-to-refresh ---
   const refresh = useCallback(async () => {
@@ -390,6 +431,7 @@ export const TimelineCore = forwardRef<
     refreshingRef.current = true;
     setRefreshing(true);
     onRefreshingChange?.(true);
+    const freshIds: string[] = [];
     await Promise.allSettled(
       statesRef.current
         .filter((s) => !s.authFailed)
@@ -398,7 +440,10 @@ export const TimelineCore = forwardRef<
           try {
             const data = await fetchTimeline(st.source);
             const fresh = data.posts.filter((p) => !seenIds.current.has(pid(p)));
-            for (const p of fresh) seenIds.current.add(pid(p));
+            for (const p of fresh) {
+              seenIds.current.add(pid(p));
+              freshIds.push(pid(p));
+            }
             patch(key, (s) => ({
               ...s,
               posts: fresh.length > 0 ? [...fresh, ...s.posts] : s.posts,
@@ -410,12 +455,17 @@ export const TimelineCore = forwardRef<
           }
         }),
     );
+    // 手動更新の新着も未読マーク（単一ルール。docs/unread-divider-spec.md §3.1 / §4.3）
+    if (freshIds.length > 0) {
+      cancelFade();
+      setUnreadIds((prev) => new Set([...prev, ...freshIds]));
+    }
     refreshingRef.current = false;
     setRefreshing(false);
     onRefreshingChange?.(false);
-  }, [patch, handleSourceError, onRefreshingChange]);
+  }, [patch, handleSourceError, onRefreshingChange, cancelFade]);
 
-  useImperativeHandle(ref, () => ({ refresh }), [refresh]);
+  useImperativeHandle(ref, () => ({ refresh, applyPending }), [refresh, applyPending]);
 
   // --- オンライン/オフライン ---
   useEffect(() => {
@@ -478,6 +528,32 @@ export const TimelineCore = forwardRef<
   useEffect(() => {
     onPendingCountChange?.(pendingCount);
   }, [onPendingCountChange, pendingCount]);
+
+  // --- 区切り線の位置: 最古の未読投稿の直下（docs/unread-divider-spec.md §3.2） ---
+  // merged は createdAt 降順なので、末尾から走査して最初に見つかった未読が最古。
+  // 複数 Source マージのタイミング差で未読が既読の間に混ざることがあるため、
+  // 区切り線は境界の目印、投稿単位の強調が未読表現の本体になる。
+  const dividerIndex = useMemo(() => {
+    if (unreadIds.size === 0) return -1;
+    for (let i = merged.length - 1; i >= 0; i--) {
+      if (unreadIds.has(pid(merged[i].post))) return i;
+    }
+    return -1;
+  }, [merged, unreadIds]);
+
+  // 区切り線が可視領域に入ったら既読クリア（§3.4。root はこのタイムラインのスクロール容器）
+  useEffect(() => {
+    const el = dividerRef.current;
+    if (!el || dividerIndex < 0 || clearingUnread) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) clearUnread();
+      },
+      { root: scrollRef.current },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [dividerIndex, clearingUnread, clearUnread]);
   const loadingMore = states.some((s) => s.loadingMore);
   const errored = states.filter((s) => s.error);
   const hasMore = states.some((s) => s.cursor && s.posts.length > 0 && !s.authFailed);
@@ -511,20 +587,30 @@ export const TimelineCore = forwardRef<
           </div>
         )}
 
-        {merged.map(({ post, skey }) => {
+        {merged.map(({ post, skey }, i) => {
           // nostr は読み取り専用：返信/引用/いいね/リポストの操作系をすべて隠す（§5.3）
           const readOnly = post.provider === 'nostr';
+          const id = pid(post);
+          const unread = unreadIds.has(id);
           return (
-            <PostCard
-              key={pid(post)}
-              post={post}
-              onReply={readOnly ? undefined : onReply}
-              onQuote={readOnly ? undefined : onQuote}
-              onReact={readOnly ? undefined : toggleReaction}
-              onLike={interactive && !readOnly ? () => void toggleLike(post) : undefined}
-              onRepost={interactive && !readOnly ? () => void toggleRepost(post) : undefined}
-              badge={badgeFor?.(skey, post.provider)}
-            />
+            <Fragment key={id}>
+              <PostCard
+                post={post}
+                onReply={readOnly ? undefined : onReply}
+                onQuote={readOnly ? undefined : onQuote}
+                onReact={readOnly ? undefined : toggleReaction}
+                onLike={interactive && !readOnly ? () => void toggleLike(post) : undefined}
+                onRepost={interactive && !readOnly ? () => void toggleRepost(post) : undefined}
+                badge={badgeFor?.(skey, post.provider)}
+                unread={unread}
+                unreadFading={unread && clearingUnread}
+              />
+              {i === dividerIndex && (
+                <div ref={dividerRef} className={`unread-divider${clearingUnread ? ' clearing' : ''}`}>
+                  新着はここまで
+                </div>
+              )}
+            </Fragment>
           );
         })}
 
