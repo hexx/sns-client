@@ -3,7 +3,8 @@
  * モバイルの Timeline（トップバー/FAB 付き）とデスクトップの Deck（カラム）の両方から再利用される。
  * ポーリング間隔はプロバイダ別（Misskey 15秒 / Bluesky 30秒。docs/deck-view-spec.md §3）。
  * 新着の取り込み後は未読強調＋区切り線「新着はここまで」を表示し、
- * 区切り線が可視領域に入ったら既読クリアする（docs/unread-divider-spec.md）。
+ * 区切り線をスクロールで通過したら（可視領域の上部から完全に外れたら）既読クリアする（docs/unread-divider-spec.md §3.4）。
+ * 追加取り込みは未読セットを差し替える（同 §3.3。取り込みは常に利用者の明示的操作のため）。
  */
 import { Fragment, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
@@ -16,8 +17,6 @@ import { PostCard } from './PostCard';
 const TICK_MS = 15_000;
 const POLL_MS: Record<Provider, number> = { misskey: 15_000, bluesky: 30_000, mastodon: 30_000, mixi2: 30_000, nostr: 30_000 };
 const PTR_THRESHOLD = 70;
-/** 未読の既読クリア時のフェード時間（docs/unread-divider-spec.md §5） */
-const UNREAD_FADE_MS = 400;
 
 export type TimelineCoreHandle = { refresh: () => Promise<void>; applyPending: () => void };
 
@@ -95,8 +94,6 @@ export const TimelineCore = forwardRef<
   const [toast, setToast] = useState<string | null>(null);
   /** 未読投稿のグローバル id セット（docs/unread-divider-spec.md §3。セッション内のみ） */
   const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
-  /** 既読クリアのフェード中（区切り線表示済み → 強調を薄めてから破棄） */
-  const [clearingUnread, setClearingUnread] = useState(false);
 
   const seenIds = useRef<Set<string>>(new Set());
   const statesRef = useRef(states);
@@ -110,15 +107,7 @@ export const TimelineCore = forwardRef<
   const loadingKeys = useRef<Set<string>>(new Set());
   const refreshingRef = useRef(false);
   const lastPollAt = useRef<Map<string, number>>(new Map());
-  const fadeTimer = useRef<number | null>(null);
   const dividerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(
-    () => () => {
-      if (fadeTimer.current != null) clearTimeout(fadeTimer.current);
-    },
-    [],
-  );
 
   const patch = useCallback((key: string, fn: (s: SourceState) => SourceState) => {
     setStates((prev) => prev.map((s) => (keyOf(s.source) === key ? fn(s) : s)));
@@ -274,7 +263,6 @@ export const TimelineCore = forwardRef<
     seenIds.current = new Set();
     lastPollAt.current = new Map();
     setUnreadIds(new Set());
-    setClearingUnread(false);
     void (async () => {
       await Promise.allSettled(
         sources.map(async (source) => {
@@ -390,25 +378,10 @@ export const TimelineCore = forwardRef<
     return () => clearInterval(t);
   }, [checkNew]);
 
-  // --- 未読のフェード制御（docs/unread-divider-spec.md §3.4） ---
-  /** フェード中に新着が来ても消えないよう、進行中のフェードを取り消す */
-  const cancelFade = useCallback(() => {
-    if (fadeTimer.current != null) {
-      clearTimeout(fadeTimer.current);
-      fadeTimer.current = null;
-    }
-    setClearingUnread(false);
-  }, []);
-
-  /** 既読クリア: フェードアウト開始 → 完了後に未読セットを破棄 */
+  // --- 既読クリア（docs/unread-divider-spec.md §3.4） ---
+  /** 区切り線が可視領域の上部から完全に外れた瞬間、未読セットを即座に破棄する（フェードなし） */
   const clearUnread = useCallback(() => {
-    if (fadeTimer.current != null) return;
-    setClearingUnread(true);
-    fadeTimer.current = window.setTimeout(() => {
-      fadeTimer.current = null;
-      setUnreadIds(new Set());
-      setClearingUnread(false);
-    }, UNREAD_FADE_MS);
+    setUnreadIds(new Set());
   }, []);
 
   // --- 新着を適用（各 Source の先頭に挿入＋未読マーク＋先頭へスクロール） ---
@@ -419,10 +392,10 @@ export const TimelineCore = forwardRef<
     setStates((prev) =>
       prev.map((s) => (s.pending.length === 0 ? s : { ...s, posts: [...s.pending, ...s.posts], pending: [] })),
     );
-    cancelFade();
-    setUnreadIds((prev) => new Set([...prev, ...newUnread]));
+    // 追加取り込みは未読の差し替え: 旧セットを破棄し、今回取り込んだ分だけで新設する（§3.3）
+    setUnreadIds(new Set(newUnread));
     scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [cancelFade]);
+  }, []);
 
   // --- 手動更新 / pull-to-refresh ---
   const refresh = useCallback(async () => {
@@ -455,15 +428,15 @@ export const TimelineCore = forwardRef<
           }
         }),
     );
-    // 手動更新の新着も未読マーク（単一ルール。docs/unread-divider-spec.md §3.1 / §4.3）
+    // 手動更新の新着も未読マーク（単一ルール。docs/unread-divider-spec.md §3.1 / §4.3）。
+    // 1件以上あれば差し替え（§3.3）、0件なら既存の未読をそのまま維持する。
     if (freshIds.length > 0) {
-      cancelFade();
-      setUnreadIds((prev) => new Set([...prev, ...freshIds]));
+      setUnreadIds(new Set(freshIds));
     }
     refreshingRef.current = false;
     setRefreshing(false);
     onRefreshingChange?.(false);
-  }, [patch, handleSourceError, onRefreshingChange, cancelFade]);
+  }, [patch, handleSourceError, onRefreshingChange]);
 
   useImperativeHandle(ref, () => ({ refresh, applyPending }), [refresh, applyPending]);
 
@@ -541,19 +514,26 @@ export const TimelineCore = forwardRef<
     return -1;
   }, [merged, unreadIds]);
 
-  // 区切り線が可視領域に入ったら既読クリア（§3.4。root はこのタイムラインのスクロール容器）
+  // 区切り線が可視領域の上部から完全に外れたら既読クリア（§3.4。root はこのタイムラインのスクロール容器）。
+  // 「上端方向への退出」のみ判定する: 上方向オーバーバウンスで下端から一時的に外れた場合は発火しない。
   useEffect(() => {
     const el = dividerRef.current;
-    if (!el || dividerIndex < 0 || clearingUnread) return;
+    if (!el || dividerIndex < 0) return;
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) clearUnread();
+        for (const e of entries) {
+          const rootTop = e.rootBounds?.top ?? 0;
+          if (!e.isIntersecting && e.boundingClientRect.bottom <= rootTop) {
+            clearUnread();
+            break;
+          }
+        }
       },
       { root: scrollRef.current },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [dividerIndex, clearingUnread, clearUnread]);
+  }, [dividerIndex, clearUnread]);
   const loadingMore = states.some((s) => s.loadingMore);
   const errored = states.filter((s) => s.error);
   const hasMore = states.some((s) => s.cursor && s.posts.length > 0 && !s.authFailed);
@@ -603,10 +583,9 @@ export const TimelineCore = forwardRef<
                 onRepost={interactive && !readOnly ? () => void toggleRepost(post) : undefined}
                 badge={badgeFor?.(skey, post.provider)}
                 unread={unread}
-                unreadFading={unread && clearingUnread}
               />
               {i === dividerIndex && (
-                <div ref={dividerRef} className={`unread-divider${clearingUnread ? ' clearing' : ''}`}>
+                <div ref={dividerRef} className="unread-divider">
                   新着はここまで
                 </div>
               )}
