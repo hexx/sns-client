@@ -302,8 +302,25 @@ function MediaGrid({ post }: { post: Post }) {
   );
 }
 
-/** 引用カード（1階層・表示のみ） */
+/** CW ピル（docs/cw-display-spec.md）。cw 空文字の場合は「CW」表示 */
+function CwPill({ cw, open, onToggle }: { cw: string; open: boolean; onToggle: () => void }) {
+  return (
+    <div className="cw-pill">
+      <span className="cw-text">{cw || 'CW'}</span>
+      <button type="button" className="link-btn" onClick={onToggle} aria-expanded={open}>
+        {open ? '隠す' : '表示する'}
+      </button>
+    </div>
+  );
+}
+
+/** 引用カード（1階層・表示専用。docs/quote-display-spec.md） */
 function QuoteCard({ post }: { post: Post }) {
+  const [expanded, setExpanded] = useState(false);
+  const [cwOpen, setCwOpen] = useState(false);
+  const hasCw = post.cw !== undefined;
+  // CW 展開後は截断なしの全表示（open = CW 無しなら展開トグル、CW 有りなら CW トグル）
+  const open = hasCw ? cwOpen : expanded;
   const thumb = post.media.find((m) => m.url);
   return (
     <div className="quote-card">
@@ -313,9 +330,51 @@ function QuoteCard({ post }: { post: Post }) {
         ) : null}
         <DisplayName author={post.author} className="display-name" />
         <span className="handle">@{post.author.handle}</span>
+        {!hasCw && (
+          <button
+            type="button"
+            className="link-btn quote-toggle"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+          >
+            {expanded ? '閉じる' : 'もっと見る'}
+          </button>
+        )}
       </div>
-      <Body post={post} />
-      {thumb ? <img className="quote-thumb" src={thumb.url} alt={thumb.alt || ''} loading="lazy" /> : null}
+      {hasCw && <CwPill cw={post.cw ?? ''} open={cwOpen} onToggle={() => setCwOpen((v) => !v)} />}
+      {(!hasCw || cwOpen) && (
+        <>
+          <div className={open ? undefined : 'quote-body-clamp'}>
+            <Body post={post} />
+          </div>
+          {open ? (
+            <>
+              <MediaGrid post={post} />
+              <div className="quote-meta">
+                <span title="リプライ">💬 {post.stats.replies}</span>
+                <span title="リポスト">🔁 {post.stats.reposts}</span>
+                <span title="いいね">❤️ {post.stats.likes}</span>
+                <time className="time" dateTime={post.createdAt}>
+                  {relTime(post.createdAt)}
+                </time>
+                {post.url && (
+                  <a
+                    className="quote-ext-link"
+                    href={post.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="外部で開く"
+                  >
+                    ↗
+                  </a>
+                )}
+              </div>
+            </>
+          ) : thumb ? (
+            <img className="quote-thumb" src={thumb.url} alt={thumb.alt || ''} loading="lazy" />
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
@@ -431,6 +490,8 @@ export function PostCard({
   const hasReactions = !!post.reactions && post.reactions.length > 0;
   const liked = Boolean(post.viewer?.likeUri);
   const reposted = Boolean(post.viewer?.repostUri);
+  const [cwOpen, setCwOpen] = useState(false);
+  const hasCw = post.cw !== undefined;
   return (
     <article className={`card${unread ? ' unread' : ''}`}>
       {post.repostedBy && (
@@ -477,56 +538,62 @@ export function PostCard({
         </div>
       </div>
 
-      <Body post={post} />
-      <MediaGrid post={post} />
-      {post.quote && <QuoteCard post={post.quote} />}
-      <LinkCardView post={post} />
-      {post.provider === 'misskey' && onReact ? (
-        <ReactionBar post={post} onReact={onReact} />
-      ) : (
-        <Reactions post={post} />
-      )}
-
-      <div className="stats">
-        <span title="リプライ">💬 {post.stats.replies}</span>
-        {onRepost ? (
-          <button
-            type="button"
-            className={`stat-btn${reposted ? ' active' : ''}`}
-            title={post.provider === 'misskey' ? 'リノート' : 'リポスト'}
-            onClick={() => onRepost(post)}
-          >
-            🔁 {post.stats.reposts}
-          </button>
-        ) : (
-          <span title="リポスト">🔁 {post.stats.reposts}</span>
-        )}
-        {!hasReactions &&
-          (onLike && post.provider === 'bluesky' ? (
-            <button
-              type="button"
-              className={`stat-btn${liked ? ' active' : ''}`}
-              title="いいね"
-              onClick={() => onLike(post)}
-            >
-              ❤️ {post.stats.likes}
-            </button>
+      {hasCw && <CwPill cw={post.cw ?? ''} open={cwOpen} onToggle={() => setCwOpen((v) => !v)} />}
+      {(!hasCw || cwOpen) && (
+        <>
+          <Body post={post} />
+          <MediaGrid post={post} />
+          {post.quote && <QuoteCard post={post.quote} />}
+          {post.quoteUnavailable && <div className="quote-unavailable">元の投稿は表示できません</div>}
+          <LinkCardView post={post} />
+          {post.provider === 'misskey' && onReact ? (
+            <ReactionBar post={post} onReact={onReact} />
           ) : (
-            <span title="いいね">❤️ {post.stats.likes}</span>
-          ))}
-        <span className="actions">
-          {onReply && (
-            <button className="link-btn" onClick={() => onReply(post)}>
-              返信
-            </button>
+            <Reactions post={post} />
           )}
-          {onQuote && (
-            <button className="link-btn" onClick={() => onQuote(post)}>
-              引用
-            </button>
-          )}
-        </span>
-      </div>
+
+          <div className="stats">
+            <span title="リプライ">💬 {post.stats.replies}</span>
+            {onRepost ? (
+              <button
+                type="button"
+                className={`stat-btn${reposted ? ' active' : ''}`}
+                title={post.provider === 'misskey' ? 'リノート' : 'リポスト'}
+                onClick={() => onRepost(post)}
+              >
+                🔁 {post.stats.reposts}
+              </button>
+            ) : (
+              <span title="リポスト">🔁 {post.stats.reposts}</span>
+            )}
+            {!hasReactions &&
+              (onLike && post.provider === 'bluesky' ? (
+                <button
+                  type="button"
+                  className={`stat-btn${liked ? ' active' : ''}`}
+                  title="いいね"
+                  onClick={() => onLike(post)}
+                >
+                  ❤️ {post.stats.likes}
+                </button>
+              ) : (
+                <span title="いいね">❤️ {post.stats.likes}</span>
+              ))}
+            <span className="actions">
+              {onReply && (
+                <button className="link-btn" onClick={() => onReply(post)}>
+                  返信
+                </button>
+              )}
+              {onQuote && (
+                <button className="link-btn" onClick={() => onQuote(post)}>
+                  引用
+                </button>
+              )}
+            </span>
+          </div>
+        </>
+      )}
     </article>
   );
 }

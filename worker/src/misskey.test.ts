@@ -662,3 +662,32 @@ describe('nameToRich（表示名の絵文字解決。docs/name-display-spec.md �
     expect(p2.repostedBy?.displayNameRich?.[1]).toEqual({ type: 'emoji', name: 'verified_blue', url: 'https://e/vb.png' });
   });
 });
+
+describe('mapNote: CW / permalink（docs/cw-display-spec.md, quote-display-spec.md）', () => {
+  it('note.cw を Post.cw に映射', () => {
+    expect(mapNote(note({ cw: 'ネタバレ' })).cw).toBe('ネタバレ');
+  });
+
+  it('cw が null / 空文字 / 無し → Post.cw は無し', () => {
+    expect(mapNote(note({ cw: null })).cw).toBeUndefined();
+    expect(mapNote(note({ cw: '' })).cw).toBeUndefined();
+    expect(mapNote(note()).cw).toBeUndefined();
+  });
+
+  it('引用先ノートの cw も映射される', () => {
+    const quoted = note({ id: 'q1', text: 'secret', cw: '閲覧注意' });
+    const p = mapNote(note({ id: 'outer', text: 'comment', renote: quoted }));
+    expect(p.quote?.cw).toBe('閲覧注意');
+  });
+
+  it('instanceUrl を渡すと permalink を生成（トップレベル・引用先の双方）', () => {
+    const quoted = note({ id: 'q1', text: 'q' });
+    const p = mapNote(note({ id: 'n1', text: 'top', renote: quoted }), {}, 'https://mi.example');
+    expect(p.url).toBe('https://mi.example/notes/n1');
+    expect(p.quote?.url).toBe('https://mi.example/notes/q1');
+  });
+
+  it('instanceUrl 無し → url 無し（後方互換）', () => {
+    expect(mapNote(note()).url).toBeUndefined();
+  });
+});

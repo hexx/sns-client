@@ -72,6 +72,10 @@ _Avoid_: comment, thread
 既存の投稿を参照して自分の投稿に埋め込むこと（引用）。
 _Avoid_: repost, share, retweet
 
+**quote card（引用カード）**:
+投稿に埋め込まれた quote を表示するインラインカード。1階層のみで、引用先は表示専用（返信・リアクション等の操作は不可）。通常表示（本文5行截断＋先頭サムネ）と、展開表示（全文＋全 Media＋stats＋日時＋外部リンク）の2状態を持つ。引用先が取得不能（削除・ブロック等）だった場合はカードの代わりに取得不能の案内行になる。
+_Avoid_: embed card, preview, quote view
+
 **Compose**:
 新しい Post を作成する行為、およびそのための UI（投稿モーダル）。reply・quote を伴う場合もある。投稿先 Provider の選択、本文、Media、CW を1つの下書きとして扱う。日本語の「新規投稿」は説明語であり、識別子としての正式名は Compose。
 _Avoid_: post（動詞として）, new post, 投稿作成, write

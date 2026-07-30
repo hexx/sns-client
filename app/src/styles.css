@@ -1072,6 +1072,58 @@ body,
   height: 18px;
 }
 
+/* --- 引用カード: 展開/截断・メタ行・取得不能（docs/quote-display-spec.md） --- */
+.quote-toggle {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.quote-body-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.quote-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.quote-meta .time {
+  margin-left: auto;
+}
+.quote-ext-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+.quote-ext-link:hover {
+  color: var(--accent, #0a7aff);
+}
+.quote-unavailable {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --- CW ピル（docs/cw-display-spec.md） --- */
+.cw-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.cw-text {
+  font-size: 13px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 /* --- reactions チップ --- */
 .reactions {
   display: flex;

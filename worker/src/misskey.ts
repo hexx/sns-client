@@ -334,7 +334,7 @@ function reactionsOf(note: MkNote, registry: Record<string, string>): { reaction
 }
 
 /** ノート自身のフィールドを Post に映射する（renote/quote は扱わない） */
-function basePost(note: MkNote, registry: Record<string, string>): Post {
+function basePost(note: MkNote, registry: Record<string, string>, instanceUrl?: string): Post {
   const text = note.text ?? '';
   // 本文絵文字: ノート由来（リモート）を優先し、ローカルはレジストリで補完（ADR-0006）
   const { rich, plain } = text ? mfmToRich(text, { ...registry, ...emojiMap(note.emojis) }) : { rich: undefined, plain: '' };
@@ -352,6 +352,8 @@ function basePost(note: MkNote, registry: Record<string, string>): Post {
   };
   if (rich && rich.length > 0) post.rich = rich;
   if (reactions) post.reactions = reactions;
+  if (note.cw) post.cw = note.cw; // 空文字は設定しない（docs/cw-display-spec.md）
+  if (instanceUrl) post.url = `${instanceUrl}/notes/${note.id}`; // permalink（docs/quote-display-spec.md）
   if (note.visibility && note.visibility !== 'public') post.visibility = note.visibility;
   if (note.localOnly) post.localOnly = true;
   if (note.channel) post.channel = { id: note.channel.id, name: note.channel.name };
@@ -367,9 +369,9 @@ function isPureRenote(note: MkNote): boolean {
  * - 純粋renote: 内包ノートを表示主体にし、repostedBy に renote した人を載せる（id は renote 活動、ref は元ノート）。
  * - 引用renote: 本文＋ quote（1階層のみ）。
  */
-export function mapNote(note: MkNote, registry: Record<string, string> = {}): Post {
+export function mapNote(note: MkNote, registry: Record<string, string> = {}, instanceUrl?: string): Post {
   if (isPureRenote(note) && note.renote) {
-    const inner = basePost(note.renote, registry);
+    const inner = basePost(note.renote, registry, instanceUrl);
     const post: Post = {
       ...inner,
       id: note.id, // renote 活動ごとに一意（dedup されすぎない）
@@ -382,10 +384,10 @@ export function mapNote(note: MkNote, registry: Record<string, string> = {}): Po
     if (note.channel) post.channel = { id: note.channel.id, name: note.channel.name };
     return post;
   }
-  const post = basePost(note, registry);
+  const post = basePost(note, registry, instanceUrl);
   if (note.renote && !isPureRenote(note)) {
     // 本文付き引用、またはテキスト無しでもメディア付きの引用を拾う（1階層、ネスト引用は落とす）
-    post.quote = basePost(note.renote, registry);
+    post.quote = basePost(note.renote, registry, instanceUrl);
   }
   return post;
 }
@@ -417,7 +419,7 @@ export async function getTimeline(env: MisskeyEnv, source: Source, cursor?: stri
   }
   const notes = await mkApi<MkNote[]>(env, endpoint, params);
   const registry = await loadEmojiRegistry(env);
-  const posts = notes.map((n) => mapNote(n, registry));
+  const posts = notes.map((n) => mapNote(n, registry, instanceOf(env)));
   return { posts, nextCursor: notes.length > 0 ? notes[notes.length - 1].id : null };
 }
 
@@ -498,7 +500,7 @@ export async function createPost(env: MisskeyEnv, input: PostInputWire): Promise
   if (input.destination?.kind === 'channel') params.channelId = input.destination.id;
   const res = await mkApi<{ createdNote: MkNote }>(env, 'notes/create', params);
   const registry = await loadEmojiRegistry(env);
-  return mapNote(res.createdNote, registry);
+  return mapNote(res.createdNote, registry, instanceOf(env));
 }
 
 // --- リアクション操作（docs/misskey-reaction-action-spec.md） ---

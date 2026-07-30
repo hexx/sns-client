@@ -157,7 +157,7 @@ function extractMedia(embed: unknown): Media[] {
 /**
  * LinkCard（外部リンクプレビュー）の抽出。
  * 対象は external#view と、recordWithMedia#view の media が external のケースのみ。
- * 引用（record#view）の引用先カードは対象外（引用描画が未実装のため）。
+ * 引用（record#view）の引用先カードは対象外（quote card は本文・Media のみ描画、docs/quote-display-spec.md）。
  */
 function extractLinkCard(embed: unknown): LinkCard | undefined {
   const e = embed as { $type?: string; external?: unknown; media?: unknown } | undefined;
@@ -178,11 +178,98 @@ function extractLinkCard(embed: unknown): LinkCard | undefined {
   return undefined;
 }
 
+/** at:// URI から bsky.app の permalink を生成する（docs/quote-display-spec.md §permalink） */
+function bskyPostUrl(uri: string): string | undefined {
+  const m = /^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/]+)$/.exec(uri);
+  if (!m) return undefined;
+  return `https://bsky.app/profile/${m[1]}/post/${m[2]}`;
+}
+
+/** self-labels を CW テキストに連結する（docs/cw-display-spec.md、ADR-0016。値はそのまま、変換表無し） */
+function labelsToCw(labels: { val?: string }[] | undefined): string | undefined {
+  const vals = (labels ?? []).map((l) => l.val).filter((v): v is string => Boolean(v));
+  return vals.length > 0 ? vals.join(', ') : undefined;
+}
+
+/**
+ * 引用 embed の抽出（docs/quote-display-spec.md §Bluesky）。
+ * record#view / recordWithMedia#view の record を解釈し、投稿（viewRecord）なら Post に映射、
+ * viewNotFound/viewBlocked/viewDetached なら unavailable、投稿以外（list/feed gen）は skip。
+ * ネスト引用（引用の引用）は捨てる（1階層のみ）。
+ */
+function extractQuote(embed: unknown, unwrapped = 0): { quote?: Post; quoteUnavailable?: boolean } {
+  const e = embed as { $type?: string; record?: unknown } | undefined;
+  if (!e) return {};
+  if (e.$type === 'app.bsky.embed.recordWithMedia#view') {
+    // 不正ペイロードの recordWithMedia 連鎖に備え、展開は1回までに制限する
+    if (unwrapped >= 1) return {};
+    return extractQuote(e.record, unwrapped + 1);
+  }
+  if (e.$type !== 'app.bsky.embed.record#view') return {};
+  const rec = e.record as { $type?: string } | undefined;
+  if (!rec) return {};
+  if (rec.$type === 'app.bsky.embed.record#viewRecord') return { quote: mapQuotedRecord(rec) };
+  if (
+    rec.$type === 'app.bsky.embed.record#viewNotFound' ||
+    rec.$type === 'app.bsky.embed.record#viewBlocked' ||
+    rec.$type === 'app.bsky.embed.record#viewDetached'
+  ) {
+    return { quoteUnavailable: true };
+  }
+  return {}; // 投稿以外のレコード（list / feed generator 等）は skip
+}
+
+/** 引用先 post#viewRecord を Post に映射する（ネスト引用は捨てる。media・stats・cw・url は映射） */
+function mapQuotedRecord(rec: unknown): Post {
+  const r = rec as {
+    uri: string;
+    cid: string;
+    author: { handle: string; displayName?: string; avatar?: string };
+    value?: { text?: string; facets?: AppBskyRichtextFacet.Main[]; createdAt?: string };
+    labels?: { val?: string }[];
+    embeds?: unknown[];
+    replyCount?: number;
+    repostCount?: number;
+    likeCount?: number;
+    indexedAt?: string;
+  };
+  const text = r.value?.text ?? '';
+  const rich = facetsToRich(text, r.value?.facets);
+  const cw = labelsToCw(r.labels);
+  const post: Post = {
+    id: r.uri,
+    provider: 'bluesky',
+    author: {
+      handle: r.author?.handle ?? '',
+      displayName: r.author?.displayName || r.author?.handle || '',
+      avatarUrl: r.author?.avatar,
+    },
+    text,
+    createdAt: r.value?.createdAt ?? r.indexedAt ?? '',
+    media: extractMedia(r.embeds?.[0]),
+    stats: {
+      replies: r.replyCount ?? 0,
+      reposts: r.repostCount ?? 0,
+      likes: r.likeCount ?? 0,
+    },
+    ref: { uri: r.uri, cid: r.cid },
+    source: { uri: r.uri, cid: r.cid },
+  };
+  if (rich) post.rich = rich;
+  if (cw) post.cw = cw;
+  const url = bskyPostUrl(r.uri);
+  if (url) post.url = url;
+  return post;
+}
+
 export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
   const rec = pv.record as { text?: string; facets?: AppBskyRichtextFacet.Main[] } | null | undefined;
   const text = rec?.text ?? '';
   const rich = facetsToRich(text, rec?.facets);
-  return {
+  const { quote, quoteUnavailable } = extractQuote(pv.embed);
+  const cw = labelsToCw(pv.labels as { val?: string }[] | undefined);
+  const url = bskyPostUrl(pv.uri);
+  const post: Post = {
     id: pv.uri,
     provider: 'bluesky',
     author: {
@@ -191,7 +278,6 @@ export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
       avatarUrl: pv.author.avatar,
     },
     text,
-    ...(rich ? { rich } : {}),
     createdAt: pv.indexedAt,
     media: extractMedia(pv.embed),
     linkCard: extractLinkCard(pv.embed),
@@ -204,6 +290,12 @@ export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
     viewer: buildViewer(pv.viewer),
     source: { uri: pv.uri, cid: pv.cid },
   };
+  if (rich) post.rich = rich;
+  if (quote) post.quote = quote;
+  if (quoteUnavailable) post.quoteUnavailable = true;
+  if (cw) post.cw = cw;
+  if (url) post.url = url;
+  return post;
 }
 
 /** 自分の操作状態（like/repost レコード URI）を Post.viewer へ整形する。操作無しなら undefined */
