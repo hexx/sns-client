@@ -43,9 +43,12 @@ class MockIntersectionObserver {
   }
 }
 
-function triggerIntersection(): void {
+function triggerIntersection(overrides: Partial<IntersectionObserverEntry> = {}): void {
   const last = ioInstances[ioInstances.length - 1];
-  last.callback([{ isIntersecting: true } as IntersectionObserverEntry], last as unknown as IntersectionObserver);
+  last.callback(
+    [{ isIntersecting: true, ...overrides } as IntersectionObserverEntry],
+    last as unknown as IntersectionObserver,
+  );
 }
 
 function makePost(overrides: Partial<Post> = {}): Post {
@@ -170,7 +173,7 @@ describe('MobilePager（単一 Source）', () => {
     expect(screen.getByText('新着はここまで')).toBeInTheDocument();
   });
 
-  it('区切り線が可視領域に入ると未読がフェードアウトして消える（§3.4）', async () => {
+  it('区切り線をスクロールで通過すると未読が即座に消える（§3.4。フェードなし）', async () => {
     vi.useFakeTimers();
     const p1 = makePost({ id: 'p1', text: 'first' });
     const p2 = makePost({ id: 'p2', text: 'second' });
@@ -190,19 +193,103 @@ describe('MobilePager（単一 Source）', () => {
     });
     expect(screen.getByText('新着はここまで')).toBeInTheDocument();
 
-    // 区切り線が可視領域に入る → フェード開始
+    // 上方向オーバーバウンス（区切り線が一時的に可視領域の下部から外れる）ではクリアしない
     await act(async () => {
-      triggerIntersection();
+      triggerIntersection({
+        isIntersecting: false,
+        boundingClientRect: { top: 800, bottom: 820 } as DOMRectReadOnly,
+        rootBounds: { top: 0, bottom: 600 } as DOMRectReadOnly,
+      });
     });
-    expect(screen.getByText('新着はここまで')).toHaveClass('clearing');
-    expect(screen.getAllByRole('article')[0]).toHaveClass('unread-fading');
+    expect(screen.getByText('新着はここまで')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')[0]).toHaveClass('unread');
 
-    // フェード完了 → 区切り線と強調が破棄される
+    // スクロール通過（区切り線が可視領域の上部から完全に外れる）→ 即座にクリア
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
+      triggerIntersection({
+        isIntersecting: false,
+        boundingClientRect: { top: -30, bottom: -10 } as DOMRectReadOnly,
+        rootBounds: { top: 0, bottom: 600 } as DOMRectReadOnly,
+      });
     });
     expect(screen.queryByText('新着はここまで')).not.toBeInTheDocument();
     expect(screen.getAllByRole('article')[0]).not.toHaveClass('unread');
+  });
+
+  it('追加取り込みは未読を差し替える: 旧未読は未通過でも破棄され新境界が新設される（§3.3）', async () => {
+    vi.useFakeTimers();
+    const p1 = makePost({ id: 'p1', text: 'first', createdAt: '2026-07-01T12:00:00Z' });
+    const p2 = makePost({ id: 'p2', text: 'second', createdAt: '2026-07-01T12:01:00Z' });
+    const p3 = makePost({ id: 'p3', text: 'third', createdAt: '2026-07-01T12:02:00Z' });
+    let posts = [p1];
+    vi.mocked(api.timeline).mockImplementation(async () => ({ posts: [...posts], nextCursor: null }));
+
+    render(<Pager views={[bskyView]} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // 1回目を取り込み（未読: second）
+    posts = [p1, p2];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(75_000);
+    });
+    await act(async () => {
+      screen.getByRole('button', { name: /新着 1 件/ }).click();
+    });
+    expect(screen.getAllByRole('article')[0]).toHaveClass('unread');
+
+    // 境界を通過せずに 2回目を取り込み → 差し替え
+    posts = [p1, p2, p3];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(75_000);
+    });
+    await act(async () => {
+      screen.getByRole('button', { name: /新着 1 件/ }).click();
+    });
+
+    const articles = screen.getAllByRole('article');
+    expect(articles[0]).toHaveTextContent('third');
+    expect(articles[0]).toHaveClass('unread');
+    expect(articles[1]).toHaveTextContent('second');
+    expect(articles[1]).not.toHaveClass('unread'); // 旧未読は破棄される
+    expect(screen.getByText('新着はここまで')).toBeInTheDocument();
+  });
+
+  it('新着0件の手動更新（pull-to-refresh）は既存の未読表示を維持する（§3.3 / §4.3）', async () => {
+    vi.useFakeTimers();
+    const p1 = makePost({ id: 'p1', text: 'first' });
+    const p2 = makePost({ id: 'p2', text: 'second' });
+    let posts = [p1];
+    vi.mocked(api.timeline).mockImplementation(async () => ({ posts: [...posts], nextCursor: null }));
+
+    render(<Pager views={[bskyView]} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    posts = [p1, p2];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(75_000);
+    });
+    await act(async () => {
+      screen.getByRole('button', { name: /新着 1 件/ }).click();
+    });
+    expect(screen.getByText('新着はここまで')).toBeInTheDocument();
+
+    // pull-to-refresh（新着なし: 同一ポストのみ返る）
+    const scroll = document.querySelector('.scroll') as HTMLElement;
+    await act(async () => {
+      fireEvent.touchStart(scroll, { touches: [{ clientX: 300, clientY: 100 }] });
+      fireEvent.touchMove(scroll, { touches: [{ clientX: 300, clientY: 300 }] }); // dy=+200 → pull=100 ≥ 閾値
+      fireEvent.touchEnd(scroll, { changedTouches: [{ clientX: 300, clientY: 300 }] });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // 未読は差し替えられず維持される
+    expect(screen.getByText('新着はここまで')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')[0]).toHaveClass('unread');
   });
 });
 

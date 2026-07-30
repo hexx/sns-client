@@ -228,7 +228,6 @@ body,
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
-  transition: opacity 0.4s;
 }
 .unread-divider::before,
 .unread-divider::after {
@@ -237,15 +236,8 @@ body,
   height: 1px;
   background: var(--accent);
 }
-.unread-divider.clearing {
-  opacity: 0;
-}
 .card.unread {
   background: color-mix(in srgb, var(--accent) 10%, var(--card));
-  transition: background-color 0.4s;
-}
-.card.unread.unread-fading {
-  background-color: var(--card);
 }
 
 .scroll {
@@ -601,10 +593,6 @@ body,
   }
   .pager-badge {
     animation: none;
-  }
-  .unread-divider,
-  .card.unread {
-    transition: none !important;
   }
 }
 

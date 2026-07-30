@@ -191,7 +191,6 @@ export function PostCard({
   onRepost,
   badge,
   unread,
-  unreadFading,
 }: {
   post: Post;
   onReply?: (p: Post) => void;
@@ -205,14 +204,12 @@ export function PostCard({
   badge?: string;
   /** 未読強調（docs/unread-divider-spec.md） */
   unread?: boolean;
-  /** 未読の既読クリア中（フェードアウト） */
-  unreadFading?: boolean;
 }) {
   const hasReactions = !!post.reactions && post.reactions.length > 0;
   const liked = Boolean(post.viewer?.likeUri);
   const reposted = Boolean(post.viewer?.repostUri);
   return (
-    <article className={`card${unread ? ' unread' : ''}${unreadFading ? ' unread-fading' : ''}`}>
+    <article className={`card${unread ? ' unread' : ''}`}>
       {post.repostedBy && (
         <div className="repost-badge">
           🔁 <DisplayName author={post.repostedBy} className="repost-name" /> がリポスト
