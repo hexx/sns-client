@@ -7,7 +7,9 @@ import {
   NOSTR_RELAYS,
   resetProfileCache,
   decodeNpub,
+  getThread,
   getTimeline,
+  parentEventId,
   parseProfile,
   queryRelays,
   shortenNpub,
@@ -345,5 +347,118 @@ describe('接続失敗の表出（docs/nostr-browser-direct-spec.md §6.5）', (
       { wsFactory: factory },
     );
     expect(res.posts.length).toBeGreaterThan(0);
+  });
+});
+
+// --- スレッド解決（docs/thread-view-spec.md §5） ---
+
+type TagFilter = NostrFilter & { '#e'?: string[] };
+
+function matchesT(ev: NostrEvent, f: TagFilter): boolean {
+  if (f.kinds && !f.kinds.includes(ev.kind)) return false;
+  if (f.ids && !f.ids.includes(ev.id)) return false;
+  if (f.authors && !f.authors.includes(ev.pubkey)) return false;
+  if (f['#e']) {
+    const eIds = new Set(ev.tags.filter((t) => t[0] === 'e').map((t) => t[1]));
+    if (!f['#e'].some((id) => eIds.has(id))) return false;
+  }
+  return true;
+}
+
+const focusPostOf = (ev: NostrEvent) => ({ source: ev }) as never;
+
+describe('parentEventId（NIP-10 の親解釈）', () => {
+  const A = 'aa'.repeat(32);
+  const B = 'bb'.repeat(32);
+
+  it('marker reply を優先する', () => {
+    const ev = makeEvent({ tags: [['e', A, '', 'root'], ['e', B, '', 'reply']] });
+    expect(parentEventId(ev)).toBe(B);
+  });
+
+  it('e タグが1つだけ（root への直接返信）→ それが親', () => {
+    const ev = makeEvent({ tags: [['e', A, '', 'root']] });
+    expect(parentEventId(ev)).toBe(A);
+  });
+
+  it('無 marker 旧式は位置で解釈（最後が親）', () => {
+    const ev = makeEvent({ tags: [['e', A], ['e', B]] });
+    expect(parentEventId(ev)).toBe(B);
+  });
+
+  it('e タグ無し（トップレベル）→ undefined', () => {
+    expect(parentEventId(makeEvent({ tags: [['p', A]] }))).toBeUndefined();
+  });
+
+  it('不正な id の e タグは無視する', () => {
+    const ev = makeEvent({ tags: [['e', 'nothex'], ['e', A]] });
+    expect(parentEventId(ev)).toBe(A);
+  });
+});
+
+describe('getThread（ブラウザ直接解決）', () => {
+  function threadRelay(events: NostrEvent[]): WsFactory {
+    return async (): Promise<WsLike> => {
+      let onMessage: ((ev: { data?: unknown }) => void) | undefined;
+      return {
+        send(data: string) {
+          const filter = (JSON.parse(data) as [string, string, TagFilter])[2] ?? {};
+          let matched = events.filter((e) => matchesT(e, filter));
+          if (filter.limit) matched = matched.slice(0, filter.limit);
+          queueMicrotask(() => {
+            for (const e of matched) onMessage?.({ data: JSON.stringify(['EVENT', 'sns', e]) });
+            onMessage?.({ data: JSON.stringify(['EOSE', 'sns']) });
+          });
+        },
+        close() {},
+        addEventListener(type, listener) {
+          if (type === 'message') onMessage = listener;
+        },
+      };
+    };
+  }
+
+  it('祖先を root 先頭で遡り、子孫を DFS＋depth で返す。欠落親は unavailable', async () => {
+    const root = makeEvent({ content: 'root', created_at: 100 });
+    const parent = makeEvent({ content: 'parent', created_at: 200, tags: [['e', root.id, '', 'root']] });
+    const focus = makeEvent({ content: 'focus', created_at: 300, tags: [['e', parent.id, '', 'reply'], ['e', root.id, '', 'root']] });
+    const c1 = makeEvent({ content: 'c1', created_at: 400, tags: [['e', focus.id, '', 'root']] });
+    const c2 = makeEvent({ content: 'c2', created_at: 500, tags: [['e', root.id, '', 'root'], ['e', c1.id, '', 'reply']] });
+    // 削除済み親への返信（root=focus を参照するが reply 先が取得不能）の現実シナリオ
+    const orphan = makeEvent({
+      content: 'orphan',
+      created_at: 600,
+      tags: [
+        ['e', focus.id, '', 'root'],
+        ['e', 'cc'.repeat(32), '', 'reply'],
+      ],
+    });
+    const factory = threadRelay([root, parent, focus, c1, c2, orphan]);
+
+    const res = await getThread(focusPostOf(focus), { wsFactory: factory });
+    expect(res.focus.text).toBe('focus');
+    expect(res.ancestors.map((p) => p.text)).toEqual(['root', 'parent']);
+    expect(res.replies.map((n) => ({ text: n.post?.text, un: n.unavailable, depth: n.depth }))).toEqual([
+      { text: 'c1', un: undefined, depth: 1 },
+      { text: 'c2', un: undefined, depth: 2 },
+      { text: undefined, un: true, depth: 1 },
+      { text: 'orphan', un: undefined, depth: 2 },
+    ]);
+    expect(res.nextCursor).toBeNull();
+  });
+
+  it('親がリレーから得られない祖先はそこで打ち切る', async () => {
+    const missing = 'dd'.repeat(32);
+    const focus = makeEvent({ content: 'focus', tags: [['e', missing, '', 'reply']] });
+    const factory = threadRelay([focus]);
+    const res = await getThread(focusPostOf(focus), { wsFactory: factory });
+    expect(res.ancestors).toEqual([]);
+    expect(res.focus.text).toBe('focus');
+  });
+
+  it('source イベントが不正 → NostrError(400)', async () => {
+    await expect(getThread({ source: { id: 'bad' } } as never, { wsFactory: threadRelay([]) })).rejects.toMatchObject({
+      status: 400,
+    });
   });
 });

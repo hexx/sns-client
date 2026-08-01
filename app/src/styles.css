@@ -1287,3 +1287,66 @@ button.reaction:hover {
   font-size: 13px;
   color: var(--muted);
 }
+
+/* --- スレッド表示（docs/thread-view-spec.md §6） --- */
+.card-clickable,
+.quote-card-clickable {
+  cursor: pointer;
+}
+.card-clickable:hover,
+.quote-card-clickable:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.card-clickable:focus-visible,
+.quote-card-clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.thread-modal {
+  max-width: 640px;
+  max-height: calc(100dvh - 48px);
+}
+/* モバイルは全画面オーバーレイ（docs/thread-view-spec.md §2） */
+@media (max-width: 480px) {
+  .thread-modal {
+    max-width: none;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+}
+.thread-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.thread-provider {
+  font-weight: 400;
+}
+.thread-scroll {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+}
+.thread-node .card {
+  margin: 0;
+}
+.thread-node-focus .card {
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--card));
+}
+.thread-unavailable {
+  padding: 8px 12px;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.thread-loadmore {
+  align-self: center;
+  padding: 8px;
+}

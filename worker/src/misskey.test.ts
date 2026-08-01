@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPost, loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, nameToRich, getEmojiList, getTimeline, listDestinations, listSources, react, renote, MisskeyApiError, MisskeyAuthError } from './misskey';
+import { childrenToThreadNodes, createPost, getThread, loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, nameToRich, getEmojiList, getTimeline, listDestinations, listSources, react, renote, MisskeyApiError, MisskeyAuthError } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -689,5 +689,124 @@ describe('mapNote: CW / permalink（docs/cw-display-spec.md, quote-display-spec.
 
   it('instanceUrl 無し → url 無し（後方互換）', () => {
     expect(mapNote(note()).url).toBeUndefined();
+  });
+});
+
+describe('childrenToThreadNodes（notes/children の木再構築。docs/thread-view-spec.md §4.3）', () => {
+  const n = (id: string, replyId: string | null, createdAt = '2026-07-01T12:00:00Z') =>
+    note({ id, replyId, createdAt, text: id });
+
+  it('replyId で親子を組み、時系列昇順で DFS 平坦化（depth 付き）', async () => {
+    const children = [
+      n('c2', 'focus'), // 順序を揺らす
+      n('c1', 'focus', '2026-07-01T11:00:00Z'),
+      n('g1', 'c1', '2026-07-01T11:30:00Z'),
+    ];
+    const nodes = childrenToThreadNodes(children as never, 'focus');
+    expect(nodes.map((x) => ({ id: x.post?.id, depth: x.depth }))).toEqual([
+      { id: 'c1', depth: 1 },
+      { id: 'g1', depth: 2 },
+      { id: 'c2', depth: 1 },
+    ]);
+  });
+
+  it('親が取得集合に無いノードは unavailable 中間ノードを挿入して連続性を保つ', async () => {
+    const nodes = childrenToThreadNodes([n('x1', 'missing')] as never, 'focus');
+    expect(nodes.map((x) => ({ id: x.post?.id, un: x.unavailable, depth: x.depth }))).toEqual([
+      { id: undefined, un: true, depth: 1 },
+      { id: 'x1', un: undefined, depth: 2 },
+    ]);
+  });
+
+  it('同じ欠落親を共有する複数の孤児ノードはプレースホルダが1つにまとまる', async () => {
+    const nodes = childrenToThreadNodes(
+      [n('x1', 'missing'), n('x2', 'missing', '2026-07-01T12:30:00Z')] as never,
+      'focus',
+    );
+    expect(nodes.map((x) => ({ id: x.post?.id, un: x.unavailable, depth: x.depth }))).toEqual([
+      { id: undefined, un: true, depth: 1 },
+      { id: 'x1', un: undefined, depth: 2 },
+      { id: 'x2', un: undefined, depth: 2 },
+    ]);
+  });
+
+  it('continuation（追加ページ）はプレースホルダを出さず depth 1 に継ぐ', async () => {
+    const nodes = childrenToThreadNodes([n('x1', 'prev-page')] as never, 'focus', {}, undefined, {
+      continuation: true,
+    });
+    expect(nodes.map((x) => ({ id: x.post?.id, un: x.unavailable, depth: x.depth }))).toEqual([
+      { id: 'x1', un: undefined, depth: 1 },
+    ]);
+  });
+});
+
+describe('getThread（スレッド取得 dispatch。docs/thread-view-spec.md §4.3）', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stubThreadFetch(calls: { url: string; body: Record<string, unknown> }[], data: {
+    show?: Record<string, unknown>;
+    conversation?: Record<string, unknown>[];
+    children?: Record<string, unknown>[];
+  }) {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.body) calls.push({ url, body: JSON.parse(String(init.body)) });
+      if (url.endsWith('/api/emojis')) return new Response(JSON.stringify({ emojis: [] }), { status: 200 });
+      if (url.endsWith('/api/notes/show')) return new Response(JSON.stringify(data.show ?? note()), { status: 200 });
+      if (url.endsWith('/api/notes/conversation')) return new Response(JSON.stringify(data.conversation ?? []), { status: 200 });
+      if (url.endsWith('/api/notes/children')) return new Response(JSON.stringify(data.children ?? []), { status: 200 });
+      return new Response('null', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  const env = { MISSKEY_INSTANCE_URL: 'https://th.test', MISSKEY_TOKEN: 't' };
+
+  it('notes/show + notes/conversation + notes/children を呼び、祖先を root 先頭に反転する', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    stubThreadFetch(calls, {
+      show: { id: 'focus', text: 'focus', createdAt: '2026-07-01T12:00:00Z', user: user() },
+      // notes/conversation は親→root 順で返る想定 → BFF が反転
+      conversation: [
+        { id: 'p1', text: 'parent', createdAt: '2026-07-01T11:00:00Z', user: user() },
+        { id: 'r1', text: 'root', createdAt: '2026-07-01T10:00:00Z', user: user() },
+      ],
+      children: [{ id: 'c1', replyId: 'focus', text: 'child', createdAt: '2026-07-01T13:00:00Z', user: user() }],
+    });
+    const res = await getThread(env, 'focus');
+    expect(res.focus.id).toBe('focus');
+    expect(res.ancestors.map((p) => p.id)).toEqual(['r1', 'p1']);
+    expect(res.replies.map((x) => ({ id: x.post?.id, depth: x.depth }))).toEqual([{ id: 'c1', depth: 1 }]);
+    expect(calls.some((c) => c.url.endsWith('/api/notes/show') && c.body.noteId === 'focus')).toBe(true);
+    expect(calls.some((c) => c.url.endsWith('/api/notes/conversation') && c.body.limit === 25)).toBe(true);
+    expect(calls.some((c) => c.url.endsWith('/api/notes/children') && c.body.limit === 30)).toBe(true);
+  });
+
+  it('cursor は notes/children の untilId にエコーする', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    stubThreadFetch(calls, {});
+    await getThread(env, 'focus', 'cur1');
+    const call = calls.find((c) => c.url.endsWith('/api/notes/children'));
+    expect(call?.body).toMatchObject({ noteId: 'focus', untilId: 'cur1' });
+  });
+
+  it('children が limit（30）満杯なら最終 id を nextCursor にする', async () => {
+    const children = Array.from({ length: 30 }, (_, i) => ({
+      id: `c${i}`,
+      replyId: 'focus',
+      text: `c${i}`,
+      createdAt: `2026-07-01T13:${String(i).padStart(2, '0')}:00Z`,
+      user: user(),
+    }));
+    stubThreadFetch([], { children });
+    const res = await getThread(env, 'focus');
+    expect(res.nextCursor).toBe('c29');
+  });
+
+  it('children が limit 未満なら nextCursor は null', async () => {
+    stubThreadFetch([], { children: [{ id: 'c1', replyId: 'focus', text: 'c', createdAt: '2026-07-01T13:00:00Z', user: user() }] });
+    const res = await getThread(env, 'focus');
+    expect(res.nextCursor).toBeNull();
   });
 });

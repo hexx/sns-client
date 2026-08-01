@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { TimelineCore } from './TimelineCore';
-import type { Provider, Source, SourceCatalogEntry, View } from '../../../shared/types';
+import type { Post, Provider, Source, SourceCatalogEntry, View } from '../../../shared/types';
 
 function sourceKey(s: Source): string {
   return `${s.provider}:${s.kind}:${s.id ?? ''}`;
@@ -178,12 +178,15 @@ export function Deck({
   views,
   onViewsChange,
   onCompose,
+  onOpenThread,
 }: {
   views: View[];
   /** View 構成の変更（App が状態反映＋BFF 保存を担う） */
   onViewsChange: (views: View[]) => void;
   /** Compose（新規投稿）モーダルを開く（deck-compose-spec §4） */
   onCompose: () => void;
+  /** カード本文クリックでスレッドを開く（docs/thread-view-spec.md §6.1） */
+  onOpenThread?: (p: Post) => void;
 }) {
   const [editing, setEditing] = useState<{ view: View; isNew: boolean } | null>(null);
   const [catalog, setCatalog] = useState<SourceCatalogEntry[]>([]);
@@ -290,7 +293,7 @@ export function Deck({
             </button>
           </header>
           {view.sources.length > 0 ? (
-            <TimelineCore sources={view.sources} interactive badgeFor={badgeFor} />
+            <TimelineCore sources={view.sources} interactive badgeFor={badgeFor} onOpenThread={onOpenThread} />
           ) : (
             <p className="empty">ソースがありません（⚙ から追加）</p>
           )}

@@ -20,6 +20,7 @@
 - [linkcard-display-spec.md](linkcard-display-spec.md) — LinkCard（リンクプレビューカード）表示機能 仕様
 - [name-display-spec.md](name-display-spec.md) — 投稿者名表示 仕様書（長い名前の縦伸び解消＋名前絵文字の解決）
 - [card-meta-row-spec.md](card-meta-row-spec.md) — カードメタ行 仕様書（ヘッダー3行化＋公開範囲バッジのアイコン化）
+- [thread-view-spec.md](thread-view-spec.md) — スレッド表示 仕様書（フォーカス投稿の祖先＋子孫をオーバーレイ表示）
 
 ## PWA / アイコン / 運用
 - [pwa-sw-update-fix-spec.md](pwa-sw-update-fix-spec.md) — PWA Service Worker 更新固定 修正仕様
@@ -40,3 +41,8 @@
 - [0010](adr/0010-mobile-swipe-paging-all-mounted.md) — スマホ UI は全ページ常時マウントのスワイプページング
 - [0011](adr/0011-threads-via-misskey-federation.md) — Threads は Provider 化せず Misskey 連合で吸収する
 - [0012](adr/0012-hono-as-worker-router.md) — BFF Worker のルータに Hono を採用する
+- [0013](adr/0013-nostr-readonly-provider.md) — Nostr を読み取り専用 Provider として、BFF リクエスト単位 WebSocket で統合する
+- [0014](adr/0014-nostr-browser-direct-transport.md) — Nostr の取得トランスポートを BFF 経由からブラウザ直接 WebSocket へ反転する
+- [0015](adr/0015-quote-card-inline-expand-external-link.md) — 引用カードはインライン展開＋外部リンクとし、アプリ内スレッドビューは持たない（再審決着済み: カードクリックで引用先スレッドへ遷移）
+- [0016](adr/0016-bsky-self-labels-as-cw.md) — Bluesky の self-labels を CW テキストとして解釈する
+- [0017](adr/0017-thread-bff-flattened-depth.md) — スレッドは BFF が平坦化（DFS 順＋depth）して返し、Post に親子フィールドを持たせない

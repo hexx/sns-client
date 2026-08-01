@@ -314,8 +314,11 @@ function CwPill({ cw, open, onToggle }: { cw: string; open: boolean; onToggle: (
   );
 }
 
-/** 引用カード（1階層・表示専用。docs/quote-display-spec.md） */
-function QuoteCard({ post }: { post: Post }) {
+/** クリック貫通制御: これらに該当する要素はカード / quote card のナビゲーションを発火しない（docs/thread-view-spec.md §6.1 / §7） */
+const NO_NAV_SELECTOR = 'button, a, .lightbox, .picker';
+
+/** 引用カード（1階層・表示専用。docs/quote-display-spec.md。カード本体クリックで引用先 Thread へ遷移: thread-view-spec.md §7） */
+function QuoteCard({ post, onOpenThread }: { post: Post; onOpenThread?: (p: Post) => void }) {
   const [expanded, setExpanded] = useState(false);
   const [cwOpen, setCwOpen] = useState(false);
   const hasCw = post.cw !== undefined;
@@ -323,7 +326,19 @@ function QuoteCard({ post }: { post: Post }) {
   const open = hasCw ? cwOpen : expanded;
   const thumb = post.media.find((m) => m.url);
   return (
-    <div className="quote-card">
+    <div
+      className={`quote-card${onOpenThread ? ' quote-card-clickable' : ''}`}
+      onClick={
+        onOpenThread
+          ? (e) => {
+              // 「もっと見る」トグル・CW トグル・外部リンク・Lightbox は貫通しない（§7 / Q13）
+              const el = e.target as HTMLElement;
+              if (el.closest(NO_NAV_SELECTOR)) return;
+              onOpenThread(post);
+            }
+          : undefined
+      }
+    >
       <div className="quote-head">
         {post.author.avatarUrl ? (
           <img className="avatar avatar-sm" src={post.author.avatarUrl} alt="" loading="lazy" />
@@ -471,6 +486,7 @@ export function PostCard({
   onReact,
   onLike,
   onRepost,
+  onOpenThread,
   badge,
   unread,
 }: {
@@ -482,6 +498,8 @@ export function PostCard({
   onLike?: (p: Post) => void;
   /** リポスト（bsky=トグル / misskey=作成のみ） */
   onRepost?: (p: Post) => void;
+  /** スレッドを開く（カード本文クリック。docs/thread-view-spec.md §6.1。無指定時はクリックできない） */
+  onOpenThread?: (p: Post) => void;
   /** 帰属バッジ（プラットフォーム名 + 由来ソース名。デッキ表示用） */
   badge?: string;
   /** 未読強調（docs/unread-divider-spec.md） */
@@ -493,7 +511,19 @@ export function PostCard({
   const [cwOpen, setCwOpen] = useState(false);
   const hasCw = post.cw !== undefined;
   return (
-    <article className={`card${unread ? ' unread' : ''}`}>
+    <article
+      className={`card${unread ? ' unread' : ''}${onOpenThread ? ' card-clickable' : ''}`}
+      onClick={
+        onOpenThread
+          ? (e) => {
+              // リンク・Media（Lightbox）・アクションボタン・quote card・ピッカーは貫通しない（§6.1 / Q7）
+              const el = e.target as HTMLElement;
+              if (el.closest(`${NO_NAV_SELECTOR}, .quote-card`)) return;
+              onOpenThread(post);
+            }
+          : undefined
+      }
+    >
       {post.repostedBy && (
         <div className="repost-badge">
           🔁 <DisplayName author={post.repostedBy} className="repost-name" /> がリポスト
@@ -543,7 +573,7 @@ export function PostCard({
         <>
           <Body post={post} />
           <MediaGrid post={post} />
-          {post.quote && <QuoteCard post={post.quote} />}
+          {post.quote && <QuoteCard post={post.quote} onOpenThread={onOpenThread} />}
           {post.quoteUnavailable && <div className="quote-unavailable">元の投稿は表示できません</div>}
           <LinkCardView post={post} />
           {post.provider === 'misskey' && onReact ? (
@@ -553,7 +583,14 @@ export function PostCard({
           )}
 
           <div className="stats">
-            <span title="リプライ">💬 {post.stats.replies}</span>
+            {/* 返信数 stats はスレッド入口の affordance。ボタン化してキーボード操作からも開けるようにする（§6.1） */}
+            {onOpenThread ? (
+              <button type="button" className="stat-btn" title="スレッドを開く" onClick={() => onOpenThread(post)}>
+                💬 {post.stats.replies}
+              </button>
+            ) : (
+              <span title="リプライ">💬 {post.stats.replies}</span>
+            )}
             {onRepost ? (
               <button
                 type="button"

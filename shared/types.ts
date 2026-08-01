@@ -80,6 +80,24 @@ export type Post = {
 
 export type TimelineResponse = { posts: Post[]; nextCursor: string | null };
 
+/**
+ * スレッド表示の応答（docs/thread-view-spec.md §3、ADR-0017）。
+ * bsky/misskey は BFF（GET /api/thread）が、nostr はブラウザ直接解決（shared/nostr）がこの形状を組み立てる。
+ */
+export type ThreadResponse = {
+  focus: Post; // フォーカス投稿
+  ancestors: Post[]; // root → focus 直前まで。root 先頭（時系列昇順）
+  replies: ThreadNode[]; // focus の子孫。深さ優先（DFS）で平坦化した順
+  nextCursor: string | null; // 子孫の追加ページカーソル（Misskey のみ。bsky/nostr は常に null）
+};
+
+/** スレッド子孫の1ノード。取得不能ノードは post を持たず unavailable で表す（quote/quoteUnavailable と同一イディオム） */
+export type ThreadNode = {
+  post?: Post;
+  unavailable?: boolean; // 削除・ブロック・リレー欠落等で取得不能
+  depth: number; // focus 直下 = 1。描画インデントに使う
+};
+
 /** 投稿リクエスト（ブラウザ → BFF）。画像は事前アップロード済みの opaque 参照 */
 export type PostInputWire = {
   provider: Provider; // 投稿先（単一ターゲット）
