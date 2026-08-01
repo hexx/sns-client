@@ -7,6 +7,7 @@ export const API = {
   destinations: '/api/destinations',
   providers: '/api/providers',
   timeline: '/api/timeline',
+  thread: '/api/thread',
   media: '/api/media',
   post: '/api/post',
   reactions: '/api/reactions',

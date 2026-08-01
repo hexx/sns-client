@@ -729,3 +729,60 @@ describe('CW 折りたたみ（docs/cw-display-spec.md）', () => {
     expect(card.querySelector('.quote-body-clamp')).toBeNull();
   });
 });
+
+describe('スレッド入口（docs/thread-view-spec.md §6.1 / §7）', () => {
+  it('カード本文クリックで onOpenThread が呼ばれる', () => {
+    const onOpenThread = vi.fn();
+    render(<PostCard post={makePost()} onOpenThread={onOpenThread} />);
+    fireEvent.click(screen.getByText('こんにちは世界'));
+    expect(onOpenThread).toHaveBeenCalledTimes(1);
+    expect(onOpenThread.mock.calls[0][0].id).toBe('p1');
+  });
+
+  it('onOpenThread が無ければクリックしても何も起きない（card-clickable も付かない）', () => {
+    const { container } = render(<PostCard post={makePost()} />);
+    expect(container.querySelector('.card-clickable')).toBeNull();
+  });
+
+  it('アクションボタン（返信）クリックは貫通しない', () => {
+    const onOpenThread = vi.fn();
+    const onReply = vi.fn();
+    render(<PostCard post={makePost()} onOpenThread={onOpenThread} onReply={onReply} />);
+    fireEvent.click(screen.getByRole('button', { name: '返信' }));
+    expect(onReply).toHaveBeenCalledTimes(1);
+    expect(onOpenThread).not.toHaveBeenCalled();
+  });
+
+  it('本文内リンククリックは貫通しない', () => {
+    const onOpenThread = vi.fn();
+    const post = makePost({ rich: [{ type: 'link', url: 'https://example.com', text: 'example' }] });
+    render(<PostCard post={post} onOpenThread={onOpenThread} />);
+    fireEvent.click(screen.getByText('example'));
+    expect(onOpenThread).not.toHaveBeenCalled();
+  });
+
+  it('quote card 本体クリックで引用先のスレッドを開く', () => {
+    const onOpenThread = vi.fn();
+    const quoted = makePost({ id: 'q1', text: '引用本文' });
+    render(<PostCard post={makePost({ quote: quoted })} onOpenThread={onOpenThread} />);
+    fireEvent.click(screen.getByText('引用本文'));
+    expect(onOpenThread).toHaveBeenCalledTimes(1);
+    expect(onOpenThread.mock.calls[0][0].id).toBe('q1');
+  });
+
+  it('quote card の「もっと見る」トグルは遷移に貫通しない', () => {
+    const onOpenThread = vi.fn();
+    const quoted = makePost({ id: 'q1', text: '引用本文' });
+    render(<PostCard post={makePost({ quote: quoted })} onOpenThread={onOpenThread} />);
+    fireEvent.click(screen.getByRole('button', { name: 'もっと見る' }));
+    expect(onOpenThread).not.toHaveBeenCalled();
+  });
+
+  it('quoteUnavailable 行クリックでは引用先スレッドを開かない（外側投稿のスレッドは開く）', () => {
+    const onOpenThread = vi.fn();
+    render(<PostCard post={makePost({ quoteUnavailable: true })} onOpenThread={onOpenThread} />);
+    fireEvent.click(screen.getByText('元の投稿は表示できません'));
+    expect(onOpenThread).toHaveBeenCalledTimes(1);
+    expect(onOpenThread.mock.calls[0][0].id).toBe('p1');
+  });
+});

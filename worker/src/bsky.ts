@@ -1,4 +1,4 @@
-import { AtpAgent, AppBskyRichtextFacet, RichText, type AppBskyFeedDefs, type AtpSessionData } from '@atproto/api';
+import { AtpAgent, AppBskyFeedDefs, AppBskyRichtextFacet, RichText, type AtpSessionData } from '@atproto/api';
 import type {
   LinkCard,
   Media,
@@ -7,6 +7,8 @@ import type {
   RichSegment,
   Source,
   SourceOption,
+  ThreadNode,
+  ThreadResponse,
   TimelineResponse,
 } from '../../shared/types';
 
@@ -335,6 +337,70 @@ export async function getTimeline(
     posts: res.data.feed.map((f) => mapPost(f.post)),
     nextCursor: res.data.cursor ?? null,
   };
+}
+
+/** getPostThread 応答のノード union（@atproto/api の型は $Typed で扱いにくいため、識別子で絞るローカル型） */
+type AnyThreadView =
+  | AppBskyFeedDefs.ThreadViewPost
+  | AppBskyFeedDefs.NotFoundPost
+  | AppBskyFeedDefs.BlockedPost
+  | { $type?: string };
+
+function isPostNode(v: AnyThreadView): v is AppBskyFeedDefs.ThreadViewPost {
+  return AppBskyFeedDefs.isThreadViewPost(v);
+}
+
+/**
+ * getPostThread の応答木を ThreadResponse に解釈する純粋関数（docs/thread-view-spec.md §4.2、ADR-0017）。
+ * - フォーカス自体が notFound/blocked（削除・ブロック等）なら null（呼び出し側が 404 にする）。
+ * - 祖先: .parent 連鎖を収集して root 先頭に反転（parentHeight 上限は API 引数で制約）。
+ *   途中で notFound/blocked に当たったらそこで打ち切り（ancestors は Post[] でプレースホルダを持たない）。
+ * - 子孫: .replies を DFS で平坦化し depth（focus 直下=1）を付与。notFound/blocked は unavailable ノード。
+ */
+export function threadViewToResponse(thread: AnyThreadView): ThreadResponse | null {
+  if (!isPostNode(thread)) return null;
+  const focus = mapPost(thread.post);
+  const ancestors: Post[] = [];
+  let parent: AnyThreadView | undefined = thread.parent as AnyThreadView | undefined;
+  while (parent && isPostNode(parent)) {
+    ancestors.push(mapPost(parent.post));
+    parent = parent.parent as AnyThreadView | undefined;
+  }
+  ancestors.reverse();
+  const replies: ThreadNode[] = [];
+  const walk = (nodes: AnyThreadView[] | undefined, depth: number) => {
+    for (const n of nodes ?? []) {
+      if (isPostNode(n)) {
+        replies.push({ post: mapPost(n.post), depth });
+        walk(n.replies as AnyThreadView[] | undefined, depth + 1);
+      } else {
+        replies.push({ unavailable: true, depth });
+      }
+    }
+  };
+  walk(thread.replies as AnyThreadView[] | undefined, 1);
+  return { focus, ancestors, replies, nextCursor: null };
+}
+
+/**
+ * スレッド取得（docs/thread-view-spec.md §4.2）。uri はフォーカス投稿の AT-URI（Post.ref.uri）。
+ * フォーカス取得不能（notFound/blocked）は null を返す（ルートが 404 にマップ）。
+ */
+export async function getThread(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  uri: string,
+): Promise<ThreadResponse | null> {
+  const a = await getAgent(handle, appPassword);
+  try {
+    const res = await a.getPostThread({ uri, depth: 10, parentHeight: 25 });
+    return threadViewToResponse(res.data.thread as AnyThreadView);
+  } catch (e) {
+    // 削除済み等でアンカーが解決できない場合、appview は notFound ノードではなく NotFound（HTTP 400）を投げる。
+    // そのままでは 502 になるため、focus 取得不能（null → ルートが 404 にマップ）として扱う（§4.2）。
+    if ((e as { error?: string })?.error === 'NotFound') return null;
+    throw e;
+  }
 }
 
 /**

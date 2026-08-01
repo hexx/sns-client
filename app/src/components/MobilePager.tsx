@@ -31,6 +31,7 @@ export function MobilePager({
   onCompose,
   onReply,
   onQuote,
+  onOpenThread,
   justPosted,
 }: {
   views: View[];
@@ -39,6 +40,8 @@ export function MobilePager({
   onCompose: () => void;
   onReply: (p: Post) => void;
   onQuote: (p: Post) => void;
+  /** カード本文クリックでスレッドを開く（docs/thread-view-spec.md §6.1） */
+  onOpenThread?: (p: Post) => void;
   justPosted: Post | null;
 }) {
   const badgeFor = useBadgeFor();
@@ -159,6 +162,7 @@ export function MobilePager({
               justPosted={justPosted}
               onReply={onReply}
               onQuote={onQuote}
+              onOpenThread={onOpenThread}
               interactive
               badgeFor={badgeFor}
               pullToRefresh
@@ -170,7 +174,7 @@ export function MobilePager({
           )}
         </section>
       )),
-    [views, justPosted, onReply, onQuote, badgeFor, pendingFor],
+    [views, justPosted, onReply, onQuote, onOpenThread, badgeFor, pendingFor],
   );
 
   return (

@@ -13,6 +13,7 @@ import type {
   RecordUriResponse,
   Source,
   SourceCatalogEntry,
+  ThreadResponse,
   TimelineResponse,
   View,
 } from '../../shared/types';
@@ -73,6 +74,12 @@ export const api = {
   providers: () => request<ProviderInfo[]>(API.providers),
   timeline: (source: Source, cursor?: string) =>
     request<TimelineResponse>(`${API.timeline}?${sourceQuery(source, cursor)}`),
+  /** スレッド取得（bsky/misskey。nostr はブラウザ直接解決のため app/src/lib/thread.ts 参照。docs/thread-view-spec.md §4） */
+  thread: (provider: Provider, ref: unknown, cursor?: string) => {
+    const q = new URLSearchParams({ provider, ref: JSON.stringify(ref) });
+    if (cursor) q.set('cursor', cursor);
+    return request<ThreadResponse>(`${API.thread}?${q.toString()}`);
+  },
   uploadMedia: (provider: Provider, bytes: ArrayBuffer, mimeType: string, alt: string) =>
     request<MediaUploadResponse>(
       `${API.media}?${new URLSearchParams({ provider, alt }).toString()}`,

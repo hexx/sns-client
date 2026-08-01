@@ -10,7 +10,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bech32 } from '@scure/base';
-import type { Author, Media, Post, RichSegment, Source, TimelineResponse } from './types';
+import type { Author, Media, Post, RichSegment, Source, ThreadNode, ThreadResponse, TimelineResponse } from './types';
 
 // --- 定数（§6.1 固定リレーセット / §6.2 収集ウィンドウ） ---
 export const NOSTR_RELAYS = [
@@ -24,6 +24,8 @@ export const NOSTR_RELAYS = [
 const COLLECT_TIMEOUT_MS = 4000;
 const PAGE_SIZE = 30;
 const FETCH_LIMIT = PAGE_SIZE * 3; // 重複排除・kind6解決後の欠損を見込んだ余裕
+const THREAD_ANCESTOR_LIMIT = 25; // 祖先の遡上上限（bsky parentHeight / misskey limit と同値。docs/thread-view-spec.md §5）
+const THREAD_CHILDREN_LIMIT = 30; // 子孫の1バッチ上限（他 Provider の limit と同値）
 const PROFILE_TTL_MS = 30 * 60 * 1000; // ADR-0006 準拠（30分）
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp)([?#].*)?$/i;
 
@@ -44,6 +46,8 @@ export type NostrFilter = {
   ids?: string[];
   until?: number;
   limit?: number;
+  /** NIP-01 タグフィルタ: 指定 id を e タグで参照するイベント（スレッド子孫の収集。docs/thread-view-spec.md §5） */
+  '#e'?: string[];
 };
 
 type Profile = { displayName?: string; picture?: string };
@@ -440,4 +444,127 @@ export async function getTimeline(
   const nextCursor =
     page.length > 0 ? String(Math.floor(Date.parse(page[page.length - 1].createdAt) / 1000)) : null;
   return { posts: page, nextCursor };
+}
+
+// --- スレッド解決（docs/thread-view-spec.md §5、ADR-0014/0017） ---
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * NIP-10 に基づき、イベントの親（返信対象）のイベント id を定める。
+ * - marker `reply` の e タグがあればそれを親とする。
+ * - 無 marker の旧式イベントは位置で解釈する（e タグが1つだけならそれが親＝root への直接返信、
+ *   複数なら最後が親）。marker `root` のみで多段のケースも最後尾ルールで親に当たる。
+ * 親を定められない（e タグ無し）なら undefined（トップレベル投稿）。
+ */
+export function parentEventId(ev: NostrEvent): string | undefined {
+  const eTags = ev.tags.filter((t) => t[0] === 'e' && typeof t[1] === 'string' && HEX64.test(t[1]));
+  if (eTags.length === 0) return undefined;
+  const reply = eTags.find((t) => t[3] === 'reply');
+  if (reply) return reply[1];
+  return eTags[eTags.length - 1][1];
+}
+
+const sortEventsAsc = (arr: NostrEvent[]): NostrEvent[] => arr.toSorted((a, b) => a.created_at - b.created_at);
+
+/** 子孫イベント列から木を再構築し、DFS 順＋depth に平坦化する（worker/misskey の childrenToThreadNodes と同型） */
+function buildReplyNodes(children: NostrEvent[], focusId: string, profiles: Map<string, Profile>): ThreadNode[] {
+  const byId = new Map(children.map((e) => [e.id, e]));
+  const kidsOf = new Map<string, NostrEvent[]>();
+  const orphans: NostrEvent[] = [];
+  for (const e of children) {
+    const parentId = parentEventId(e) ?? '';
+    if (parentId === focusId || byId.has(parentId)) {
+      const arr = kidsOf.get(parentId) ?? [];
+      arr.push(e);
+      kidsOf.set(parentId, arr);
+    } else {
+      orphans.push(e); // 親が取得集合に無い → 取得不能中間ノードを挿入して連続性を保つ
+    }
+  }
+  const out: ThreadNode[] = [];
+  const walk = (parentId: string, depth: number) => {
+    for (const e of sortEventsAsc(kidsOf.get(parentId) ?? [])) {
+      out.push({ post: buildPost(e, profiles.get(e.pubkey)), depth });
+      walk(e.id, depth + 1);
+    }
+  };
+  walk(focusId, 1);
+  for (const e of sortEventsAsc(orphans)) {
+    out.push({ unavailable: true, depth: 1 });
+    out.push({ post: buildPost(e, profiles.get(e.pubkey)), depth: 2 });
+    walk(e.id, 3);
+  }
+  return out;
+}
+
+/**
+ * nostr スレッドのブラウザ直接解決（docs/thread-view-spec.md §5）。
+ * フォーカス Post（source に生イベントを保持）を軸に、固定リレーセットへ照会して
+ * 他 Provider と同じ ThreadResponse を組み立てる（ADR-0017: 契約の統一）。
+ * - 子孫: `{ kinds:[1], '#e':[focusId] }`（1バッチ。ページング無し、nextCursor は常に null）。
+ * - 祖先: NIP-10 の e タグ解釈で親を順に遡る（THREAD_ANCESTOR_LIMIT 段で打ち切り）。
+ *   親がリレーから得られなかったらそこで打ち切り（ancestors は Post[] でプレースホルダを持たない）。
+ * - 子孫の欠落親は unavailable ノードで表す（§8）。
+ */
+export async function getThread(focusPost: Post, opts: { wsFactory: WsFactory }): Promise<ThreadResponse> {
+  const focusEv = focusPost.source as NostrEvent | undefined;
+  if (!focusEv || typeof focusEv.id !== 'string' || !HEX64.test(focusEv.id)) {
+    throw new NostrError(400, 'invalid focus event');
+  }
+  const urls = NOSTR_RELAYS;
+  const factory = opts.wsFactory;
+
+  // 子孫: `#e` 照会は直接参照しか返さないため、得られた子孫の id を frontier に BFS で拡張する。
+  // 合計 THREAD_CHILDREN_LIMIT 件を1バッチの上限とする（ページング無し）。
+  const children: NostrEvent[] = [];
+  const seenChildren = new Set<string>();
+  let frontier: string[] = [focusEv.id];
+  while (frontier.length > 0 && children.length < THREAD_CHILDREN_LIMIT) {
+    // 順次実行が意図: 次の frontier が確定しなければ照会できない（並列化不能）
+    // eslint-disable-next-line no-await-in-loop
+    const evs = await queryRelays(
+      urls,
+      { kinds: [1], '#e': frontier, limit: THREAD_CHILDREN_LIMIT },
+      { wsFactory: factory },
+    );
+    frontier = [];
+    for (const e of evs) {
+      if (e.id === focusEv.id || seenChildren.has(e.id)) continue;
+      if (children.length >= THREAD_CHILDREN_LIMIT) break; // 上限を厳守（バッチ単位のはみ出しを防ぐ）
+      seenChildren.add(e.id);
+      children.push(e);
+      frontier.push(e.id);
+    }
+  }
+
+  // 祖先を親連鎖で遡上（root までの最大 THREAD_ANCESTOR_LIMIT 段）
+  const ancestorsEv: NostrEvent[] = [];
+  const seen = new Set<string>([focusEv.id]);
+  let cur = focusEv;
+  while (ancestorsEv.length < THREAD_ANCESTOR_LIMIT) {
+    const parentId = parentEventId(cur);
+    if (!parentId || seen.has(parentId)) break;
+    seen.add(parentId);
+    // 順次実行が意図: 親が確定しなければ次の親 id が決まらない（並列化不能）
+    // eslint-disable-next-line no-await-in-loop
+    const evs = await queryRelays(urls, { kinds: [1], ids: [parentId] }, { wsFactory: factory });
+    const parent = evs.find((e) => e.id === parentId);
+    if (!parent) break; // 取得不能 → 打ち切り
+    ancestorsEv.push(parent);
+    cur = parent;
+  }
+  ancestorsEv.reverse(); // root 先頭
+
+  const pubkeys = new Set<string>([focusEv.pubkey]);
+  for (const e of ancestorsEv) pubkeys.add(e.pubkey);
+  for (const e of children) pubkeys.add(e.pubkey);
+  const profiles = await loadProfiles([...pubkeys], urls, factory);
+
+  return {
+    focus: buildPost(focusEv, profiles.get(focusEv.pubkey)),
+    ancestors: ancestorsEv.map((e) => buildPost(e, profiles.get(e.pubkey))),
+    replies: buildReplyNodes(children, focusEv.id, profiles), // BFS が focus 自身を除外済み
+    nextCursor: null,
+  };
 }

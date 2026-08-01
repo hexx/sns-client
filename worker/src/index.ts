@@ -33,6 +33,7 @@ import type {
 import {
   BskyAuthError,
   createPost as bskyPost,
+  getThread as bskyThread,
   getTimeline as bskyTimeline,
   likePost as bskyLike,
   listSources as bskySources,
@@ -48,6 +49,7 @@ import {
   createPost as misskeyPost,
   getComposeCharLimit,
   getEmojiList as misskeyEmojis,
+  getThread as misskeyThread,
   getTimeline as misskeyTimeline,
   listDestinations as misskeyDestinations,
   listSources as misskeySources,
@@ -275,6 +277,38 @@ app.get(API.timeline, async (c) => {
     return c.json(await bskyTimeline(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, source, cursor));
   }
   return c.json(await misskeyTimeline(c.env, source, cursor));
+});
+
+app.get(API.thread, async (c) => {
+  const provider = c.req.query('provider');
+  if (!isProvider(provider)) throw new HTTPException(400, { message: 'invalid provider' });
+  // nostr はブラウザ直接解決（ADR-0014、docs/thread-view-spec.md §5）。/api/timeline と同じガード。
+  if (provider === 'nostr') throw new HTTPException(400, { message: 'nostr is client-direct: resolve from the browser (ADR-0014)' });
+  const refParam = c.req.query('ref');
+  if (!refParam) throw new HTTPException(400, { message: 'ref required' });
+  let ref: unknown;
+  try {
+    ref = JSON.parse(refParam);
+  } catch {
+    throw new HTTPException(400, { message: 'invalid ref' });
+  }
+  const cursor = c.req.query('cursor') ?? undefined;
+  c.set('provider', provider);
+  if (provider === 'bluesky') {
+    const r = ref as { uri?: string } | null;
+    if (!r || typeof r.uri !== 'string') throw new HTTPException(400, { message: 'invalid ref' });
+    const thread = await bskyThread(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, r.uri);
+    if (!thread) throw new HTTPException(404, { message: 'focus unavailable' });
+    return c.json(thread);
+  }
+  if (typeof ref !== 'string' || ref.length === 0) throw new HTTPException(400, { message: 'invalid ref' });
+  try {
+    return c.json(await misskeyThread(c.env, ref, cursor));
+  } catch (e) {
+    // notes/show の 404（NO_SUCH_NOTE）はフォーカス取得不能として 404 を引き継ぐ
+    if ((e as { status?: number })?.status === 404) throw new HTTPException(404, { message: 'focus unavailable' });
+    throw e;
+  }
 });
 
 app.get(API.sources, async (c) => {

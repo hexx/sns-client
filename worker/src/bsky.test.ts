@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { RichText } from '@atproto/api';
 import type { AppBskyFeedDefs, AppBskyRichtextFacet } from '@atproto/api';
-import { buildPostRecord, facetsToRich, mapPost } from './bsky';
+import { buildPostRecord, facetsToRich, mapPost, threadViewToResponse } from './bsky';
 
 type Facets = AppBskyRichtextFacet.Main[];
 const enc = new TextEncoder();
@@ -592,5 +592,64 @@ describe('mapPost の CW / url', () => {
   it('app.bsky.feed.post 以外の URI → url 無し', () => {
     const post = mapPost(makePostView({ uri: 'at://did/app.bsky.feed.like/xyz' }));
     expect(post.url).toBeUndefined();
+  });
+});
+
+describe('threadViewToResponse（スレッド木の解釈。docs/thread-view-spec.md §4.2）', () => {
+  const node = (uri: string, over: Record<string, unknown> = {}) => ({
+    $type: 'app.bsky.feed.defs#threadViewPost',
+    post: makePostView({ uri, cid: `cid-${uri}`, record: { text: uri }, ...over }),
+  });
+
+  it('フォーカス＋祖先を root 先頭に反転して返す', async () => {
+    const root = node('at://did/app.bsky.feed.post/root');
+    const mid = { ...node('at://did/app.bsky.feed.post/mid'), parent: root };
+    const focus = { ...node('at://did/app.bsky.feed.post/focus'), parent: mid };
+    const res = threadViewToResponse(focus as never);
+    expect(res).not.toBeNull();
+    expect(res?.focus.id).toBe('at://did/app.bsky.feed.post/focus');
+    expect(res?.ancestors.map((p) => p.id)).toEqual([
+      'at://did/app.bsky.feed.post/root',
+      'at://did/app.bsky.feed.post/mid',
+    ]);
+    expect(res?.nextCursor).toBeNull();
+  });
+
+  it('子孫を DFS 順＋depth（focus 直下=1）で平坦化する', async () => {
+    const r2 = node('at://did/app.bsky.feed.post/r2');
+    const r1 = { ...node('at://did/app.bsky.feed.post/r1'), replies: [r2] };
+    const r3 = node('at://did/app.bsky.feed.post/r3');
+    const focus = { ...node('at://did/app.bsky.feed.post/focus'), replies: [r1, r3] };
+    const res = threadViewToResponse(focus as never);
+    expect(res?.replies.map((n) => ({ id: n.post?.id, depth: n.depth }))).toEqual([
+      { id: 'at://did/app.bsky.feed.post/r1', depth: 1 },
+      { id: 'at://did/app.bsky.feed.post/r2', depth: 2 },
+      { id: 'at://did/app.bsky.feed.post/r3', depth: 1 },
+    ]);
+  });
+
+  it('notFound / blocked ノードは unavailable（木構造の連続性は保つ）', async () => {
+    const notFound = { $type: 'app.bsky.feed.defs#notFoundPost', notFound: true, uri: 'at://nf' };
+    const blocked = { $type: 'app.bsky.feed.defs#blockedPost', blocked: true, uri: 'at://bl' };
+    const focus = { ...node('at://did/app.bsky.feed.post/focus'), replies: [notFound, blocked] };
+    const res = threadViewToResponse(focus as never);
+    expect(res?.replies).toEqual([
+      { unavailable: true, depth: 1 },
+      { unavailable: true, depth: 1 },
+    ]);
+  });
+
+  it('フォーカス自体が notFound / blocked → null（ルートが 404 にマップ）', async () => {
+    expect(threadViewToResponse({ $type: 'app.bsky.feed.defs#notFoundPost', notFound: true, uri: 'at://x' } as never)).toBeNull();
+    expect(threadViewToResponse({ $type: 'app.bsky.feed.defs#blockedPost', blocked: true, uri: 'at://x' } as never)).toBeNull();
+  });
+
+  it('祖先の途中が blocked → そこで打ち切り（取得できた祖先のみ root 先頭）', async () => {
+    const blocked = { $type: 'app.bsky.feed.defs#blockedPost', blocked: true, uri: 'at://bl' };
+    const mid = { ...node('at://did/app.bsky.feed.post/mid'), parent: blocked };
+    const focus = { ...node('at://did/app.bsky.feed.post/focus'), parent: mid };
+    // 連鎖: focus → mid → blocked（打ち切り。blocked の上は辿らない）
+    const res = threadViewToResponse(focus as never);
+    expect(res?.ancestors.map((p) => p.id)).toEqual(['at://did/app.bsky.feed.post/mid']);
   });
 });

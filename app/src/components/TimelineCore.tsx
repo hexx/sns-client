@@ -57,6 +57,8 @@ export const TimelineCore = forwardRef<
     justPosted?: Post | null;
     onReply?: (p: Post) => void;
     onQuote?: (p: Post) => void;
+    /** カード本文クリックでスレッドを開く（docs/thread-view-spec.md §6.1） */
+    onOpenThread?: (p: Post) => void;
     /** Like/リポストボタンを有効化（デッキ向け。docs/deck-view-spec.md §6） */
     interactive?: boolean;
     /** 帰属バッジの生成（sourceKey と provider から「Misskey · 技術リスト」のような文字列） */
@@ -77,6 +79,7 @@ export const TimelineCore = forwardRef<
     justPosted,
     onReply,
     onQuote,
+    onOpenThread,
     interactive,
     badgeFor,
     onRefreshingChange,
@@ -581,6 +584,7 @@ export const TimelineCore = forwardRef<
                 onReact={readOnly ? undefined : toggleReaction}
                 onLike={interactive && !readOnly ? () => void toggleLike(post) : undefined}
                 onRepost={interactive && !readOnly ? () => void toggleRepost(post) : undefined}
+                onOpenThread={onOpenThread}
                 badge={badgeFor?.(skey, post.provider)}
                 unread={unread}
               />

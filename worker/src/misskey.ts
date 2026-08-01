@@ -15,12 +15,16 @@ import type {
   RichSegment,
   Source,
   SourceOption,
+  ThreadNode,
+  ThreadResponse,
   TimelineResponse,
   Visibility,
 } from '../../shared/types';
 
 const DEFAULT_INSTANCE = 'https://misskey.io';
 const LIMIT = 30;
+/** 祖先の遡上上限（bsky parentHeight / nostr THREAD_ANCESTOR_LIMIT と同値。docs/thread-view-spec.md §4/§5） */
+const ANCESTOR_LIMIT = 25;
 
 export class MisskeyAuthError extends Error {}
 
@@ -421,6 +425,87 @@ export async function getTimeline(env: MisskeyEnv, source: Source, cursor?: stri
   const registry = await loadEmojiRegistry(env);
   const posts = notes.map((n) => mapNote(n, registry, instanceOf(env)));
   return { posts, nextCursor: notes.length > 0 ? notes[notes.length - 1].id : null };
+}
+
+const sortNotesAsc = (arr: MkNote[]): MkNote[] => arr.toSorted((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+
+/**
+ * notes/children の平坦なリプライ列から木を再構築し、DFS 順＋depth に平坦化する純粋関数
+ * （docs/thread-view-spec.md §4.3、ADR-0017）。replyId で親子関係を組み、時系列昇順で DFS する。
+ * 親が取得集合に無い（focus 直下でもない）ノードは、取得不能の中間ノードを unavailable で挿入して連続性を保つ。
+ */
+export function childrenToThreadNodes(
+  children: MkNote[],
+  focusId: string,
+  registry: Record<string, string> = {},
+  instanceUrl?: string,
+  opts?: { continuation?: boolean },
+): ThreadNode[] {
+  const byId = new Map(children.map((n) => [n.id, n]));
+  const kidsOf = new Map<string, MkNote[]>();
+  const orphans: MkNote[] = [];
+  for (const n of children) {
+    const parentId = n.replyId ?? '';
+    if (parentId === focusId || byId.has(parentId)) {
+      const arr = kidsOf.get(parentId) ?? [];
+      arr.push(n);
+      kidsOf.set(parentId, arr);
+    } else {
+      orphans.push(n);
+    }
+  }
+  const out: ThreadNode[] = [];
+  const walk = (parentId: string, depth: number) => {
+    for (const n of sortNotesAsc(kidsOf.get(parentId) ?? [])) {
+      out.push({ post: mapNote(n, registry, instanceUrl), depth });
+      walk(n.id, depth + 1);
+    }
+  };
+  walk(focusId, 1);
+  // 孤児ノード: 欠落親ごとにグループ化し、プレースホルダは1グループ1つ（同じ欠落親への複数返信で案内行が重複しないよう）
+  const orphanGroups = new Map<string, MkNote[]>();
+  for (const n of orphans) {
+    const key = n.replyId ?? '';
+    const arr = orphanGroups.get(key) ?? [];
+    arr.push(n);
+    orphanGroups.set(key, arr);
+  }
+  for (const group of orphanGroups.values()) {
+    // continuation（cursor 付き追加ページ）: 親は前のページに描画済みなのでプレースホルダを出さず depth 1 に継ぐ
+    const base = opts?.continuation ? 0 : 1;
+    if (!opts?.continuation) out.push({ unavailable: true, depth: 1 });
+    for (const n of sortNotesAsc(group)) {
+      out.push({ post: mapNote(n, registry, instanceUrl), depth: base + 1 });
+      walk(n.id, base + 2);
+    }
+  }
+  return out;
+}
+
+/**
+ * スレッド取得（docs/thread-view-spec.md §4.3）。notes/show（フォーカス）+ notes/conversation（祖先）+
+ * notes/children（子孫）を組み合わせ、ThreadResponse を組み立てる。
+ * 祖先は notes/conversation の返り順（親→root）を反転して root 先頭にする。
+ * 子孫の追加ページングは notes/children の untilId（cursor エコー）。focus 取得不能（404）は呼び出し側へそのまま投げる。
+ */
+export async function getThread(env: MisskeyEnv, noteId: string, cursor?: string): Promise<ThreadResponse> {
+  const registry = await loadEmojiRegistry(env);
+  const inst = instanceOf(env);
+  const childrenParams: Record<string, unknown> = { noteId, limit: LIMIT };
+  if (cursor) childrenParams.untilId = cursor;
+  // フォーカスを先に取得する: 404 を「focus 取得不能」として明確にするため
+  // （conversation/children と並列にすると、部分失敗の 404 が focus 由来と区別できなくなる）
+  const focus = await mkApi<MkNote>(env, 'notes/show', { noteId });
+  const [conversation, children] = await Promise.all([
+    mkApi<MkNote[]>(env, 'notes/conversation', { noteId, limit: ANCESTOR_LIMIT }),
+    mkApi<MkNote[]>(env, 'notes/children', childrenParams),
+  ]);
+  const ancestors = (conversation ?? []).toReversed().map((n) => mapNote(n, registry, inst));
+  const kids = children ?? [];
+  const replies = childrenToThreadNodes(kids, noteId, registry, inst, { continuation: Boolean(cursor) });
+  const last = kids[kids.length - 1];
+  const nextCursor = kids.length >= LIMIT && last ? last.id : null;
+  return { focus: mapNote(focus, registry, inst), ancestors, replies, nextCursor };
 }
 
 /**

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { MobilePager } from './components/MobilePager';
 import { Deck } from './components/Deck';
 import { Compose } from './components/Compose';
+import { ThreadView } from './components/ThreadView';
 import { api } from './api';
 import type { Post, ProviderInfo, View } from '../../shared/types';
 
@@ -26,6 +27,7 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [activeViewId, setActiveViewId] = useState<string>('home');
   const [compose, setCompose] = useState<ComposeState>({ open: false });
+  const [threadPost, setThreadPost] = useState<Post | null>(null);
   const [justPosted, setJustPosted] = useState<Post | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -69,6 +71,10 @@ export default function App() {
     });
   }, []);
 
+  /** Compose を返信/引用で開く（MobilePager と ThreadView で共有。docs/thread-view-spec.md §6.3） */
+  const openReply = useCallback((p: Post) => setCompose({ open: true, replyTo: p }), []);
+  const openQuote = useCallback((p: Post) => setCompose({ open: true, quote: p }), []);
+
   const activeView = views.find((v) => v.id === activeViewId) ?? views[0];
 
   return (
@@ -81,7 +87,12 @@ export default function App() {
         <>
           {saveError && <div className="banner error">{saveError}</div>}
           {views.length > 0 ? (
-            <Deck views={views} onViewsChange={handleViewsChange} onCompose={() => setCompose({ open: true })} />
+            <Deck
+              views={views}
+              onViewsChange={handleViewsChange}
+              onCompose={() => setCompose({ open: true })}
+              onOpenThread={setThreadPost}
+            />
           ) : (
             <p className="empty">読み込み中…</p>
           )}
@@ -93,8 +104,9 @@ export default function App() {
           onSwitchView={setActiveViewId}
           justPosted={justPosted}
           onCompose={() => setCompose({ open: true })}
-          onReply={(p) => setCompose({ open: true, replyTo: p })}
-          onQuote={(p) => setCompose({ open: true, quote: p })}
+          onReply={openReply}
+          onQuote={openQuote}
+          onOpenThread={setThreadPost}
         />
       ) : (
         <p className="empty">読み込み中…</p>
@@ -109,6 +121,15 @@ export default function App() {
             setJustPosted(post);
             if (isDeck) setToast('投稿しました');
           }}
+        />
+      )}
+      {threadPost && (
+        <ThreadView
+          post={threadPost}
+          justPosted={justPosted}
+          onReply={openReply}
+          onQuote={openQuote}
+          onClose={() => setThreadPost(null)}
         />
       )}
       {toast && <div className="toast">{toast}</div>}

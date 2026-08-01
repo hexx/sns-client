@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
-import { BskyAuthError, createPost as bskyPost, getTimeline as bskyTimeline, likePost as bskyLike, listSources as bskySources, repostPost as bskyRepost, resetSession, unlikePost as bskyUnlike, unrepostPost as bskyUnrepost, uploadMedia as bskyUpload } from './bsky';
-import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getTimeline as misskeyTimeline, listDestinations as misskeyDestinations, listSources as misskeySources, react as misskeyReact, renote as misskeyRenote, uploadMedia as misskeyUpload } from './misskey';
+import { BskyAuthError, createPost as bskyPost, getThread as bskyThread, getTimeline as bskyTimeline, likePost as bskyLike, listSources as bskySources, repostPost as bskyRepost, resetSession, unlikePost as bskyUnlike, unrepostPost as bskyUnrepost, uploadMedia as bskyUpload } from './bsky';
+import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getThread as misskeyThread, getTimeline as misskeyTimeline, listDestinations as misskeyDestinations, listSources as misskeySources, react as misskeyReact, renote as misskeyRenote, uploadMedia as misskeyUpload } from './misskey';
 
 // モジュール境界でモック（instanceof のため AuthError 系は実物を維持）
 vi.mock('./bsky', async (importOriginal) => {
@@ -10,6 +10,7 @@ vi.mock('./bsky', async (importOriginal) => {
   return {
     ...actual,
     getTimeline: vi.fn(),
+    getThread: vi.fn(),
     uploadMedia: vi.fn(),
     createPost: vi.fn(),
     resetSession: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('./misskey', async (importOriginal) => {
   return {
     ...actual,
     getTimeline: vi.fn(),
+    getThread: vi.fn(),
     uploadMedia: vi.fn(),
     createPost: vi.fn(),
     getComposeCharLimit: vi.fn(),
@@ -688,5 +690,93 @@ describe('エラーハンドリング（プロバイダ対応）', () => {
     const res = await worker.fetch(new Request('https://x/some/page'), makeEnv(assetsFetch));
     expect(assetsFetch).toHaveBeenCalled();
     expect(await res.text()).toBe('spa');
+  });
+});
+
+const refParam = (ref: unknown) => encodeURIComponent(JSON.stringify(ref));
+
+describe('GET /api/thread（docs/thread-view-spec.md §4.1）', () => {
+
+  it('provider 不正 → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/thread?provider=mastodon&ref=%22r%22'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('nostr → 400（ブラウザ直接解決。ADR-0014）', async () => {
+    const res = await worker.fetch(new Request('https://x/api/thread?provider=nostr&ref=%22r%22'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('ref 無し → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/thread?provider=bluesky'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('ref が不正 JSON → 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/thread?provider=bluesky&ref=%7B'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('bluesky: ref 形状不正 → 400', async () => {
+    const res = await worker.fetch(new Request(`https://x/api/thread?provider=bluesky&ref=${refParam('str')}`), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('bluesky: スレッドを返す（200）', async () => {
+    const thread = { focus: { id: 'f' }, ancestors: [], replies: [], nextCursor: null };
+    vi.mocked(bskyThread).mockResolvedValue(thread as never);
+    const res = await worker.fetch(
+      new Request(`https://x/api/thread?provider=bluesky&ref=${refParam({ uri: 'at://u', cid: 'c' })}`),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()) as unknown).toEqual(thread);
+    expect(bskyThread).toHaveBeenCalledWith('h', 'p', 'at://u');
+  });
+
+  it('bluesky: フォーカス取得不能（null）→ 404', async () => {
+    vi.mocked(bskyThread).mockResolvedValue(null);
+    const res = await worker.fetch(
+      new Request(`https://x/api/thread?provider=bluesky&ref=${refParam({ uri: 'at://u', cid: 'c' })}`),
+      makeEnv(),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('misskey: ref が文字列でなければ 400', async () => {
+    const res = await worker.fetch(
+      new Request(`https://x/api/thread?provider=misskey&ref=${refParam({ uri: 'x' })}`),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('misskey: スレッドを返す（200。cursor を渡す）', async () => {
+    const thread = { focus: { id: 'n1' }, ancestors: [], replies: [], nextCursor: null };
+    vi.mocked(misskeyThread).mockResolvedValue(thread as never);
+    const res = await worker.fetch(
+      new Request(`https://x/api/thread?provider=misskey&ref=${refParam('n1')}&cursor=cur1`),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyThread).toHaveBeenCalledWith(expect.anything(), 'n1', 'cur1');
+  });
+
+  it('misskey: notes/show 404 → 404（focus unavailable）', async () => {
+    vi.mocked(misskeyThread).mockRejectedValue(Object.assign(new Error('no such note'), { status: 404 }));
+    const res = await worker.fetch(
+      new Request(`https://x/api/thread?provider=misskey&ref=${refParam('n1')}`),
+      makeEnv(),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('misskey: その他のエラー → 502', async () => {
+    vi.mocked(misskeyThread).mockRejectedValue(new Error('boom'));
+    const res = await worker.fetch(
+      new Request(`https://x/api/thread?provider=misskey&ref=${refParam('n1')}`),
+      makeEnv(),
+    );
+    expect(res.status).toBe(502);
   });
 });

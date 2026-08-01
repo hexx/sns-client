@@ -86,7 +86,7 @@ export type Post = {
 
 - **Nostr の引用**（NIP-18 `q` タグ / `nostr:note1...`）: nostr-integration-spec.md §4.8 の通りリンクセグメント表示に留める。参照イベントの追加 fetch（別リレー・削除済みで失敗しがち）を要するため。
 - **投稿以外（list / feed generator）の embed 表示**: 別のドメイン概念（Source に関わる）であり本仕様の範囲外。
-- **アプリ内スレッド/詳細ビュー**: 将来の独立機能。実装された場合、quote card クリックの挙動を「展開」から「遷移」へ再審する（ADR-0015 Consequences）。
+- **アプリ内スレッドビュー**: 実装済み（[thread-view-spec.md](./thread-view-spec.md)）。ADR-0015 の再審宿題は「変更あり」で決着済み: quote card **本体クリック＝引用先の Thread へ遷移**。「もっと見る」展開トグルと ↗ 外部リンクは `stopPropagation` で別操作として維持。`quoteUnavailable` は入口なし。対象は bsky / misskey のみ（nostr 投稿に quote は無い）。
 - **CW 表示そのもの**: cw-display-spec.md を参照。
 
 ## テスト（ADR-0001 / ADR-0002 準拠）
