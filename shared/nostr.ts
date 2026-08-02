@@ -552,11 +552,11 @@ export async function getProfilePosts(
   const urls = NOSTR_RELAYS;
   // cursor は数字のみ受け付ける（不正値は無視せず拒否し、最新ページの再取得ループを防ぐ）
   if (cursor !== undefined && cursor !== '' && !/^\d+$/.test(cursor)) {
-    throw new NostrError(400, 'invalid cursor');
+    throw new NostrError(400, 'cursor が不正です');
   }
   const until = cursor !== undefined && cursor !== '' ? Number.parseInt(cursor, 10) : undefined;
   const filter: NostrFilter = { kinds: [1, 6], authors: [pubkeyHex], limit: FETCH_LIMIT };
-  if (until !== undefined && !Number.isNaN(until)) filter.until = until;
+  if (until !== undefined) filter.until = until; // /^\d+$/ 検証済みのため NaN は起きない
   const outcomes = new Map<string, boolean>();
   const events = await queryRelays(urls, filter, { wsFactory: opts.wsFactory, outcomes });
   assertAnyRelayReached(urls, outcomes);

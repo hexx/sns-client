@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isNotificationsView, notifText, notifTextBody, NOTIF_ICON, typeLabel } from './notifications';
-import type { Notification, View } from '../../../shared/types';
+import { isActorlessType, isNotificationsView, notifText, notifTextBody, NOTIF_ICON, typeLabel } from './notifications';
+import type { Notification, NotificationType, View } from '../../../shared/types';
 
 function view(sources: View['sources']): View {
   return { id: 'v', name: 'v', sources };
@@ -103,5 +103,32 @@ describe('notifTextBody（docs/profile-view-spec.md §8.1）', () => {
 
   it('notifText は notifTextBody に前置きを足したものと一致する', () => {
     expect(notifText(base)).toBe(`${base.actor!.displayName} さん${notifTextBody(base)}`);
+  });
+});
+
+describe('ACTORLESS_TYPES と notifTextBody の整合（docs/profile-view-spec.md §8.1）', () => {
+  const base: Notification = {
+    id: 'n1',
+    provider: 'bluesky',
+    type: 'like',
+    createdAt: '2026-07-01T12:00:00Z',
+    isRead: false,
+    actor: { id: 'did:plc:alice', handle: 'alice.bsky.social', displayName: 'Alice' },
+  };
+
+  it('actorless 型の本文は完文（助詞で始まらない）で、notifText に前置きが付かない', () => {
+    // ACTORLESS_TYPES に追加するときは notifTextBody の完文ケースも追加すること（二重主語の防止）
+    const types: NotificationType[] = ['pollEnded'];
+    for (const type of types) {
+      expect(isActorlessType(type)).toBe(true);
+      expect(notifTextBody({ ...base, type })).not.toMatch(/^(が|から|の|への)/);
+      expect(notifText({ ...base, type, actor: undefined })).not.toMatch(/^(誰か|Alice)/);
+    }
+  });
+
+  it('actor 前置き型の本文は助詞で始まる（前置きと連結できる）', () => {
+    for (const type of ['like', 'follow', 'mention', 'reply'] as NotificationType[]) {
+      expect(notifTextBody({ ...base, type })).toMatch(/^(が|から|の|への)/);
+    }
   });
 });

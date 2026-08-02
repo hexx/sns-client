@@ -295,6 +295,7 @@ export function ProfileView({
   const toggleFollow = useCallback(async () => {
     const p = profile;
     const t = target;
+    const gen = loadGenRef.current;
     if (!p || followBusy || followBusyRef.current) return;
     if (p.provider !== 'bluesky' && p.provider !== 'misskey') return;
     // リクエスト中にターゲットが置換されたら、応答・ロールバックを現在のターゲットに適用しない（stale 防止）
@@ -343,8 +344,11 @@ export function ProfileView({
       apply(() => original); // ロールバック
       if (targetRef.current === t) setToast(following ? 'フォロー解除に失敗しました' : 'フォローに失敗しました');
     } finally {
-      followBusyRef.current = false;
-      setFollowBusy(false);
+      // 旧ターゲット・旧世代の finally は新世代の busy フラグを消さない（二重送信の防止）
+      if (gen === loadGenRef.current && targetRef.current === t) {
+        followBusyRef.current = false;
+        setFollowBusy(false);
+      }
     }
   }, [profile, followBusy, target]);
 

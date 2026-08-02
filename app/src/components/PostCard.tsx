@@ -80,7 +80,10 @@ function HandleProfileButton({
  * onOpenProfile があれば button 化し、クリックでプロフィールを開く（docs/profile-view-spec.md §8.1）。
  */
 function DisplayName({ author, className, provider, onOpenProfile }: DisplayNameProps) {
-  if (onOpenProfile) {
+  // 注: provider と onOpenProfile はユニオンで相関する。分割代入のまま truthiness で狭めると
+  // 相関が失われる TS バージョンがあり得るため、分岐内では props 経由（property access）で扱う
+  const open = onOpenProfile;
+  if (open) {
     // ボタン内では <a>（link セグメント）を出さない（nested-interactive 回避）。
     // リンクのテキストは text セグメントに置き換えて内容を失わない
     const safe = author.displayNameRich?.length ? (
@@ -94,7 +97,7 @@ function DisplayName({ author, className, provider, onOpenProfile }: DisplayName
       author.displayName
     );
     return (
-      <button type="button" className={`${className ?? ''} name-btn`} title={author.displayName} onClick={() => onOpenProfile(provider, author)}>
+      <button type="button" className={`${className ?? ''} name-btn`} title={author.displayName} onClick={() => open(provider, author)}>
         {safe}
       </button>
     );
