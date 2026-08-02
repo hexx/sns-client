@@ -572,8 +572,13 @@ export async function followActor(
   did: string,
 ): Promise<string> {
   const a = await getAgent(handle, appPassword);
-  // 既存の follow レコードがあればそれを返す（二重フォロー防止の冪等化。取得失敗時は作成に進む）
-  const existing = await a.getProfile({ actor: did }).catch(() => null);
+  // 既存の follow レコードがあればそれを返す（二重フォロー防止の冪等化）。
+  // 取得不能アカウントは createRecord 側のエラー（→ 404）に委ね、一時的な失敗（レート制限等）は
+  // 先読みを諦めて作成に進むと重複レコードになるため、そのまま伝播させる
+  const existing = await a.getProfile({ actor: did }).catch((e) => {
+    if (isAccountUnavailable(e)) return null;
+    throw e;
+  });
   if (existing?.data.viewer?.following) return existing.data.viewer.following;
   return createRecord(handle, appPassword, COL_FOLLOW, { subject: did });
 }

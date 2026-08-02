@@ -80,10 +80,10 @@ function HandleProfileButton({
  * onOpenProfile があれば button 化し、クリックでプロフィールを開く（docs/profile-view-spec.md §8.1）。
  */
 function DisplayName({ author, className, provider, onOpenProfile }: DisplayNameProps) {
-  const inner =
-    author.displayNameRich && author.displayNameRich.length > 0 ? (
-      // ボタン内では <a>（link セグメント）を出さない（nested-interactive 回避）。
-      // リンクのテキストは text セグメントに置き換えて内容を失わない
+  if (onOpenProfile) {
+    // ボタン内では <a>（link セグメント）を出さない（nested-interactive 回避）。
+    // リンクのテキストは text セグメントに置き換えて内容を失わない
+    const safe = author.displayNameRich?.length ? (
       <RichText
         segments={author.displayNameRich.map((s) =>
           s.type === 'link' ? { type: 'text' as const, text: s.text ?? s.url } : s,
@@ -93,13 +93,19 @@ function DisplayName({ author, className, provider, onOpenProfile }: DisplayName
     ) : (
       author.displayName
     );
-  if (onOpenProfile) {
     return (
       <button type="button" className={`${className ?? ''} name-btn`} title={author.displayName} onClick={() => onOpenProfile(provider, author)}>
-        {inner}
+        {safe}
       </button>
     );
   }
+  // 素の表示（非ボタン）はリッチテキストのまま（リンクはクリック可能）
+  const inner =
+    author.displayNameRich && author.displayNameRich.length > 0 ? (
+      <RichText segments={author.displayNameRich} inline />
+    ) : (
+      author.displayName
+    );
   return (
     <span className={className} title={author.displayName}>
       {inner}

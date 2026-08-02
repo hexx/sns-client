@@ -519,12 +519,9 @@ describe('getProfile（docs/profile-view-spec.md §7）', () => {
     expect(p.description).toBeUndefined();
   });
 
-  it('全リレー接続失敗は handle のみに縮退（loadProfiles 経由のため。§6.4/§7）', async () => {
+  it('全リレー接続失敗は NostrError(502)（オフラインを空プロフィールに見せない。一覧と同じ扱い）', async () => {
     const { getProfile } = await import('./nostr');
-    const p = await getProfile(PUB, { wsFactory: blockedRelay });
-    expect(p.author.id).toBe(PUB);
-    expect(p.author.displayName).toBe(p.author.handle);
-    expect(p.description).toBeUndefined();
+    await expect(getProfile(PUB, { wsFactory: blockedRelay })).rejects.toMatchObject({ status: 502 });
   });
 });
 

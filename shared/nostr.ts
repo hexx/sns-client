@@ -230,10 +230,11 @@ export function parseProfile(content?: string): NostrProfile {
     const p: NostrProfile = {};
     const dn = j.display_name || j.name;
     if (typeof dn === 'string' && dn.length > 0) p.displayName = dn.slice(0, 200); // 悪意リレー対策の上限
-    if (typeof j.picture === 'string' && j.picture.length > 0 && j.picture.length <= 2000) p.picture = j.picture;
+    // URL は http(s) のみ受け付ける（画像 src に入るため。長さも上限付き）
+    if (typeof j.picture === 'string' && /^https?:\/\//.test(j.picture) && j.picture.length <= 2000) p.picture = j.picture;
     // 自己紹介・バナーはプロフィール表示で使う（docs/profile-view-spec.md §7）。長さは抑えてメモリ・レイアウトを守る
     if (typeof j.about === 'string' && j.about.length > 0) p.about = j.about.slice(0, 500);
-    if (typeof j.banner === 'string' && j.banner.length > 0 && j.banner.length <= 2000) p.banner = j.banner;
+    if (typeof j.banner === 'string' && /^https?:\/\//.test(j.banner) && j.banner.length <= 2000) p.banner = j.banner;
     return p;
   } catch {
     return {};
@@ -244,6 +245,7 @@ async function loadProfiles(
   pubkeys: string[],
   urls: string[],
   factory: WsFactory,
+  outcomes?: Map<string, boolean>,
 ): Promise<Map<string, NostrProfile>> {
   sweepExpiredProfiles(Date.now());
   const result = new Map<string, NostrProfile>();
@@ -254,7 +256,7 @@ async function loadProfiles(
     else missing.push(pk);
   }
   if (missing.length > 0) {
-    const evs = await queryRelays(urls, { kinds: [0], authors: missing }, { wsFactory: factory });
+    const evs = await queryRelays(urls, { kinds: [0], authors: missing }, { wsFactory: factory, ...(outcomes ? { outcomes } : {}) });
     const latest = new Map<string, NostrEvent>();
     for (const ev of evs) {
       const cur = latest.get(ev.pubkey);
@@ -508,7 +510,10 @@ function pageCursor(rawTimes: number[]): string | null {
  * 取得は loadProfiles（TTL キャッシュ＋バッチ）を経由し、投稿一覧側の解決とキャッシュを共有する（§6.4）。
  */
 export async function getProfile(pubkeyHex: string, opts: { wsFactory: WsFactory }): Promise<Profile> {
-  const profiles = await loadProfiles([pubkeyHex], NOSTR_RELAYS, opts.wsFactory);
+  const outcomes = new Map<string, boolean>();
+  const profiles = await loadProfiles([pubkeyHex], NOSTR_RELAYS, opts.wsFactory, outcomes);
+  // 全リレー接続失敗は可視エラー化（一覧と同じ扱い。オフラインを空プロフィールに見せない）
+  assertAnyRelayReached(NOSTR_RELAYS, outcomes);
   const profile = profiles.get(pubkeyHex) ?? {};
   const out: Profile = { provider: 'nostr', author: toAuthor(pubkeyHex, profile) };
   if (profile.about) out.description = profile.about;
@@ -534,6 +539,10 @@ export async function getProfilePosts(
   cursor?: string,
 ): Promise<TimelineResponse> {
   const urls = NOSTR_RELAYS;
+  // cursor は数字のみ受け付ける（不正値は無視せず拒否し、最新ページの再取得ループを防ぐ）
+  if (cursor !== undefined && cursor !== '' && !/^\d+$/.test(cursor)) {
+    throw new NostrError(400, 'invalid cursor');
+  }
   const until = cursor !== undefined && cursor !== '' ? Number.parseInt(cursor, 10) : undefined;
   const filter: NostrFilter = { kinds: [1, 6], authors: [pubkeyHex], limit: FETCH_LIMIT };
   if (until !== undefined && !Number.isNaN(until)) filter.until = until;
