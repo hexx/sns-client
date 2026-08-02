@@ -356,13 +356,14 @@ export function ProfileView({
   const retryList = useCallback(async () => {
     const t = target;
     loadGenRef.current += 1; // in-flight の loadMore 応答を無効化（再試行後のリストに混入させない）
+    const gen = loadGenRef.current;
     loadingMoreRef.current = false;
     setLoadingMore(false); // 旧世代の in-flight が finally で消せないため、ここで表示も戻す
     setListError(null);
     setListDone(false); // 再試行中は「投稿はありません」を出さない（空状態の誤表示防止）
     try {
       const data = await fetchProfilePosts(t.provider, t.author);
-      if (targetRef.current !== t) return;
+      if (targetRef.current !== t || gen !== loadGenRef.current) return;
       seenPostIds.current = new Set(data.posts.map(pid)); // 再試行の先頭ページで dedup セットを作り直す
       setPosts(data.posts);
       setCursor(data.nextCursor);
@@ -512,11 +513,17 @@ export function ProfileView({
             <>
               <div className="profile-header">
                 {profile.bannerUrl && /^https?:\/\//.test(profile.bannerUrl) && (
-                  <img className="profile-banner" src={profile.bannerUrl} alt="" />
+                  <img className="profile-banner" src={profile.bannerUrl} alt="" loading="lazy" onError={(e) => (e.currentTarget.style.display = 'none')} />
                 )}
                 <div className="profile-id">
                   {profile.author.avatarUrl && /^https?:\/\//.test(profile.author.avatarUrl) ? (
-                    <img className="profile-avatar" src={profile.author.avatarUrl} alt="" />
+                    <img
+                      className="profile-avatar"
+                      src={profile.author.avatarUrl}
+                      alt=""
+                      loading="lazy"
+                      onError={(e) => (e.currentTarget.style.display = 'none')}
+                    />
                   ) : (
                     <div className="profile-avatar avatar-fallback" />
                   )}
