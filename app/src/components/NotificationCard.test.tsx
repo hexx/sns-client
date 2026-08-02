@@ -19,7 +19,8 @@ function notif(over: Partial<Notification> = {}): Notification {
 describe('NotificationCard のプロフィール入口（docs/profile-view-spec.md §8.1）', () => {
   it('onOpenProfile 有り: actor のアバター＋名前がボタンになり、クリックで発火する', () => {
     const onOpenProfile = vi.fn();
-    render(<NotificationCard notification={notif()} onOpenProfile={onOpenProfile} />);
+    // onOpenThread は actor ボタン表示の前提（Thread 入口を CompactPost ボタンに委ねるため。§8.1）
+    render(<NotificationCard notification={notif()} onOpenProfile={onOpenProfile} onOpenThread={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Alice のプロフィールを開く' }));
     expect(onOpenProfile).toHaveBeenCalledWith('bluesky', expect.objectContaining({ id: 'did:plc:alice' }));
   });

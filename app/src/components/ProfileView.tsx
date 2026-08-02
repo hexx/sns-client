@@ -65,6 +65,8 @@ export function ProfileView({
   const engageInflight = useRef<Set<string>>(new Set());
   /** 追加読み込みの in-flight ガード（再描画前の連続発火で同じ cursor を二重取得しない。TimelineCore と同じ流儀） */
   const loadingMoreRef = useRef(false);
+  /** 読み込みの世代トークン（openProfile で increment。旧ターゲットの応答・finally を無効化する） */
+  const loadGenRef = useRef(0);
   /** 表示済み投稿 id の Set（追記時の重複排除を O(1) にする。ターゲット切替でリセット） */
   const seenPostIds = useRef<Set<string>>(new Set());
   /** ターゲットの最新値（loadMore / retryList の stale 応答破棄に使う。§8.2） */
@@ -311,13 +313,18 @@ export function ProfileView({
         }
         apply((x) => (x ? { ...x, viewer: { following: false } } : x));
       } else {
-        const res = await api.follow(p.provider, p.author.id);
-        if (res.recordUri) {
-          apply((x) => (x ? { ...x, viewer: { following: true, followUri: res.recordUri } } : x));
+        // misskey は recordUri を持たない（解除は actorId 指定）ため、成功ならそのまま反映する
+        if (p.provider === 'misskey') {
+          apply((x) => (x ? { ...x, viewer: { following: true } } : x));
         } else {
-          // recordUri が返らないと解除（followUri）に使えずトグル状態を追跡できないため戻す（like/repost と同じ）
-          apply(() => original);
-          if (targetRef.current === t) setToast('フォローに失敗しました');
+          const res = await api.follow('bluesky', p.author.id);
+          if (res.recordUri) {
+            apply((x) => (x ? { ...x, viewer: { following: true, followUri: res.recordUri } } : x));
+          } else {
+            // recordUri が返らないと解除（followUri）に使えずトグル状態を追跡できないため戻す（like/repost と同じ）
+            apply(() => original);
+            if (targetRef.current === t) setToast('フォローに失敗しました');
+          }
         }
       }
     } catch {
@@ -337,6 +344,7 @@ export function ProfileView({
     try {
       const data = await fetchProfilePosts(t.provider, t.author);
       if (targetRef.current !== t) return;
+      seenPostIds.current = new Set(data.posts.map(pid)); // 再試行の先頭ページで dedup セットを作り直す
       setPosts(data.posts);
       setCursor(data.nextCursor);
       setListDone(true);
@@ -353,26 +361,29 @@ export function ProfileView({
     // IntersectionObserver が再購読され、可視中の sentinel で無限リトライになるため）
     if (!cursor || loadingMoreRef.current) return;
     const t = target;
+    const gen = loadGenRef.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const data = await fetchProfilePosts(t.provider, t.author, cursor);
-      if (targetRef.current !== t) return;
+      if (targetRef.current !== t || gen !== loadGenRef.current) return;
       // ページ境界の重複（nostr の自己リポスト等）を pid の Set で除いて追記する
       const fresh = data.posts.filter((q) => !seenPostIds.current.has(pid(q)));
       for (const q of fresh) seenPostIds.current.add(pid(q));
       setPosts((prev) => [...prev, ...fresh]);
       setCursor(data.nextCursor);
     } catch {
-      if (targetRef.current === t) setToast('追加の読み込みに失敗しました');
+      if (targetRef.current === t && gen === loadGenRef.current) setToast('追加の読み込みに失敗しました');
     } finally {
-      loadingMoreRef.current = false;
+      if (gen === loadGenRef.current) loadingMoreRef.current = false; // 旧世代の finally は新世代のフラグを消さない
       setLoadingMore(false);
     }
   }, [cursor, target]);
 
   /** 一覧表示の準備ができたか（sentinel のマウント条件。IO の再購読トリガに使う） */
   const profileReady = profile !== null && status === 'done';
+  /** 一覧セクションの表示条件（概要の成功時、または概要エラーだが一覧は読めたとき。unavailable は除く） */
+  const profileReadyOrListReady = profileReady || (status === 'error' && listDone);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -382,7 +393,7 @@ export function ProfileView({
     });
     io.observe(el);
     return () => io.disconnect();
-  }, [loadMore, profileReady]);
+  }, [loadMore, profileReadyOrListReady]);
 
   /**
    * 一覧内の別ユーザー入口（リポスト行・quote card の著者行）での置換。
@@ -394,6 +405,7 @@ export function ProfileView({
   const openProfile = useCallback((p: Provider, a: Author) => {
     if (authorKey(p, a) === authorKey(targetRef.current.provider, targetRef.current.author)) return;
     targetRef.current = { provider: p, author: a }; // 再描画前の stale ガードを先に反映
+    loadGenRef.current += 1; // 旧ターゲットの in-flight 応答・finally を無効化
     // 一覧・概要の状態を同期的に全リセット（useEffect は描画後に走るため、
     // その間の描画で前ターゲットの中身が一瞬見えるのを防ぐ。§8.2）。
     // in-flight ガード・トーストもリセットする（前ターゲットの応答が新ターゲットに影響しないように）
@@ -471,9 +483,11 @@ export function ProfileView({
           {profile && status === 'done' && (
             <>
               <div className="profile-header">
-                {profile.bannerUrl && <img className="profile-banner" src={profile.bannerUrl} alt="" />}
+                {profile.bannerUrl && /^https?:\/\//.test(profile.bannerUrl) && (
+                  <img className="profile-banner" src={profile.bannerUrl} alt="" />
+                )}
                 <div className="profile-id">
-                  {profile.author.avatarUrl ? (
+                  {profile.author.avatarUrl && /^https?:\/\//.test(profile.author.avatarUrl) ? (
                     <img className="profile-avatar" src={profile.author.avatarUrl} alt="" />
                   ) : (
                     <div className="profile-avatar avatar-fallback" />
@@ -521,14 +535,19 @@ export function ProfileView({
                   </div>
                 )}
               </div>
+            </>
+          )}
 
+          {/* 一覧は概要の成否と独立に表示する（§8.2「概要と一覧は別々に失敗を扱う」）。
+              概要がエラーでも一覧が読めたら見せる。unavailable（削除・ブロック）は一覧も出さない */}
+          {profileReadyOrListReady && (
+            <>
               {listError && (
                 <div className="banner error">
                   投稿一覧を読み込めませんでした（{listError}）{' '}
                   <button type="button" onClick={() => void retryList()}>再試行</button>
                 </div>
               )}
-
               <div className="profile-posts">
                 {posts.map((p) =>
                   isHiddenPost(p) ? null : (

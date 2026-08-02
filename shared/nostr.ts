@@ -418,8 +418,8 @@ export async function getTimeline(
         `リレーに接続できません（現在のネットワークから到達できない可能性があります）: ${urls[0]}`,
       );
     }
-  } else if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
-    throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
+  } else {
+    assertAnyRelayReached(urls, outcomes);
   }
 
   const { posts } = await buildFeedPosts(events, urls, opts.wsFactory);
@@ -516,6 +516,13 @@ export async function getProfile(pubkeyHex: string, opts: { wsFactory: WsFactory
   return out;
 }
 
+/** 全リレー接続失敗の判定（可視エラー化。docs/nostr-browser-direct-spec.md §6.5、ADR-0014） */
+function assertAnyRelayReached(urls: string[], outcomes: Map<string, boolean>): void {
+  if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
+    throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
+  }
+}
+
 /**
  * nostr プロフィールの投稿一覧（kind:1＋kind:6 を pubkey で照会。§7）。
  * ページングは getTimeline と同じ until（created_at の unix 秒）を cursor として継続する
@@ -532,14 +539,14 @@ export async function getProfilePosts(
   if (until !== undefined && !Number.isNaN(until)) filter.until = until;
   const outcomes = new Map<string, boolean>();
   const events = await queryRelays(urls, filter, { wsFactory: opts.wsFactory, outcomes });
-  if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
-    throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
-  }
+  assertAnyRelayReached(urls, outcomes);
   const { posts, rawTimes } = await buildFeedPosts(events, urls, opts.wsFactory);
   // ページは取得上限（FETCH_LIMIT）のまま全件返す: リポストは raw 日時（リレーの until 対象）と
   // 表示位置（元ノートの日時）が乖離するため、表示順でスライスすると深いページでリポストが
   // 欠落する（until フィルタに掛かる）。raw ウィンドウで区切り、ページ内は表示順で整列する。
-  const nextCursor = pageCursor(rawTimes);
+  // 表示可能な投稿が0件（リポストの参照先が全て解決不能など）でも、取得した生イベントの
+  // 最古時刻から cursor を進めて無限ループ・早期終了を防ぐ
+  const nextCursor = pageCursor(rawTimes.length > 0 ? rawTimes : events.map((e) => e.created_at));
   return { posts, nextCursor };
 }
 

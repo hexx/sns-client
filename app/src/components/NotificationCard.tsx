@@ -30,20 +30,14 @@ function relTime(iso: string): string {
  * asButton 時は投稿プレビュー自体が Thread への入口（actor ボタンを持つカードのキーボード操作を確保）。§8.1 */
 function CompactPost({ post, asButton, onOpen }: { post: Post; asButton?: boolean; onOpen?: () => void }) {
   if (asButton) {
-    // ボタン内に <a> を含めない（nested-interactive 回避）。リッチリンクはプレーンな本文で描画する
+    // ボタン内に <a> を含めない（nested-interactive 回避）。リッチリンクはプレーンな本文で描画する。
+    // CW は本文を伏せるため、隠し本文を読み上げず CW 文言だけをアクセシブル名にする
+    let label: string;
+    if (post.cw) label = `投稿を開く（CW）: ${post.cw}`;
+    else if (post.text) label = `投稿を開く: ${post.text}`;
+    else label = `${post.author.displayName} の投稿を開く`;
     return (
-      <button
-        type="button"
-        className="notif-post notif-post-btn"
-        aria-label={
-          post.cw
-            ? `投稿を開く（CW）: ${post.cw}` // CW は本文を伏せるため、隠し本文を読み上げない
-            : post.text
-              ? `投稿を開く: ${post.text}`
-              : `${post.author.displayName} の投稿を開く`
-        }
-        onClick={onOpen}
-      >
+      <button type="button" className="notif-post notif-post-btn" aria-label={label} onClick={onOpen}>
         {post.cw ? (
           <span className="cw-pill">
             <span className="cw-text">{post.cw || 'CW'}</span>
@@ -99,8 +93,11 @@ export function NotificationCard({
   const clickable = Boolean(n.post);
   // actor ボタンは「actor が主体」の通知だけに出す。text のみ通知（verified 等）は BFF 合成の完文が
   // 表示本体で、actor を前置きすると「◯◯ さん あなたのアカウントが認証されました」のような二重主語になる。
-  // actor 無し文言の型（pollEnded 等）も同様（§8.1）
-  const actorClickable = Boolean(onOpenProfile && n.actor && !n.text && !isActorlessType(n.type));
+  // actor 無し文言の型（pollEnded 等）も同様。onOpenThread が無い場合は記事全体クリックの従来挙動を
+  // 維持する（Thread 入口を CompactPost ボタンに委ねると no-op になるため。§8.1）
+  const actorClickable = Boolean(
+    onOpenProfile && onOpenThread && n.actor && !n.text && !isActorlessType(n.type),
+  );
   // actor ボタンを持つカードは article を role=button にしない（button のネストは ARIA の
   // nested-interactive 違反）。その場合の Thread 遷移は投稿プレビュー（CompactPost ボタン）が担う（§8.1）
   const openThreadFromCard = clickable && !actorClickable;

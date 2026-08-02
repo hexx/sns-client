@@ -62,7 +62,8 @@ function HandleProfileButton({
 }) {
   if (!onOpenProfile) {
     return <span className={className}>@{author.handle}</span>; // className は呼び出し側が .handle を渡す
-  }  return (
+  }
+  return (
     <button
       type="button"
       className={`${className ?? ''} handle-btn`}
@@ -81,7 +82,8 @@ function HandleProfileButton({
 function DisplayName({ author, className, provider, onOpenProfile }: DisplayNameProps) {
   const inner =
     author.displayNameRich && author.displayNameRich.length > 0 ? (
-      <RichText segments={author.displayNameRich} inline />
+      // ボタン内では <a>（link セグメント）を出さない（nested-interactive 回避。現行の生成元は text/emoji のみ）
+      <RichText segments={author.displayNameRich.filter((s) => s.type !== 'link')} inline />
     ) : (
       author.displayName
     );

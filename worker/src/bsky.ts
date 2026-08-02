@@ -468,11 +468,27 @@ export function mapAuthorFeedItem(f: {
  * 既知のエラーコードを先に厳密に照合し、メッセージはフォールバックで見る
  * （getThread の error === 'NotFound' / unblockActor の RecordNotFound と同じ流儀）。
  */
+/**
+ * アカウント取得不能の判定（削除・ブロック・停止・BAN 等。§9 の 404 マップに使う）。
+ * XRPC のエラーコードを厳密照合する（ENOTFOUND や RecordNotFound 等の部分一致による誤判定を防ぐ）。
+ * メッセージは語境界のフォールバック（コードが無いエラー形状への保険）。
+ */
+const UNAVAILABLE_CODES = new Set([
+  'NotFound',
+  'AccountNotFound',
+  'RepoNotFound',
+  'BlockedActor', // 自分がブロックしている
+  'BlockedByActor', // 相手からブロックされている
+  'AccountTakedown',
+  'RepoTakenDown',
+  'RepoDeactivated',
+  'Deactivated',
+  'AccountSuspended',
+]);
+
 export function isAccountUnavailable(e: unknown): boolean {
   const code = (e as { error?: string })?.error ?? '';
-  // NotFound は AccountNotFound / RepoNotFound を部分一致で含む。BlockedByActor（相手からブロック）・
-  // 停止系（Suspended / TakenDown / Deactivated）も取得不能として扱う（§9）
-  if (/(NotFound|BlockedActor|BlockedByActor|AccountTakedown|Suspended|Deactivated)/i.test(code)) return true;
+  if (code && UNAVAILABLE_CODES.has(code)) return true;
   const msg = String((e as { message?: string })?.message ?? '');
   // メッセージは語境界で照合する（getaddrinfo ENOTFOUND や unblocked 等の誤判定を防ぐ）。
   // 「not found」「take(n) down」「blocking you」「suspended」も空白有無どちらでも
@@ -538,24 +554,16 @@ export async function getProfilePosts(
 
 /**
  * フォローを作成し、自分の follow レコード URI を返す（docs/profile-view-spec.md §6）。
- * rkey を対象 DID に固定した putRecord（作成/置換）で書くため、二重フォロー・再実行は置換になり
- * 冪等（blockActor と同じ規約。二重送信で follow レコードが増殖しない）。
+ * createRecord（TID rkey）で書く — 公式クライアントと同じ規約。rkey=DID 固定の putRecord は
+ * 他クライアントの follow レコードと重複・解除漏れを起こすため使わない。二重送信はクライアント側の
+ * followBusy ガードで防ぐ（サーバー側の冪等性は公式 API にも無い）。
  */
 export async function followActor(
   handle: string | undefined,
   appPassword: string | undefined,
   did: string,
 ): Promise<string> {
-  const a = await getAgent(handle, appPassword);
-  const me = a.session?.did;
-  if (!me) throw new BskyAuthError('no-session');
-  await a.com.atproto.repo.putRecord({
-    repo: me,
-    collection: COL_FOLLOW,
-    rkey: did,
-    record: { subject: did, createdAt: new Date().toISOString() },
-  });
-  return `at://${me}/${COL_FOLLOW}/${did}`;
+  return createRecord(handle, appPassword, COL_FOLLOW, { subject: did });
 }
 
 /** フォローを解除する（自分の follow レコード URI 指定） */

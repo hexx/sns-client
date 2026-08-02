@@ -447,13 +447,13 @@ async function withProfile404<T>(provider: 'bluesky' | 'misskey', bsky: () => Pr
   try {
     return await misskey();
   } catch (e) {
-    if (isMisskeyNotFound(e)) throw new HTTPException(404, { message: 'profile unavailable' });
+    if (isMisskeyUnavailable(e)) throw new HTTPException(404, { message: 'profile unavailable' });
     throw e;
   }
 }
 
 /** misskey の取得不能（NO_SUCH_USER / YOU_ARE_BLOCKED）判定。HTTP 404 と業務コード（mkApiWithCode は 409 に正規化）の両対応 */
-function isMisskeyNotFound(e: unknown): boolean {
+function isMisskeyUnavailable(e: unknown): boolean {
   return (
     (e as { status?: number })?.status === 404 ||
     (e instanceof MisskeyApiError && (e.code === 'NO_SUCH_USER' || e.code === 'YOU_ARE_BLOCKED'))
@@ -526,7 +526,7 @@ app.post(API.follow, async (c) => {
     // 既にフォロー中（ALREADY_FOLLOWING）は目的状態が達成されているため成功扱い（冪等。bsky の putRecord と同じ）
     if (e instanceof MisskeyApiError && e.code === 'ALREADY_FOLLOWING') return c.json({});
     // misskey も同じ論理条件（取得不能）は 409 ではなく 404 に揃える（§9 の一貫性）
-    if (isMisskeyNotFound(e)) throw new HTTPException(404, { message: 'actor unavailable' });
+    if (isMisskeyUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
     throw e;
   }
   return c.json({});
@@ -556,7 +556,7 @@ app.delete(API.follow, async (c) => {
       // 既に解除済み（NOT_FOLLOWING）は目的状態が達成されているため成功扱い（冪等。bsky と同じ扱い）
       if (e instanceof MisskeyApiError && e.code === 'NOT_FOLLOWING') return c.json({});
       // 取得不能（削除済み等）は 409 ではなく 404 に揃える（§9 の一貫性）
-      if (isMisskeyNotFound(e)) throw new HTTPException(404, { message: 'actor unavailable' });
+      if (isMisskeyUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
       throw e;
     }
   }

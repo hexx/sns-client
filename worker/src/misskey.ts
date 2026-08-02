@@ -678,8 +678,8 @@ async function mkApiWithCode<T>(
   if (!res.ok) {
     const err = await readMisskeyError(res);
     if (res.status === 401 || res.status === 403) {
-      // 認証失敗（HTTP 401、kind: 'authentication'、または認証系 code）のみ 401 にし、
-      // 業務 code（YOU_ARE_BLOCKED 等）は 409 にする。code も kind も無い素の 401/403（WAF 等）は
+      // 認証失敗（HTTP 401 は常に認証、403 は kind: 'authentication' または認証系 code）のみ 401 にし、
+      // 業務 code（YOU_ARE_BLOCKED 等、403 に載る）は 409 にする。code も kind も無い素の 401/403（WAF 等）は
       // 素の Error のまま投げ、catch-all で 502 にする（恒久認証失敗に誤分類しない）
       const isAuth =
         res.status === 401 ||
@@ -697,10 +697,13 @@ async function mkApiWithCode<T>(
     throw new Error(`misskey ${endpoint} ${res.status}`);
   }
   const text = await res.text();
+  if (!text) return null as T; // 空ボディ（2xx で中身なし）は null に縮退
   try {
-    return (text ? JSON.parse(text) : null) as T;
+    return JSON.parse(text) as T;
   } catch {
-    return null as T; // 2xx なのに JSON でない応答は null に縮退（パース例外で処理を壊さない）
+    // 2xx なのに JSON でない応答（リバースプロキシ/WAF の HTML 等）は上流異常として投げる
+    // （null-as-success で未実行の操作を成功表示しない。mkApi と同じく 502 になる）
+    throw new Error(`misskey ${endpoint} invalid json`);
   }
 }
 
