@@ -962,7 +962,7 @@ body,
   vertical-align: -0.3em;
 }
 
-/* --- 帰属バッジ（デッキ: プラットフォーム名 + 由来ソース名） --- */
+/* --- 帰属バッジ（デッキ: プラットフォーム名 + 由来ソース名 / 通知カード: 由来 Provider 名のみ。docs/notifications-spec.md §6） --- */
 .provider-badge {
   flex: 0 1 auto;
   max-width: 10em;
