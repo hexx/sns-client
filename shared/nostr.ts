@@ -337,7 +337,7 @@ export function toSegments(content: string): { text: string; rich: RichSegment[]
 // --- Post 組み立て ---
 function toAuthor(pubkeyHex: string, profile?: Profile): Author {
   const handle = shortenNpub(pubkeyHex);
-  const a: Author = { handle, displayName: profile?.displayName || handle };
+  const a: Author = { id: pubkeyHex, handle, displayName: profile?.displayName || handle };
   if (profile?.picture) a.avatarUrl = profile.picture;
   return a;
 }

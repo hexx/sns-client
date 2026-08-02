@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { childrenToThreadNodes, createPost, getThread, loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, nameToRich, getEmojiList, getTimeline, listDestinations, listSources, react, renote, MisskeyApiError, MisskeyAuthError } from './misskey';
+import { childrenToThreadNodes, createPost, getThread, loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, nameToRich, getEmojiList, getTimeline, listDestinations, listSources, react, renote, muteUser, unmuteUser, blockUser, unblockUser, getMyUserId, MisskeyApiError, MisskeyAuthError } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -56,7 +56,7 @@ describe('mapNote', () => {
     const p = mapNote(note());
     expect(p.id).toBe('n1');
     expect(p.provider).toBe('misskey');
-    expect(p.author).toEqual({ handle: 'alice', displayName: 'Alice', avatarUrl: 'https://a.png' });
+    expect(p.author).toEqual({ id: 'u1', handle: 'alice', displayName: 'Alice', avatarUrl: 'https://a.png' });
     expect(p.text).toBe('hello');
     expect(p.ref).toBe('n1');
     expect(p.stats).toEqual({ replies: 1, reposts: 2, likes: 0 });
@@ -808,5 +808,62 @@ describe('getThread（スレッド取得 dispatch。docs/thread-view-spec.md §4
     stubThreadFetch([], { children: [{ id: 'c1', replyId: 'focus', text: 'c', createdAt: '2026-07-01T13:00:00Z', user: user() }] });
     const res = await getThread(env, 'focus');
     expect(res.nextCursor).toBeNull();
+  });
+});
+
+describe('ブロック・ミュート（docs/block-mute-spec.md §4）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('muteUser: POST mute/create に userId を渡す', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await muteUser({ MISSKEY_INSTANCE_URL: 'https://m.test', MISSKEY_TOKEN: 't' }, 'u-alice');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://m.test/api/mute/create',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ i: 't', userId: 'u-alice' });
+  });
+
+  it('unmuteUser: POST mute/delete に userId を渡す', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await unmuteUser({ MISSKEY_INSTANCE_URL: 'https://m.test', MISSKEY_TOKEN: 't' }, 'u-alice');
+    expect(fetchMock).toHaveBeenCalledWith('https://m.test/api/mute/delete', expect.anything());
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ i: 't', userId: 'u-alice' });
+  });
+
+  it('blockUser: POST blocking/create に userId を渡す', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await blockUser({ MISSKEY_INSTANCE_URL: 'https://m.test', MISSKEY_TOKEN: 't' }, 'u-alice');
+    expect(fetchMock).toHaveBeenCalledWith('https://m.test/api/blocking/create', expect.anything());
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ i: 't', userId: 'u-alice' });
+  });
+
+  it('unblockUser: POST blocking/delete に userId を渡す', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await unblockUser({ MISSKEY_INSTANCE_URL: 'https://m.test', MISSKEY_TOKEN: 't' }, 'u-alice');
+    expect(fetchMock).toHaveBeenCalledWith('https://m.test/api/blocking/delete', expect.anything());
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ i: 't', userId: 'u-alice' });
+  });
+
+  it('getMyUserId: POST i で自分のユーザー ID を返す', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ id: 'u-me', username: 'me' }), { status: 200 })),
+    );
+    await expect(getMyUserId({ MISSKEY_INSTANCE_URL: 'https://m.test', MISSKEY_TOKEN: 't' })).resolves.toBe('u-me');
+  });
+
+  it('getMyUserId: 認証未設定（トークン欠落）は null', async () => {
+    await expect(getMyUserId({})).resolves.toBeNull();
   });
 });

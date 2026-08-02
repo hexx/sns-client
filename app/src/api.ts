@@ -5,6 +5,7 @@ import type {
   EmojiInfo,
   Health,
   MediaUploadResponse,
+  MeResponse,
   Post,
   PostInputWire,
   Provider,
@@ -108,4 +109,18 @@ export const api = {
   /** ピッカー用のローカルカスタム絵文字一覧（Misskey のみ） */
   emojis: (provider: Provider = 'misskey') =>
     request<EmojiInfo[]>(`${API.emojis}?${new URLSearchParams({ provider }).toString()}`),
+  /** 自分のアクター識別子（docs/block-mute-spec.md §4.2。未設定 Provider は null） */
+  me: () => request<MeResponse>(API.me),
+  /** ユーザーのミュート（docs/block-mute-spec.md §4.1。actorId は Author.id） */
+  mute: (provider: 'bluesky' | 'misskey', actorId: string) =>
+    request<Record<string, never>>(API.mutes, { method: 'POST', body: JSON.stringify({ provider, actorId }) }),
+  /** ユーザーのミュート解除 */
+  unmute: (provider: 'bluesky' | 'misskey', actorId: string) =>
+    request<Record<string, never>>(API.mutes, { method: 'DELETE', body: JSON.stringify({ provider, actorId }) }),
+  /** ユーザーのブロック */
+  block: (provider: 'bluesky' | 'misskey', actorId: string) =>
+    request<Record<string, never>>(API.blocks, { method: 'POST', body: JSON.stringify({ provider, actorId }) }),
+  /** ユーザーのブロック解除 */
+  unblock: (provider: 'bluesky' | 'misskey', actorId: string) =>
+    request<Record<string, never>>(API.blocks, { method: 'DELETE', body: JSON.stringify({ provider, actorId }) }),
 };

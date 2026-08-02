@@ -9,6 +9,7 @@
 import { Fragment, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { fetchTimeline } from '../lib/timeline';
+import { isHiddenPost, subscribeHidden } from '../lib/moderation';
 import { applyReaction } from '../lib/reactions';
 import { withLike, withRenoteIncrement, withRepost } from '../lib/engagements';
 import type { Post, Provider, Source } from '../../../shared/types';
@@ -97,6 +98,8 @@ export const TimelineCore = forwardRef<
   const [toast, setToast] = useState<string | null>(null);
   /** 未読投稿のグローバル id セット（docs/unread-divider-spec.md §3。セッション内のみ） */
   const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
+  /** ブロック/ミュートの非表示セット変化の再描画トリガ（docs/block-mute-spec.md §5.4） */
+  const [modTick, setModTick] = useState(0);
 
   const seenIds = useRef<Set<string>>(new Set());
   const statesRef = useRef(states);
@@ -480,6 +483,10 @@ export const TimelineCore = forwardRef<
     touchStartX.current = null;
   };
 
+  // --- ブロック/ミュートの即時反映（docs/block-mute-spec.md §5.4） ---
+  // 非表示セットの変化を購読し、マージ済みリストを再計算する（非表示ユーザーの投稿は描画から即時除去）
+  useEffect(() => subscribeHidden(() => setModTick((t) => t + 1)), []);
+
   // --- 全 Source を時系列で合成（dedup 付き。帰属バッジ用の Source も保持） ---
   // 同一投稿が複数 Source に現れる場合は home より list/antenna/feed を優先する（由来が具体的になるため）
   const merged = useMemo(() => {
@@ -487,6 +494,8 @@ export const TimelineCore = forwardRef<
     for (const s of states) {
       const sk = keyOf(s.source);
       for (const p of s.posts) {
+        // ブロック/ミュート済みユーザーの投稿は描画から除去する（§5.4。サーバー側状態のミラー）
+        if (isHiddenPost(p)) continue;
         const k = pid(p);
         const prev = map.get(k);
         if (!prev || (prev.kind === 'home' && s.source.kind !== 'home')) {
@@ -497,7 +506,7 @@ export const TimelineCore = forwardRef<
     return [...map.values()].toSorted(
       (a, b) => new Date(b.post.createdAt).getTime() - new Date(a.post.createdAt).getTime(),
     );
-  }, [states]);
+  }, [states, modTick]);
 
   const pendingCount = states.reduce((n, s) => n + s.pending.length, 0);
 

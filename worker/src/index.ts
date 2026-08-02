@@ -18,6 +18,7 @@ import type {
   DestinationCatalogEntry,
   DestinationOption,
   LikeRequest,
+  ModerationRequest,
   PostInputWire,
   Provider,
   ProviderInfo,
@@ -32,13 +33,18 @@ import type {
 } from '../../shared/types';
 import {
   BskyAuthError,
+  blockActor as bskyBlock,
   createPost as bskyPost,
+  getMyDid as bskyGetMyDid,
   getThread as bskyThread,
   getTimeline as bskyTimeline,
   likePost as bskyLike,
   listSources as bskySources,
+  muteActor as bskyMute,
   repostPost as bskyRepost,
   resetSession,
+  unblockActor as bskyUnblock,
+  unmuteActor as bskyUnmute,
   unlikePost as bskyUnlike,
   unrepostPost as bskyUnrepost,
   uploadMedia as bskyUpload,
@@ -46,15 +52,20 @@ import {
 import {
   MisskeyApiError,
   MisskeyAuthError,
+  blockUser as misskeyBlock,
   createPost as misskeyPost,
   getComposeCharLimit,
   getEmojiList as misskeyEmojis,
+  getMyUserId as misskeyGetMyUserId,
   getThread as misskeyThread,
   getTimeline as misskeyTimeline,
   listDestinations as misskeyDestinations,
   listSources as misskeySources,
+  muteUser as misskeyMute,
   react as misskeyReact,
   renote as misskeyRenote,
+  unblockUser as misskeyUnblock,
+  unmuteUser as misskeyUnmute,
   uploadMedia as misskeyUpload,
   type MisskeyEnv,
 } from './misskey';
@@ -158,6 +169,58 @@ function isProvider(s: string | null | undefined): s is Provider {
 /** 書き込み（投稿/メディア/リポスト）に対応するプロバイダ。nostr は読み取り専用なので除外 */
 function isWritableProvider(s: string | null | undefined): s is 'bluesky' | 'misskey' {
   return s === 'bluesky' || s === 'misskey';
+}
+
+/**
+ * ブロック・ミュート操作の actorId 検証（docs/block-mute-spec.md §4.1）。
+ * bsky は DID（block レコードの rkey に使うため / 等を含む不正値は URI を壊す）、misskey はユーザー ID。
+ */
+function isValidActorId(provider: 'bluesky' | 'misskey', actorId: string): boolean {
+  if (provider === 'bluesky') return /^did:(plc|web):[A-Za-z0-9._:%-]+$/.test(actorId);
+  return /^[A-Za-z0-9]{1,64}$/.test(actorId);
+}
+
+/** ブロック・ミュート操作のリクエスト検証。不正なら null */
+function parseModerationRequest(body: unknown): ModerationRequest | null {
+  const b = body as ModerationRequest | null;
+  if (!b || !isWritableProvider(b.provider)) return null;
+  if (typeof b.actorId !== 'string' || !isValidActorId(b.provider, b.actorId)) return null;
+  return { provider: b.provider, actorId: b.actorId };
+}
+
+/**
+ * ブロック/ミュート操作の共通ハンドラ（4ルートの parse → dispatch → respond を一元化）。
+ * provider ごとの実装は bsky=レコード/mute API、misskey=blocking/mute API に dispatch。
+ */
+async function moderationAction(
+  c: Context<AppEnv>,
+  action: 'mute' | 'block',
+  create: boolean,
+): Promise<Response> {
+  const body = parseModerationRequest(await c.req.json().catch(() => null));
+  if (!body) throw new HTTPException(400, { message: 'invalid body' });
+  const { provider, actorId } = body;
+  c.set('provider', provider);
+  if (provider === 'bluesky') {
+    const fn = create
+      ? action === 'mute'
+        ? bskyMute
+        : bskyBlock
+      : action === 'mute'
+        ? bskyUnmute
+        : bskyUnblock;
+    await fn(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, actorId);
+  } else {
+    const fn = create
+      ? action === 'mute'
+        ? misskeyMute
+        : misskeyBlock
+      : action === 'mute'
+        ? misskeyUnmute
+        : misskeyUnblock;
+    await fn(c.env, actorId);
+  }
+  return c.json({});
 }
 
 const app = new Hono<AppEnv>();
@@ -431,6 +494,36 @@ app.get(API.emojis, async (c) => {
   c.set('provider', 'misskey');
   return c.json(await misskeyEmojis(c.env));
 });
+
+// --- ブロック・ミュート（docs/block-mute-spec.md §4。サーバー側（Provider ネイティブ）方式、ADR-0018） ---
+
+/** 自分のアクター識別子（各 Provider の認証設定があるもののみ）。片方の失敗は null に縮退 */
+app.get(API.me, async (c) => {
+  const [bsky, misskey] = await Promise.all([
+    bskyGetMyDid(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD).catch((e) => {
+      console.error('[api/me:bluesky]', e);
+      return null;
+    }),
+    misskeyGetMyUserId(c.env).catch((e) => {
+      console.error('[api/me:misskey]', e);
+      return null;
+    }),
+  ]);
+  return c.json({
+    me: {
+      bluesky: bsky ? { actorId: bsky } : null,
+      misskey: misskey ? { actorId: misskey } : null,
+    },
+  });
+});
+
+app.post(API.mutes, (c) => moderationAction(c, 'mute', true));
+
+app.delete(API.mutes, (c) => moderationAction(c, 'mute', false));
+
+app.post(API.blocks, (c) => moderationAction(c, 'block', true));
+
+app.delete(API.blocks, (c) => moderationAction(c, 'block', false));
 
 // --- 未知の /api/* は 501、それ以外は静的アセット / SPA フォールバック ---
 app.notFound((c) => {

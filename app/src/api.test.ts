@@ -101,4 +101,37 @@ describe('api', () => {
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ provider: 'misskey', text: 'hi' }) }),
     );
   });
+
+  it('me → GET /api/me', async () => {
+    const me = { me: { bluesky: { actorId: 'did:plc:me' }, misskey: null } };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(me));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(api.me()).resolves.toEqual(me);
+    expect(fetchMock).toHaveBeenCalledWith('/api/me', expect.anything());
+  });
+
+  it('mute / unmute / block / unblock → 対応メソッド・パス・ボディ', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.mute('bluesky', 'did:plc:alice');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/mutes',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }) }),
+    );
+    await api.unmute('bluesky', 'did:plc:alice');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/mutes',
+      expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }) }),
+    );
+    await api.block('misskey', 'u-alice');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/blocks',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ provider: 'misskey', actorId: 'u-alice' }) }),
+    );
+    await api.unblock('misskey', 'u-alice');
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/blocks',
+      expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ provider: 'misskey', actorId: 'u-alice' }) }),
+    );
+  });
 });

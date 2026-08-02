@@ -11,6 +11,23 @@ vi.mock('../api', async (importOriginal) => {
   return { ...actual, api: { ...actual.api, emojis: vi.fn() } };
 });
 
+// ブロック・ミュート（docs/block-mute-spec.md §5）：アクション関数と自分の投稿判定を制御可能にする
+const mod = vi.hoisted(() => ({
+  muteUser: vi.fn(),
+  blockUser: vi.fn(),
+  isOwnPost: vi.fn().mockResolvedValue(false),
+}));
+vi.mock('../lib/moderation', () => ({
+  muteUser: mod.muteUser,
+  blockUser: mod.blockUser,
+  isOwnPost: mod.isOwnPost,
+  isHiddenPost: () => false,
+  subscribeHidden: () => () => {},
+  subscribeModerationToasts: () => () => {},
+  loadMe: vi.fn().mockResolvedValue(null),
+  resetModerationForTests: () => {},
+}));
+
 const NOW = new Date('2026-07-01T12:00:00Z');
 
 function makePost(overrides: Partial<Post> = {}): Post {
@@ -18,6 +35,7 @@ function makePost(overrides: Partial<Post> = {}): Post {
     id: 'p1',
     provider: 'bluesky',
     author: {
+      id: 'did:plc:alice',
       handle: 'alice.bsky.social',
       displayName: 'Alice',
       avatarUrl: 'https://example.com/a.png',
@@ -80,7 +98,7 @@ describe('PostCard', () => {
   });
 
   it('アバターが無いときはフォールバックを描画する', () => {
-    const post = makePost({ author: { handle: 'b.bsky.social', displayName: 'Bob' } });
+    const post = makePost({ author: { id: 'did:plc:bob', handle: 'b.bsky.social', displayName: 'Bob' } });
     const { container } = render(<PostCard post={post} />);
     expect(container.querySelector('.avatar-fallback')).toBeInTheDocument();
   });
@@ -216,7 +234,7 @@ describe('リッチ表示（Misskey 統合）', () => {
   it('repostedBy バッジを描画する', () => {
     render(
       <PostCard
-        post={makePost({ repostedBy: { handle: 'carol', displayName: 'Carol' } })}
+        post={makePost({ repostedBy: { id: 'u-carol', handle: 'carol', displayName: 'Carol' } })}
       />,
     );
     // 名前は DisplayName（span）に分割されるため textContent で検証する
@@ -225,7 +243,7 @@ describe('リッチ表示（Misskey 統合）', () => {
 
   it('引用カード（1階層）を描画する', () => {
     const quote: Post = {
-      ...makePost({ id: 'q1', author: { handle: 'quoted', displayName: 'Quoted' }, text: 'quoted body' }),
+      ...makePost({ id: 'q1', author: { id: 'u-quoted', handle: 'quoted', displayName: 'Quoted' }, text: 'quoted body' }),
     };
     render(<PostCard post={makePost({ text: 'my comment', quote })} />);
     expect(screen.getByText('my comment')).toBeInTheDocument();
@@ -338,7 +356,7 @@ describe('チャンネルチップ（Misskey、docs/misskey-channel-display-spec
     const { container } = render(
       <PostCard
         post={makePost({
-          repostedBy: { handle: 'carol', displayName: 'Carol' },
+          repostedBy: { id: 'u-carol', handle: 'carol', displayName: 'Carol' },
           channel: { id: 'chX', name: 'ゲーム部' },
         })}
       />,
@@ -553,6 +571,7 @@ describe('表示名（docs/name-display-spec.md）', () => {
       <PostCard
         post={makePost({
           author: {
+            id: 'u-shizuku',
             handle: 'shizuku@misskey.io',
             displayName: '応彩しずく :verified_blue:',
             displayNameRich: [
@@ -579,6 +598,7 @@ describe('表示名（docs/name-display-spec.md）', () => {
       <PostCard
         post={makePost({
           repostedBy: {
+            id: 'u-carol',
             handle: 'carol',
             displayName: 'Carol :kawaii:',
             displayNameRich: [
@@ -617,7 +637,7 @@ describe('引用カード（docs/quote-display-spec.md）', () => {
     return {
       id: 'q1',
       provider: 'bluesky',
-      author: { handle: 'q.bsky.social', displayName: 'Q', avatarUrl: 'https://example.com/q.png' },
+      author: { id: 'did:plc:q', handle: 'q.bsky.social', displayName: 'Q', avatarUrl: 'https://example.com/q.png' },
       text: '引用される本文',
       createdAt: NOW.toISOString(),
       media: [],
@@ -673,7 +693,7 @@ describe('CW 折りたたみ（docs/cw-display-spec.md）', () => {
       quote: {
         id: 'q1',
         provider: 'bluesky',
-        author: { handle: 'q', displayName: 'Q' },
+        author: { id: 'u-q', handle: 'q', displayName: 'Q' },
         text: 'inner',
         createdAt: NOW.toISOString(),
         media: [],
@@ -708,7 +728,7 @@ describe('CW 折りたたみ（docs/cw-display-spec.md）', () => {
     const quote: Post = {
       id: 'q1',
       provider: 'misskey',
-      author: { handle: 'q', displayName: 'Q' },
+      author: { id: 'u-q', handle: 'q', displayName: 'Q' },
       text: '秘密の引用本文',
       createdAt: NOW.toISOString(),
       cw: '閲覧注意',
@@ -784,5 +804,72 @@ describe('スレッド入口（docs/thread-view-spec.md §6.1 / §7）', () => {
     fireEvent.click(screen.getByText('元の投稿は表示できません'));
     expect(onOpenThread).toHaveBeenCalledTimes(1);
     expect(onOpenThread.mock.calls[0][0].id).toBe('p1');
+  });
+});
+
+describe('ユーザーメニュー（docs/block-mute-spec.md §5.1）', () => {
+  beforeEach(() => {
+    mod.muteUser.mockClear();
+    mod.blockUser.mockClear();
+    mod.isOwnPost.mockResolvedValue(false);
+  });
+
+  it('⋯ から「ミュート」「ブロック」を出し、ミュートは即実行する', async () => {
+    const post = makePost();
+    render(<PostCard post={post} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ユーザーメニュー' }));
+    // own 判定（isOwnPost）の解決を待ってから項目が出る（自分の投稿への誤操作窓をなくす）
+    await act(async () => {});
+    const mute = screen.getByRole('menuitem', { name: 'このユーザーをミュート' });
+    expect(mute).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'このユーザーをブロック' })).toBeInTheDocument();
+    fireEvent.click(mute);
+    expect(mod.muteUser).toHaveBeenCalledTimes(1);
+    expect(mod.muteUser.mock.calls[0][0]).toMatchObject({ id: 'p1' });
+  });
+
+  it('ブロックは確認ダイアログを経て実行する', async () => {
+    const post = makePost();
+    render(<PostCard post={post} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ユーザーメニュー' }));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('menuitem', { name: 'このユーザーをブロック' }));
+    // 確認ダイアログ（ハンドルと影響の説明）
+    expect(screen.getByText('@alice.bsky.social をブロックしますか？')).toBeInTheDocument();
+    expect(screen.getByText(/リプライ等ができなくなります/)).toBeInTheDocument();
+    // キャンセルでは実行されない
+    fireEvent.click(screen.getByRole('button', { name: 'キャンセル' }));
+    expect(mod.blockUser).not.toHaveBeenCalled();
+    // もう一度開いて確定で実行
+    fireEvent.click(screen.getByRole('button', { name: 'ユーザーメニュー' }));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('menuitem', { name: 'このユーザーをブロック' }));
+    fireEvent.click(screen.getByRole('button', { name: 'ブロック' }));
+    expect(mod.blockUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('自分の投稿では項目を出さない（メニューボタン自体は残す）', async () => {
+    mod.isOwnPost.mockResolvedValue(true);
+    render(<PostCard post={makePost()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ユーザーメニュー' }));
+    // own 判定の解決前も解決後も項目は出ない
+    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
+    await act(async () => {});
+    expect(mod.isOwnPost).toHaveBeenCalled();
+    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
+  });
+
+  it('nostr（読み取り専用）ではメニューボタン自体を出さない', () => {
+    render(<PostCard post={makePost({ provider: 'nostr' })} />);
+    expect(screen.queryByRole('button', { name: 'ユーザーメニュー' })).not.toBeInTheDocument();
+  });
+
+  it('カードクリック（スレッド遷移）はメニューに貫通しない', async () => {
+    const onOpenThread = vi.fn();
+    render(<PostCard post={makePost()} onOpenThread={onOpenThread} />);
+    fireEvent.click(screen.getByRole('button', { name: 'ユーザーメニュー' }));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole('menuitem', { name: 'このユーザーをミュート' }));
+    expect(onOpenThread).not.toHaveBeenCalled();
   });
 });

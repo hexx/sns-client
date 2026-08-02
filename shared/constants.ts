@@ -14,6 +14,9 @@ export const API = {
   likes: '/api/likes',
   reposts: '/api/reposts',
   emojis: '/api/emojis',
+  mutes: '/api/mutes',
+  blocks: '/api/blocks',
+  me: '/api/me',
 } as const;
 
 /** KV: カスタム View 定義（View[] の JSON）を保存するキー */

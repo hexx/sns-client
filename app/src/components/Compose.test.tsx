@@ -29,7 +29,7 @@ const MISSKEY_ONLY: ProviderInfo[] = [
 const POSTED: Post = {
   id: 'p1',
   provider: 'bluesky',
-  author: { handle: 'me.bsky.social', displayName: 'Me' },
+  author: { id: 'did:plc:me', handle: 'me.bsky.social', displayName: 'Me' },
   text: 'hello',
   createdAt: '2026-07-01T12:00:00Z',
   media: [],

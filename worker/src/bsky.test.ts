@@ -132,7 +132,7 @@ describe('mapPost', () => {
     expect(mapPost(makePostView())).toEqual({
       id: 'at://did/app.bsky.feed.post/abc',
       provider: 'bluesky',
-      author: { handle: 'alice.bsky.social', displayName: 'Alice', avatarUrl: 'https://a.png' },
+      author: { id: 'did:plc:x', handle: 'alice.bsky.social', displayName: 'Alice', avatarUrl: 'https://a.png' },
       text: 'hello',
       createdAt: '2026-07-01T12:00:00Z',
       media: [],

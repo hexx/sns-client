@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { fetchThread } from '../lib/thread';
+import { isHiddenPost, subscribeHidden } from '../lib/moderation';
 import { applyReaction } from '../lib/reactions';
 import { withLike, withRenoteIncrement, withRepost } from '../lib/engagements';
 import type { Post, ThreadResponse } from '../../../shared/types';
@@ -58,7 +59,12 @@ export function ThreadView({
   const reactionInflight = useRef<Set<string>>(new Set());
   const engageInflight = useRef<Set<string>>(new Set());
   const lastPostedRef = useRef<Post | null | undefined>(justPosted);
+  /** ブロック/ミュートの非表示セット変化の再描画トリガ（docs/block-mute-spec.md §5.4） */
+  const [, setModTick] = useState(0);
   const readOnly = focus.provider === 'nostr';
+
+  // 非表示ユーザーのノードをプレースホルダ化するため、セットの変化を購読して再描画する（§5.4）
+  useEffect(() => subscribeHidden(() => setModTick((t) => t + 1)), []);
 
   // --- 読み込み（フォーカス置換 / 再試行で再実行） ---
   useEffect(() => {
@@ -256,6 +262,14 @@ export function ThreadView({
         onRepost: (p: Post) => void toggleRepost(p),
       };
 
+  /** ノードの描画（ブロック/ミュート済みユーザーのノードは取得不能プレースホルダ化。§5.4。既存イディオムを再利用） */
+  const renderNode = (p: Post) =>
+    isHiddenPost(p) ? (
+      <div className="thread-unavailable">この投稿は取得できません</div>
+    ) : (
+      <PostCard post={p} onOpenThread={setFocus} {...handlers} />
+    );
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
@@ -289,16 +303,14 @@ export function ThreadView({
             <>
               {thread.ancestors.map((p, i) => (
                 <div className="thread-node" key={pid(p)} style={indentStyle(i)}>
-                  <PostCard post={p} onOpenThread={setFocus} {...handlers} />
+                  {renderNode(p)}
                 </div>
               ))}
-              <div className="thread-node thread-node-focus">
-                <PostCard post={thread.focus} onOpenThread={setFocus} {...handlers} />
-              </div>
+              <div className="thread-node thread-node-focus">{renderNode(thread.focus)}</div>
               {thread.replies.map((n, i) =>
                 n.post ? (
                   <div className="thread-node" key={`${pid(n.post)}#${i}`} style={indentStyle(n.depth)}>
-                    <PostCard post={n.post} onOpenThread={setFocus} {...handlers} />
+                    {renderNode(n.post)}
                   </div>
                 ) : (
                   <div className="thread-node" key={`unavail#${i}`} style={indentStyle(n.depth)}>
