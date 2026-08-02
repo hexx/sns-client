@@ -59,6 +59,8 @@ export function ProfileView({
   const [toast, setToast] = useState<string | null>(null);
   const [isOwn, setIsOwn] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
+  /** follow の in-flight ガード（再描画前の連続クリックで同じ操作を二重送信しない。engageInflight と同じ流儀） */
+  const followBusyRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const reactionInflight = useRef<Set<string>>(new Set());
@@ -82,6 +84,7 @@ export function ProfileView({
   // --- 概要＋一覧の読み込み（ターゲット置換・再試行で再実行。概要と一覧は別々に失敗を扱う） ---
   useEffect(() => {
     let cancelled = false;
+    const gen = loadGenRef.current; // openProfile で increment される世代（stale 書込みの防止）
     setStatus('loading');
     setProfile(null);
     setPosts([]);
@@ -90,12 +93,12 @@ export function ProfileView({
     setListError(null);
     fetchProfile(target.provider, target.author)
       .then((p) => {
-        if (cancelled) return;
+        if (cancelled || gen !== loadGenRef.current) return;
         setProfile(p);
         setStatus('done');
       })
       .catch((e) => {
-        if (cancelled) return;
+        if (cancelled || gen !== loadGenRef.current) return;
         if (e instanceof ApiError && e.status === 404) {
           setStatus('unavailable'); // 削除・ブロック等（§9）
         } else {
@@ -105,7 +108,7 @@ export function ProfileView({
       });
     fetchProfilePosts(target.provider, target.author)
       .then((t) => {
-        if (cancelled) return;
+        if (cancelled || gen !== loadGenRef.current) return;
         seenPostIds.current = new Set(t.posts.map(pid));
         setPosts(t.posts);
         setCursor(t.nextCursor);
@@ -113,7 +116,7 @@ export function ProfileView({
       })
       .catch((e) => {
         // 一覧のみ失敗は概要を表示したままエラー行＋再試行（§8.2）
-        if (!cancelled) {
+        if (!cancelled && gen === loadGenRef.current) {
           setListError(e instanceof Error ? e.message : String(e));
           setListDone(true);
         }
@@ -286,13 +289,14 @@ export function ProfileView({
   const toggleFollow = useCallback(async () => {
     const p = profile;
     const t = target;
-    if (!p || followBusy) return;
+    if (!p || followBusy || followBusyRef.current) return;
     if (p.provider !== 'bluesky' && p.provider !== 'misskey') return;
     // リクエスト中にターゲットが置換されたら、応答・ロールバックを現在のターゲットに適用しない（stale 防止）
     const apply = (fn: (x: Profile | null) => Profile | null) => {
       if (targetRef.current !== t) return;
       setProfile(fn);
     };
+    followBusyRef.current = true;
     setFollowBusy(true);
     const original = p;
     const following = Boolean(p.viewer?.following);
@@ -332,6 +336,7 @@ export function ProfileView({
       apply(() => original); // ロールバック
       if (targetRef.current === t) setToast(following ? 'フォロー解除に失敗しました' : 'フォローに失敗しました');
     } finally {
+      followBusyRef.current = false;
       setFollowBusy(false);
     }
   }, [profile, followBusy, target]);
@@ -370,13 +375,18 @@ export function ProfileView({
       // ページ境界の重複（nostr の自己リポスト等）を pid の Set で除いて追記する
       const fresh = data.posts.filter((q) => !seenPostIds.current.has(pid(q)));
       for (const q of fresh) seenPostIds.current.add(pid(q));
-      setPosts((prev) => [...prev, ...fresh]);
+      // raw ウィンドウ区切りのページ境界で表示順が前後しないよう、追記後に時系列降順で整列し直す
+      setPosts((prev) =>
+        [...prev, ...fresh].toSorted((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+      );
       setCursor(data.nextCursor);
     } catch {
       if (targetRef.current === t && gen === loadGenRef.current) setToast('追加の読み込みに失敗しました');
     } finally {
-      if (gen === loadGenRef.current) loadingMoreRef.current = false; // 旧世代の finally は新世代のフラグを消さない
-      setLoadingMore(false);
+      if (gen === loadGenRef.current) {
+        loadingMoreRef.current = false; // 旧世代の finally は新世代のフラグを消さない
+        setLoadingMore(false);
+      }
     }
   }, [cursor, target]);
 
@@ -418,6 +428,7 @@ export function ProfileView({
     setToast(null);
     setLoadingMore(false);
     setFollowBusy(false);
+    followBusyRef.current = false;
     loadingMoreRef.current = false;
     seenPostIds.current = new Set();
     // 前ターゲットの in-flight セットも破棄（同一 pid が新ターゲットに現れてもボタンが固まらないように）

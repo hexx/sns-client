@@ -1556,8 +1556,8 @@ button.reaction:hover {
   border: none;
   padding: 0;
   margin: 0;
-  /* font ショートカットは font-size/weight もリセットするため font-family のみにする
-     （.display-name の 15px を保つ。リポスト行の継承サイズは下の専用ルールで補う） */
+  /* 契約: font-size は併用クラス（.display-name / .repost-name / .handle 等）か親要素の継承が担う。
+     このルールは font-family のみリセットする（font ショートカットは font-size/weight も潰すため） */
   font-family: inherit;
   color: inherit;
   text-align: left;

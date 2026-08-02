@@ -82,8 +82,14 @@ function HandleProfileButton({
 function DisplayName({ author, className, provider, onOpenProfile }: DisplayNameProps) {
   const inner =
     author.displayNameRich && author.displayNameRich.length > 0 ? (
-      // ボタン内では <a>（link セグメント）を出さない（nested-interactive 回避。現行の生成元は text/emoji のみ）
-      <RichText segments={author.displayNameRich.filter((s) => s.type !== 'link')} inline />
+      // ボタン内では <a>（link セグメント）を出さない（nested-interactive 回避）。
+      // リンクのテキストは text セグメントに置き換えて内容を失わない
+      <RichText
+        segments={author.displayNameRich.map((s) =>
+          s.type === 'link' ? { type: 'text' as const, text: s.text ?? s.url } : s,
+        )}
+        inline
+      />
     ) : (
       author.displayName
     );

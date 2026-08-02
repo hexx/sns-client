@@ -512,7 +512,7 @@ export async function getProfile(
   const a = await getAgent(handle, appPassword);
   return withUnavailableAsNull(async () => {
     const res = await a.getProfile({ actor: did });
-    return mapProfile(res.data as AppBskyActorDefs.ProfileViewDetailed);
+    return mapProfile(res.data);
   });
 }
 
