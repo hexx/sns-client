@@ -20,7 +20,7 @@ describe('NotificationCard のプロフィール入口（docs/profile-view-spec.
   it('onOpenProfile 有り: actor のアバター＋名前がボタンになり、クリックで発火する', () => {
     const onOpenProfile = vi.fn();
     render(<NotificationCard notification={notif()} onOpenProfile={onOpenProfile} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Alice' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Alice のプロフィールを開く' }));
     expect(onOpenProfile).toHaveBeenCalledWith('bluesky', expect.objectContaining({ id: 'did:plc:alice' }));
   });
 
@@ -47,7 +47,7 @@ describe('NotificationCard のプロフィール入口（docs/profile-view-spec.
         onOpenProfile={onOpenProfile}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Alice' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Alice のプロフィールを開く' }));
     expect(onOpenProfile).toHaveBeenCalledTimes(1);
     expect(onOpenThread).not.toHaveBeenCalled();
   });
@@ -75,7 +75,7 @@ describe('NotificationCard のプロフィール入口（docs/profile-view-spec.
         onOpenProfile={vi.fn()}
       />,
     );
-    expect(screen.queryByRole('button', { name: 'Alice' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Alice のプロフィールを開く' })).toBeNull();
     expect(screen.getByText('あなたのアカウントが認証されました')).toBeTruthy();
     expect(screen.queryByText(/Alice さん.*認証されました/)).toBeNull();
   });

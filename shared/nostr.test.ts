@@ -258,7 +258,7 @@ describe('getTimeline', () => {
     expect(res.posts[0].author.displayName).toBe('Alice');
     expect(res.posts[0].author.avatarUrl).toBe('https://x/a.png');
     expect(res.posts[0].stats).toEqual({ replies: 0, reposts: 0, likes: 0 });
-    expect(res.nextCursor).toBe('99'); // 最古の生イベント created_at - 1（until は境界を含むため）
+    expect(res.nextCursor).toBe('100'); // 最古の表示日時（既存挙動）
   });
 
   it('kind0 未取得時は handle（npub 短縮）に縮退する', async () => {

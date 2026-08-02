@@ -472,8 +472,9 @@ export function isAccountUnavailable(e: unknown): boolean {
   const code = (e as { error?: string })?.error ?? '';
   if (/(NotFound|AccountNotFound|RepoNotFound|BlockedActor|AccountTakedown|Deactivated)/i.test(code)) return true;
   const msg = String((e as { message?: string })?.message ?? '');
+  // メッセージは語境界で照合する（getaddrinfo ENOTFOUND や unblocked 等の誤判定を防ぐ）。
   // 「not found」「take(n) down」は空白有無どちらでも（not found / taken down）
-  return /(not ?found|blocked|taken? ?down|deactivated)/i.test(msg);
+  return /\b(not ?found|blocked|taken? ?down|deactivated)\b/i.test(msg);
 }
 
 /** 取得不能アカウントを null に縮退するラッパー（getProfile / getProfilePosts の共通処理） */

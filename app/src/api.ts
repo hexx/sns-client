@@ -3,6 +3,7 @@ import { API } from '../../shared/constants';
 import type {
   DestinationCatalogEntry,
   EmojiInfo,
+  FollowRequest,
   FollowResponse,
   Health,
   MediaUploadResponse,
@@ -106,7 +107,10 @@ export const api = {
   },
   /** フォロー（docs/profile-view-spec.md §6） */
   follow: (provider: 'bluesky' | 'misskey', actorId: string) =>
-    request<FollowResponse>(API.follow, { method: 'POST', body: JSON.stringify({ provider, actorId }) }),
+    request<FollowResponse>(API.follow, {
+      method: 'POST',
+      body: JSON.stringify({ provider, actorId } satisfies FollowRequest),
+    }),
   /** フォロー解除（bsky は viewer.followUri を recordUri で渡す。misskey は不要）。
    * オーバーロードで bsky の recordUri 必須を型レベルで強制する（渡し忘れはコンパイルエラー） */
   unfollow: unfollowImpl as ((

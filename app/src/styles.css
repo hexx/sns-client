@@ -1567,14 +1567,13 @@ button.reaction:hover {
 .name-btn:hover {
   color: var(--accent);
 }
-/* キーボード操作の可視化（ボタン化した入口群） */
+/* キーボード操作の可視化（ボタン化した入口群）。outline は要素の border-radius に追従するため radius は指定しない */
 .name-btn:focus-visible,
 .avatar-btn:focus-visible,
 .handle-btn:focus-visible,
 .notif-actor-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 .avatar-btn {
   background: none;

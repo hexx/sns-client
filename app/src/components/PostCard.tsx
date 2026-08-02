@@ -46,6 +46,31 @@ type DisplayNameProps = { author: Author; className?: string } & (
   | { provider?: never; onOpenProfile?: never }
 );
 
+/** @handle のプロフィール入口ボタン（docs/profile-view-spec.md §8.1）。
+ * onOpenProfile が渡されたときだけ描画する（無ければ null。呼び出し側が素の表示を持つ）。 */
+function HandleProfileButton({
+  author,
+  provider,
+  className,
+  onOpenProfile,
+}: {
+  author: Author;
+  provider: Provider;
+  className?: string;
+  onOpenProfile?: (provider: Provider, a: Author) => void;
+}) {
+  if (!onOpenProfile) return null;
+  return (
+    <button
+      type="button"
+      className={`${className ?? ''} handle-btn`}
+      onClick={() => onOpenProfile(provider, author)}
+    >
+      @{author.handle}
+    </button>
+  );
+}
+
 /**
  * 表示名（docs/name-display-spec.md）。絵文字解決済みの displayNameRich があれば RichText inline、
  * なければプレーンテキスト。フルネームは title でホバー表示。クランプせず全文を表示する。
@@ -402,17 +427,17 @@ function QuoteCard({
           author={post.author}
           provider={post.provider}
           avatarClass="avatar avatar-sm"
-          fallback={null}
+          fallback={<span className="avatar avatar-sm avatar-fallback" />}
           onOpenProfile={onOpenProfile}
         />
         <DisplayName author={post.author} className="display-name" provider={post.provider} onOpenProfile={onOpenProfile} />
-        {onOpenProfile ? (
-          <button type="button" className="handle handle-btn" onClick={() => onOpenProfile(post.provider, post.author)}>
-            @{post.author.handle}
-          </button>
-        ) : (
-          <span className="handle">@{post.author.handle}</span>
-        )}
+        <HandleProfileButton
+          author={post.author}
+          provider={post.provider}
+          className="handle"
+          onOpenProfile={onOpenProfile}
+        />
+        {!onOpenProfile && <span className="handle">@{post.author.handle}</span>}
         {!hasCw && (
           <button
             type="button"
@@ -620,13 +645,12 @@ export function PostCard({
           {/* 2行目=投稿者情報（handle+公開範囲）、3行目=帰属情報（チャンネル+由来ソース）。docs/card-meta-row-spec.md §3 */}
           <div className="author-line author-line-meta">
             <span className="handle">
-              {onOpenProfile ? (
-                <button type="button" className="handle-btn" onClick={() => onOpenProfile(post.provider, post.author)}>
-                  @{post.author.handle}
-                </button>
-              ) : (
-                <span>@{post.author.handle}</span>
-              )}
+              <HandleProfileButton
+                author={post.author}
+                provider={post.provider}
+                onOpenProfile={onOpenProfile}
+              />
+              {!onOpenProfile && <span>@{post.author.handle}</span>}
               <VisibilityBadge post={post} />
             </span>
           </div>

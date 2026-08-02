@@ -422,9 +422,12 @@ export async function getTimeline(
     throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
   }
 
-  const { posts, rawTimes } = await buildFeedPosts(events, urls, opts.wsFactory);
+  const { posts } = await buildFeedPosts(events, urls, opts.wsFactory);
   const page = posts.slice(0, PAGE_SIZE);
-  const nextCursor = pageCursor(rawTimes.slice(0, PAGE_SIZE));
+  // 表示順（リポストは元ノートの日時）ベースの cursor（既存挙動。TimelineCore は pid で dedup するため
+  // 境界の再取得は表示に現れない。リポストの raw 日時と表示位置の乖離による欠落は既知の制限）
+  const nextCursor =
+    page.length > 0 ? String(Math.floor(Date.parse(page[page.length - 1].createdAt) / 1000)) : null;
   return { posts: page, nextCursor };
 }
 
@@ -528,9 +531,11 @@ export async function getProfilePosts(
     throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
   }
   const { posts, rawTimes } = await buildFeedPosts(events, urls, opts.wsFactory);
-  const page = posts.slice(0, PAGE_SIZE);
-  const nextCursor = pageCursor(rawTimes.slice(0, PAGE_SIZE));
-  return { posts: page, nextCursor };
+  // ページは取得上限（FETCH_LIMIT）のまま全件返す: リポストは raw 日時（リレーの until 対象）と
+  // 表示位置（元ノートの日時）が乖離するため、表示順でスライスすると深いページでリポストが
+  // 欠落する（until フィルタに掛かる）。raw ウィンドウで区切り、ページ内は表示順で整列する。
+  const nextCursor = pageCursor(rawTimes);
+  return { posts, nextCursor };
 }
 
 // --- スレッド解決（docs/thread-view-spec.md §5、ADR-0014/0017） ---

@@ -733,6 +733,8 @@ export async function getProfile(env: MisskeyEnv, userId: string): Promise<Profi
     mkApi<MkUser>(env, 'users/show', { userId }),
     loadEmojiRegistry(env),
   ]);
+  // mkApi は 2xx でも非 JSON 応答を null で返すため縮退させる（getProfilePosts と同じ防御）
+  if (!user) throw new Error('misskey users/show returned empty');
   return mapProfile(user, registry, instanceOf(env));
 }
 

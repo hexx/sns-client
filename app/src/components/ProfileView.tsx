@@ -63,6 +63,8 @@ export function ProfileView({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const reactionInflight = useRef<Set<string>>(new Set());
   const engageInflight = useRef<Set<string>>(new Set());
+  /** 追加読み込みの in-flight ガード（再描画前の連続発火で同じ cursor を二重取得しない。TimelineCore と同じ流儀） */
+  const loadingMoreRef = useRef(false);
   /** ターゲットの最新値（loadMore / retryList の stale 応答破棄に使う。§8.2） */
   const targetRef = useRef(target);
   targetRef.current = target;
@@ -337,8 +339,9 @@ export function ProfileView({
 
   // --- 追加読み込み（cursor ページング。無限スクロール。§8.2。ターゲット置換後の stale 応答は破棄） ---
   const loadMore = useCallback(async () => {
-    if (!cursor || loadingMore) return;
+    if (!cursor || loadingMore || loadingMoreRef.current) return;
     const t = target;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const data = await fetchProfilePosts(t.provider, t.author, cursor);
@@ -348,6 +351,7 @@ export function ProfileView({
     } catch {
       if (targetRef.current === t) setToast('追加の読み込みに失敗しました');
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   }, [cursor, loadingMore, target]);
@@ -372,6 +376,11 @@ export function ProfileView({
   const openProfile = useCallback((p: Provider, a: Author) => {
     if (authorKey(p, a) === authorKey(targetRef.current.provider, targetRef.current.author)) return;
     targetRef.current = { provider: p, author: a }; // 再描画前の stale ガードを先に反映
+    // 一覧・概要の状態を同期的に全リセット（useEffect は描画後に走るため、
+    // その間の描画で前ターゲットの中身が一瞬見えるのを防ぐ。§8.2）
+    setProfile(null);
+    setStatus('loading');
+    setPosts([]);
     setCursor(null);
     setListDone(false);
     setListError(null);
@@ -427,7 +436,7 @@ export function ProfileView({
           {status === 'error' && (
             <div className="banner error">
               プロフィールを読み込めませんでした{errorMsg ? `（${errorMsg}）` : ''}{' '}
-              <button onClick={() => setNonce((n) => n + 1)}>再試行</button>
+              <button type="button" onClick={() => setNonce((n) => n + 1)}>再試行</button>
             </div>
           )}
           {status === 'unavailable' && <p className="empty">このユーザーは表示できません</p>}

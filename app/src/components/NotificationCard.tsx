@@ -113,16 +113,9 @@ export function NotificationCard({
             <button
               type="button"
               className="notif-actor-btn"
+              aria-label={`${n.actor.displayName} のプロフィールを開く`}
               title="プロフィールを開く"
-              onClick={(e) => {
-                // カード全体クリック（Thread 遷移）を発火させない（§8.1）
-                e.stopPropagation();
-                onOpenProfile?.(n.provider, n.actor as Author);
-              }}
-              onKeyDown={(e) => {
-                // キーボード操作（Enter/Space）でもカード全体の Thread 遷移を発火させない
-                e.stopPropagation();
-              }}
+              onClick={() => onOpenProfile?.(n.provider, n.actor as Author)}
             >
               {n.actor.avatarUrl && <img className="avatar-sm" src={n.actor.avatarUrl} alt="" />}
               <span className="notif-actor-name">{n.actor.displayName}</span>

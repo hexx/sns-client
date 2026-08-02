@@ -27,6 +27,7 @@ import type {
   Source,
   SourceCatalogEntry,
   SourceOption,
+  UnfollowRequest,
   UnrepostRequest,
   UnlikeRequest,
   View,
@@ -446,10 +447,14 @@ async function withProfile404<T>(provider: 'bluesky' | 'misskey', bsky: () => Pr
   try {
     return await misskey();
   } catch (e) {
-    // users/show・users/notes の 404（NO_SUCH_USER）は取得不能として 404 を引き継ぐ（スレッドの focus と同じ扱い）
-    if ((e as { status?: number })?.status === 404) throw new HTTPException(404, { message: 'profile unavailable' });
+    if (isMisskeyNotFound(e)) throw new HTTPException(404, { message: 'profile unavailable' });
     throw e;
   }
+}
+
+/** misskey の取得不能（NO_SUCH_USER）判定。HTTP 404 と業務コード（mkApiWithCode は 409 に正規化）の両対応 */
+function isMisskeyNotFound(e: unknown): boolean {
+  return (e as { status?: number })?.status === 404 || (e instanceof MisskeyApiError && e.code === 'NO_SUCH_USER');
 }
 
 // --- プロフィール（docs/profile-view-spec.md §4/§5。nostr はブラウザ直接のため BFF 非対応） ---
@@ -480,10 +485,11 @@ app.get(API.profilePosts, async (c) => {
   );
 });
 
-/** follow 系リクエストの共通検証（provider / actorId の形式。recordUri はあれば保持。不正なら null。docs/profile-view-spec.md §6） */
-function parseFollowBody(
-  body: unknown,
-): { provider: 'bluesky' | 'misskey'; actorId: string; recordUri?: string } | null {
+/**
+ * follow 系リクエストの共通検証（provider / actorId の形式。recordUri はあれば保持。不正なら null。docs/profile-view-spec.md §6）
+ * ワイヤー契約は UnfollowRequest（recordUri を含む上位互換）で型強制する（POST は provider/actorId のみ使う）。
+ */
+function parseFollowBody(body: unknown): UnfollowRequest | null {
   const b = body as { provider?: unknown; actorId?: unknown; recordUri?: unknown } | null;
   if (!b) return null;
   // unknown は isWritableProvider の引数型（string|null|undefined）に合わないため先に文字列へ絞る
@@ -515,9 +521,7 @@ app.post(API.follow, async (c) => {
     await misskeyFollow(c.env, body.actorId);
   } catch (e) {
     // misskey も同じ論理条件（取得不能）は 409 ではなく 404 に揃える（§9 の一貫性）
-    if (e instanceof MisskeyApiError && e.code === 'NO_SUCH_USER') {
-      throw new HTTPException(404, { message: 'actor unavailable' });
-    }
+    if (isMisskeyNotFound(e)) throw new HTTPException(404, { message: 'actor unavailable' });
     throw e;
   }
   return c.json({});
@@ -532,15 +536,19 @@ app.delete(API.follow, async (c) => {
     if (typeof body.recordUri !== 'string' || body.recordUri.length === 0) {
       throw new HTTPException(400, { message: 'recordUri required' });
     }
-    await bskyUnfollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.recordUri);
+    try {
+      await bskyUnfollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.recordUri);
+    } catch (e) {
+      // 既に解除済み（record 消失）等の取得不能も 404 に揃える（§9 の一貫性。POST と同じ扱い）
+      if (bskyAccountUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
+      throw e;
+    }
   } else {
     try {
       await misskeyUnfollow(c.env, body.actorId);
     } catch (e) {
       // 取得不能（削除済み等）は 409 ではなく 404 に揃える（§9 の一貫性）
-      if (e instanceof MisskeyApiError && e.code === 'NO_SUCH_USER') {
-        throw new HTTPException(404, { message: 'actor unavailable' });
-      }
+      if (isMisskeyNotFound(e)) throw new HTTPException(404, { message: 'actor unavailable' });
       throw e;
     }
   }
