@@ -14,6 +14,7 @@ import type {
   NotificationsResponse,
   Post,
   PostInputWire,
+  Profile,
   Reaction,
   RichSegment,
   Source,
@@ -54,6 +55,13 @@ type MkUser = {
   name?: string | null;
   avatarUrl?: string | null;
   host?: string | null;
+  description?: string | null;
+  bannerUrl?: string | null;
+  notesCount?: number;
+  followingCount?: number;
+  followersCount?: number;
+  isFollowing?: boolean;
+  emojis?: Record<string, string> | { name: string; url: string }[]; // 名前・自己紹介のカスタム絵文字
 };
 type MkFile = {
   id: string;
@@ -639,6 +647,153 @@ export async function getThread(env: MisskeyEnv, noteId: string, cursor?: string
   return { focus: mapNote(focus, registry, inst), ancestors, replies, nextCursor };
 }
 
+/** レスポンスボディから Misskey の業務エラー情報を抽出する（code。JSON でなければ undefined） */
+async function readMisskeyError(res: Response): Promise<{ code?: string } | undefined> {
+  try {
+    const body = (await res.json()) as { error?: { code?: string } };
+    return body?.error ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 業務エラーコードを抽出する API 呼び出し（follow/unfollow 用）。
+ * 認証失敗（401、または 403 + kind: 'authentication' / AUTHENTICATION_FAILED 等）は status=401、
+ * それ以外の code 付き業務エラー（YOU_ARE_BLOCKED / NO_SUCH_USER / NOT_FOLLOWING 等）は
+ * MisskeyApiError(409) に正規化する（react と同じ流儀。mkApi は code を抽出しないため、
+ * 業務エラーが 502 に化けるのを防ぐ）。
+ */
+async function mkApiWithCode<T>(
+  env: MisskeyEnv,
+  endpoint: string,
+  params: Record<string, unknown> = {},
+): Promise<T> {
+  if (!env.MISSKEY_TOKEN) throw new MisskeyAuthError('missing-secrets');
+  const res = await fetch(`${instanceOf(env)}/api/${endpoint}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ i: env.MISSKEY_TOKEN, ...params }),
+  });
+  if (!res.ok) {
+    const err = await readMisskeyError(res);
+    if (res.status === 401 || res.status === 403) {
+      // 認証失敗は code（AUTHENTICATION_FAILED。HTTP 401 は常に認証）のみ 401 にし、
+      // それ以外の 403 は業務 code（YOU_ARE_BLOCKED 等）なら 409、code も無い素の 403（WAF 等）は
+      // 素の Error のまま投げて catch-all で 502 にする（恒久認証失敗に誤分類しない）。
+      // kind: 'authentication' は PERMISSION_DENIED（認証済みの権限不足）にも付くため判定に使わない
+      const isAuth = res.status === 401 || /AUTHENTICATION_FAILED/i.test(err?.code ?? '');
+      if (err?.code && !isAuth) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
+      if (isAuth) {
+        const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
+        e.status = 401;
+        throw e;
+      }
+      throw new Error(`misskey ${endpoint} ${res.status}`);
+    }
+    // 業務エラー（4xx の code 付き。5xx や 429 は上流異常として 502 に落とす）
+    if (err?.code && res.status >= 400 && res.status < 500 && res.status !== 429) {
+      throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
+    }
+    throw new Error(`misskey ${endpoint} ${res.status}`);
+  }
+  const text = await res.text();
+  if (!text) return null as T; // 空ボディ（2xx で中身なし）は null に縮退
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    // 2xx なのに JSON でない応答（リバースプロキシ/WAF の HTML 等）は上流異常として投げる
+    // （null-as-success で未実行の操作を成功表示しない。mkApi と同じく 502 になる）
+    throw new Error(`misskey ${endpoint} invalid json`);
+  }
+}
+
+// --- プロフィール（docs/profile-view-spec.md §4/§5/§6） ---
+
+/** ユーザーのプロフィール permalink（ローカルはインスタンス、リモートはホームインスタンスのユーザーページ） */
+function userUrl(u: MkUser, instanceUrl?: string): string | undefined {
+  if (!instanceUrl) return undefined;
+  return u.host ? `https://${u.host}/@${u.username}` : `${instanceUrl}/@${u.username}`;
+}
+
+/** users/show の応答（MkUser）を統一 Profile へ映射する純粋関数 */
+export function mapProfile(
+  u: MkUser,
+  registry: Record<string, string> = {},
+  instanceUrl?: string,
+): Profile {
+  // 表示名・自己紹介の絵文字はユーザー由来（リモート）を優先しローカルはレジストリで補完（ADR-0006 の流儀）
+  const emojiUrls = { ...registry, ...emojiMap(u.emojis) };
+  const profile: Profile = {
+    provider: 'misskey',
+    author: authorOf(u, emojiUrls),
+  };
+  if (u.description) {
+    // 自己紹介: plain（フォールバック/検索用）と rich（表示用）。合成マップは authorOf と共有する
+    const { rich, plain } = mfmToRich(u.description, emojiUrls);
+    profile.description = plain;
+    if (rich.length > 0) profile.descriptionRich = rich;
+  }
+  if (u.bannerUrl) profile.bannerUrl = u.bannerUrl;
+  if (u.notesCount !== undefined && u.followingCount !== undefined && u.followersCount !== undefined) {
+    profile.stats = {
+      posts: u.notesCount,
+      following: u.followingCount,
+      followers: u.followersCount,
+    };
+  }
+  if (typeof u.isFollowing === 'boolean') profile.viewer = { following: u.isFollowing };
+  const url = userUrl(u, instanceUrl);
+  if (url) profile.url = url;
+  return profile;
+}
+
+/** プロフィール概要の取得（docs/profile-view-spec.md §4.3）。id は userId（Author.id）
+ * mkApiWithCode 経由で NO_SUCH_USER（HTTP 400 + code）を MisskeyApiError として拾い、
+ * ルートの isMisskeyNotFound → 404 に載せる（mkApi だと status 400 の素エラーになり 502 に化けるため）。 */
+export async function getProfile(env: MisskeyEnv, userId: string): Promise<Profile> {
+  const [user, registry] = await Promise.all([
+    mkApiWithCode<MkUser>(env, 'users/show', { userId }),
+    loadEmojiRegistry(env),
+  ]);
+  if (!user) throw new Error('misskey users/show returned empty');
+  return mapProfile(user, registry, instanceOf(env));
+}
+
+/**
+ * プロフィールの投稿一覧（docs/profile-view-spec.md §5.2）。users/notes の既定で
+ * リノート含む（withRenotes=true）・リプライ含まず（withReplies=false）。untilId ページング。
+ */
+export async function getProfilePosts(
+  env: MisskeyEnv,
+  userId: string,
+  cursor?: string,
+): Promise<TimelineResponse> {
+  // users/notes の既定（withRenotes=true・withReplies=false）に依存せず明示する（bsky の filter と同様に意図を固定）
+  const params: Record<string, unknown> = { userId, limit: LIMIT, withRenotes: true, withReplies: false };
+  if (cursor) params.untilId = cursor;
+  // users/notes と絵文字レジストリは独立したネットワーク呼び出しのため並列化する（getProfile と同じ）
+  const [rawNotes, registry] = await Promise.all([
+    mkApiWithCode<MkNote[]>(env, 'users/notes', params),
+    loadEmojiRegistry(env),
+  ]);
+  const notes = rawNotes ?? [];
+  const inst = instanceOf(env);
+  const posts = notes.map((n) => mapNote(n, registry, inst));
+  const last = notes[notes.length - 1];
+  return { posts, nextCursor: notes.length >= LIMIT && last ? last.id : null };
+}
+
+/** フォローする（following/create。docs/profile-view-spec.md §6） */
+export async function followUser(env: MisskeyEnv, userId: string): Promise<void> {
+  await mkApiWithCode(env, 'following/create', { userId });
+}
+
+/** フォローを解除する（following/delete） */
+export async function unfollowUser(env: MisskeyEnv, userId: string): Promise<void> {
+  await mkApiWithCode(env, 'following/delete', { userId });
+}
+
 /**
  * ピッカー用の選択可能 Source 一覧（ホーム + ユーザーリスト + アンテナ + お気に入りチャンネル）。
  * users/lists/list・antennas/list・channels/my-favorites を並列取得し、人間可読名を添えて返す。
@@ -727,33 +882,11 @@ export async function createPost(env: MisskeyEnv, input: PostInputWire): Promise
  * 業務エラー（ALREADY_REACTED 等）は MisskeyApiError(409, code)、認証エラーは status=401 に正規化する。
  */
 export async function react(env: MisskeyEnv, noteId: string, reaction?: string): Promise<void> {
-  if (!env.MISSKEY_TOKEN) throw new MisskeyAuthError('missing-secrets');
   const endpoint = reaction ? 'notes/reactions/create' : 'notes/reactions/delete';
   const params: Record<string, unknown> = { noteId };
   if (reaction) params.reaction = reaction;
-  const res = await fetch(`${instanceOf(env)}/api/${endpoint}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ i: env.MISSKEY_TOKEN, ...params }),
-  });
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
-      e.status = 401;
-      throw e;
-    }
-    let code: string | undefined;
-    try {
-      const body = (await res.json()) as { error?: { code?: string } };
-      code = body?.error?.code;
-    } catch {
-      /* ignore */
-    }
-    // Misskey の業務エラー（code 付き）→ 409。code 無し（5xx 等のシステム障害）は
-    // 素の Error のまま投げ、run() の catch-all で 502 にする（409 で隠蔽しない）。
-    if (code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, code);
-    throw new Error(`misskey ${endpoint} ${res.status}`);
-  }
+  // mkApiWithCode が認証エラー（401）・業務エラー（409, code）の正規化を担う（エラー契約の一元化）
+  await mkApiWithCode(env, endpoint, params);
 }
 
 // --- リノート操作（docs/deck-view-spec.md §6。v1 は作成のみ・解除は未対応） ---

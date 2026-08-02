@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { childrenToThreadNodes, createPost, getThread, loadEmojiRegistry, localEmojiName, mapMisskeyNotification, mapNote, mfmToRich, misskeyNotificationText, nameToRich, getEmojiList, getTimeline, getNotifications, listDestinations, listSources, react, renote, muteUser, unmuteUser, blockUser, unblockUser, getMyUserId, markNotificationsRead, MisskeyApiError, MisskeyAuthError } from './misskey';
+import { childrenToThreadNodes, createPost, getThread, loadEmojiRegistry, localEmojiName, mapMisskeyNotification, mapNote, mapProfile, mfmToRich, misskeyNotificationText, nameToRich, getEmojiList, getTimeline, getNotifications, listDestinations, listSources, react, renote, muteUser, unmuteUser, blockUser, unblockUser, getMyUserId, markNotificationsRead, MisskeyApiError, MisskeyAuthError } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -425,10 +425,26 @@ describe('react（リアクション操作）', () => {
     expect(err).not.toBeInstanceOf(MisskeyApiError);
   });
 
-  it('認証エラー（401/403）→ status=401 に正規化（MisskeyApiError ではない）', async () => {
-    captureFetch(new Response('no', { status: 403 }));
+  it('認証エラー（403 + AUTHENTICATION_FAILED）→ status=401 に正規化（MisskeyApiError ではない）', async () => {
+    captureFetch(
+      new Response(JSON.stringify({ error: { code: 'AUTHENTICATION_FAILED', kind: 'authentication' } }), {
+        status: 403,
+      }),
+    );
     await expect(react(env, 'n1', '👍')).rejects.toMatchObject({ status: 401 });
     await expect(react(env, 'n1', '👍')).rejects.not.toBeInstanceOf(MisskeyApiError);
+  });
+
+  it('code/kind 無しの素の 403（WAF 等）は 401 に誤分類しない（素の Error → 502）', async () => {
+    captureFetch(new Response('no', { status: 403 }));
+    await expect(react(env, 'n1', '👍')).rejects.toThrow();
+    await expect(react(env, 'n1', '👍')).rejects.not.toMatchObject({ status: 401 });
+    await expect(react(env, 'n1', '👍')).rejects.not.toBeInstanceOf(MisskeyApiError);
+  });
+
+  it('403 + 業務 code（YOU_ARE_BLOCKED）→ MisskeyApiError(409)', async () => {
+    captureFetch(new Response(JSON.stringify({ error: { code: 'YOU_ARE_BLOCKED', kind: 'permission' } }), { status: 403 }));
+    await expect(react(env, 'n1', '👍')).rejects.toMatchObject({ status: 409, code: 'YOU_ARE_BLOCKED' });
   });
 
   it('トークン無し → MisskeyAuthError', async () => {
@@ -970,5 +986,77 @@ describe('通知マッピング（docs/notifications-spec.md §3、ADR-0019）',
     expect(fetchMock).toHaveBeenCalledWith('https://m.test/api/i/notifications', expect.anything());
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     expect(body).toMatchObject({ limit: 1, markAsRead: true });
+  });
+});
+
+function mkUser(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'u1',
+    username: 'alice',
+    name: 'Alice',
+    avatarUrl: 'https://example.com/a.png',
+    host: null,
+    ...overrides,
+  } as never;
+}
+
+describe('mapProfile（docs/profile-view-spec.md §4.3）', () => {
+
+  it('users/show 応答を統一 Profile に映射する（ローカルユーザー）', () => {
+    const p = mapProfile(
+      mkUser({
+        description: 'こんにちは :hello:',
+        bannerUrl: 'https://example.com/b.png',
+        notesCount: 10,
+        followingCount: 20,
+        followersCount: 30,
+        isFollowing: true,
+        emojis: { hello: 'https://example.com/emoji.png' },
+      }),
+      {},
+      'https://misskey.io',
+    );
+    expect(p.provider).toBe('misskey');
+    expect(p.author).toMatchObject({ id: 'u1', handle: 'alice', displayName: 'Alice', avatarUrl: 'https://example.com/a.png' });
+    expect(p.description).toBe('こんにちは :hello:');
+    // 自己紹介もリッチ化（カスタム絵文字解決込み）
+    expect(p.descriptionRich).toEqual([
+      { type: 'text', text: 'こんにちは ' },
+      { type: 'emoji', name: 'hello', url: 'https://example.com/emoji.png' },
+    ]);
+    expect(p.bannerUrl).toBe('https://example.com/b.png');
+    expect(p.stats).toEqual({ posts: 10, following: 20, followers: 30 });
+    expect(p.viewer).toEqual({ following: true });
+    expect(p.url).toBe('https://misskey.io/@alice');
+  });
+
+  it('リモートユーザーは handle が username@host、url はホームインスタンス', () => {
+    const p = mapProfile(mkUser({ username: 'bob', host: 'example.net', name: null }), {}, 'https://misskey.io');
+    expect(p.author.handle).toBe('bob@example.net');
+    expect(p.author.displayName).toBe('bob'); // name 無しは username にフォールバック
+    expect(p.url).toBe('https://example.net/@bob');
+  });
+
+  it('description 無し・リッチ化不能はフィールドを持たない', () => {
+    const p = mapProfile(mkUser({ description: null, isFollowing: false }), {}, 'https://misskey.io');
+    expect(p.description).toBeUndefined();
+    expect(p.descriptionRich).toBeUndefined();
+    expect(p.viewer).toEqual({ following: false });
+  });
+
+  it('カウント欠落は stats を載せない', () => {
+    const p = mapProfile(mkUser({ notesCount: undefined, followingCount: undefined, followersCount: undefined }));
+    expect(p.stats).toBeUndefined();
+  });
+
+  it('instanceUrl 無しは url を持たない', () => {
+    const p = mapProfile(mkUser({}));
+    expect(p.url).toBeUndefined();
+  });
+
+  it('プレーンテキストの description は text セグメントのみ（絵文字解決なし）', () => {
+    const p = mapProfile(mkUser({ description: 'ただの文', emojis: undefined }), {}, 'https://misskey.io');
+    expect(p.description).toBe('ただの文');
+    expect(p.descriptionRich).toEqual([{ type: 'text', text: 'ただの文' }]);
   });
 });

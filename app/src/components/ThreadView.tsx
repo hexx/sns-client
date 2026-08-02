@@ -13,7 +13,7 @@ import { fetchThread } from '../lib/thread';
 import { isHiddenPost, subscribeHidden } from '../lib/moderation';
 import { applyReaction } from '../lib/reactions';
 import { withLike, withRenoteIncrement, withRepost } from '../lib/engagements';
-import type { Post, ThreadResponse } from '../../../shared/types';
+import type { Author, Post, Provider, ThreadResponse } from '../../../shared/types';
 import { PostCard } from './PostCard';
 
 /** インデントの最大段数（これ以上は同一の最大インデントで継続。docs/thread-view-spec.md §6.2） */
@@ -38,7 +38,9 @@ export function ThreadView({
   justPosted,
   onReply,
   onQuote,
+  onOpenProfile,
   onClose,
+  escDisabled,
 }: {
   /** 初期フォーカス投稿 */
   post: Post;
@@ -46,9 +48,20 @@ export function ThreadView({
   justPosted?: Post | null;
   onReply?: (p: Post) => void;
   onQuote?: (p: Post) => void;
+  /** アバター・表示名・handle のクリックでプロフィールを開く（docs/profile-view-spec.md §8.1） */
+  onOpenProfile?: (provider: Provider, a: Author) => void;
   onClose: () => void;
+  /** Esc での閉じを無効化（上に別オーバーレイが被さっているとき。profile-view-spec §8.2） */
+  escDisabled?: boolean;
 }) {
   const [focus, setFocus] = useState<Post>(post);
+
+  // post prop の変化でフォーカスを再同期する（App が key で再マウントするケースに加え、
+  // 同一 post の再オープン時も内部ナビゲーションの古い focus を引きずらない。profile-view-spec §8.2）。
+  // 同一投稿（provider:id 一致）への prop 更新では、スレッド内ナビゲーションを壊さないよう何もしない
+  useEffect(() => {
+    setFocus((f) => (f.provider === post.provider && f.id === post.id ? f : post));
+  }, [post]);
   const [thread, setThread] = useState<ThreadResponse | null>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [errorMsg, setErrorMsg] = useState('');
@@ -96,14 +109,14 @@ export function ThreadView({
     scrollRef.current?.scrollTo({ top: 0 });
   }, [focus, nonce]);
 
-  // Esc で閉じる（Lightbox と同一流儀。§2）
+  // Esc で閉じる（Lightbox と同一流儀。§2）。上に別オーバーレイが被さっている間は無効化する（§8.2）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !escDisabled) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, escDisabled]);
 
   // 背景スクロールロック（Lightbox と同一流儀）
   useEffect(() => {
@@ -267,7 +280,7 @@ export function ThreadView({
     isHiddenPost(p) ? (
       <div className="thread-unavailable">この投稿は取得できません</div>
     ) : (
-      <PostCard post={p} onOpenThread={setFocus} {...handlers} />
+      <PostCard post={p} onOpenThread={setFocus} onOpenProfile={onOpenProfile} {...handlers} />
     );
 
   return (

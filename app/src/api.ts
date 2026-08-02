@@ -3,12 +3,15 @@ import { API } from '../../shared/constants';
 import type {
   DestinationCatalogEntry,
   EmojiInfo,
+  FollowRequest,
+  FollowResponse,
   Health,
   MediaUploadResponse,
   MeResponse,
   NotificationsResponse,
   Post,
   PostInputWire,
+  Profile,
   Provider,
   ProviderInfo,
   ReactionResponse,
@@ -17,6 +20,7 @@ import type {
   SourceCatalogEntry,
   ThreadResponse,
   TimelineResponse,
+  UnfollowRequest,
   View,
 } from '../../shared/types';
 
@@ -63,6 +67,19 @@ function sourceQuery(source: Source, cursor?: string): string {
   return q.toString();
 }
 
+/** follow 解除の実装（unfollow のオーバーロード本体。bsky は recordUri 必須・misskey は不要） */
+const unfollowImpl = (
+  provider: 'bluesky' | 'misskey',
+  actorId: string,
+  recordUri?: string,
+): Promise<Record<string, never>> =>
+  request<Record<string, never>>(API.follow, {
+    method: 'DELETE',
+    body: JSON.stringify(
+      (recordUri !== undefined ? { provider, actorId, recordUri } : { provider, actorId }) satisfies UnfollowRequest,
+    ),
+  });
+
 export const api = {
   health: () => request<Health>(API.health),
   views: () => request<View[]>(API.views),
@@ -82,6 +99,29 @@ export const api = {
     if (cursor) q.set('cursor', cursor);
     return request<ThreadResponse>(`${API.thread}?${q.toString()}`);
   },
+  /** プロフィール概要の取得（bsky/misskey。nostr はブラウザ直接解決のため app/src/lib/profile.ts 参照。docs/profile-view-spec.md §4） */
+  profile: (provider: 'bluesky' | 'misskey', id: string) =>
+    request<Profile>(`${API.profile}?${new URLSearchParams({ provider, id }).toString()}`),
+  /** プロフィールの投稿一覧（TimelineResponse と同形状。docs/profile-view-spec.md §5） */
+  profilePosts: (provider: 'bluesky' | 'misskey', id: string, cursor?: string) => {
+    const q = new URLSearchParams({ provider, id });
+    if (cursor) q.set('cursor', cursor);
+    return request<TimelineResponse>(`${API.profilePosts}?${q.toString()}`);
+  },
+  /** フォロー（docs/profile-view-spec.md §6） */
+  follow: (provider: 'bluesky' | 'misskey', actorId: string) =>
+    request<FollowResponse>(API.follow, {
+      method: 'POST',
+      body: JSON.stringify({ provider, actorId } satisfies FollowRequest),
+    }),
+  /** フォロー解除（bsky は viewer.followUri を recordUri で渡す。misskey は不要）。
+   * オーバーロードで bsky の recordUri 必須を型レベルで強制する（渡し忘れはコンパイルエラー） */
+  unfollow: unfollowImpl as ((
+    provider: 'bluesky',
+    actorId: string,
+    recordUri: string,
+  ) => Promise<Record<string, never>>) &
+    ((provider: 'misskey', actorId: string) => Promise<Record<string, never>>),
   uploadMedia: (provider: Provider, bytes: ArrayBuffer, mimeType: string, alt: string) =>
     request<MediaUploadResponse>(
       `${API.media}?${new URLSearchParams({ provider, alt }).toString()}`,

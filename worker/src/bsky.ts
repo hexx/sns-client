@@ -1,4 +1,4 @@
-import { AtpAgent, AppBskyFeedDefs, AppBskyRichtextFacet, RichText, type AtpSessionData } from '@atproto/api';
+import { AtpAgent, AppBskyActorDefs, AppBskyFeedDefs, AppBskyRichtextFacet, RichText, type AtpSessionData } from '@atproto/api';
 import type {
   LinkCard,
   Media,
@@ -7,6 +7,7 @@ import type {
   NotificationsResponse,
   Post,
   PostInputWire,
+  Profile,
   RichSegment,
   Source,
   SourceOption,
@@ -19,6 +20,7 @@ const SERVICE = 'https://bsky.social';
 const COL_LIKE = 'app.bsky.feed.like';
 const COL_REPOST = 'app.bsky.feed.repost';
 const COL_BLOCK = 'app.bsky.graph.block';
+const COL_FOLLOW = 'app.bsky.graph.follow';
 /** 通知一覧の1ページ件数と、対象投稿の補完取得バッチサイズ（docs/notifications-spec.md §4） */
 const NOTIFICATION_LIMIT = 30;
 const POSTS_BATCH = 25;
@@ -409,6 +411,186 @@ export async function getThread(
     // 削除済み等でアンカーが解決できない場合、appview は notFound ノードではなく NotFound（HTTP 400）を投げる。
     // そのままでは 502 になるため、focus 取得不能（null → ルートが 404 にマップ）として扱う（§4.2）。
     if ((e as { error?: string })?.error === 'NotFound') return null;
+    throw e;
+  }
+}
+
+// --- プロフィール（docs/profile-view-spec.md §4/§5） ---
+
+/** getProfile 応答（ProfileViewDetailed）を統一 Profile へ映射する純粋関数 */
+export function mapProfile(pv: AppBskyActorDefs.ProfileViewDetailed): Profile {
+  const profile: Profile = {
+    provider: 'bluesky',
+    author: {
+      id: pv.did,
+      handle: pv.handle,
+      displayName: pv.displayName || pv.handle,
+      ...(pv.avatar ? { avatarUrl: pv.avatar } : {}),
+    },
+    url: `https://bsky.app/profile/${pv.did}`,
+  };
+  if (pv.description) profile.description = pv.description;
+  if (pv.banner) profile.bannerUrl = pv.banner;
+  if (pv.postsCount !== undefined && pv.followsCount !== undefined && pv.followersCount !== undefined) {
+    profile.stats = {
+      posts: pv.postsCount,
+      following: pv.followsCount,
+      followers: pv.followersCount,
+    };
+  }
+  if (pv.viewer?.following) {
+    profile.viewer = { following: true, followUri: pv.viewer.following };
+  } else if (pv.viewer) {
+    profile.viewer = { following: false };
+  }
+  return profile;
+}
+
+/** getAuthorFeed の1アイテムを Post へ映射する（reasonRepost → repostedBy。profile-view-spec §5.1） */
+export function mapAuthorFeedItem(f: {
+  post: AppBskyFeedDefs.PostView;
+  reason?: { $type?: string; by?: { did: string; handle: string; displayName?: string; avatar?: string } };
+}): Post {
+  const post = mapPost(f.post);
+  if (f.reason?.$type === 'app.bsky.feed.defs#reasonRepost' && f.reason.by) {
+    post.repostedBy = {
+      id: f.reason.by.did,
+      handle: f.reason.by.handle,
+      displayName: f.reason.by.displayName || f.reason.by.handle,
+      ...(f.reason.by.avatar ? { avatarUrl: f.reason.by.avatar } : {}),
+    };
+  }
+  return post;
+}
+
+/**
+ * アカウント取得不能の判定（削除・ブロック・停止・BAN 等。§9 の 404 マップに使う）。
+ * - 既知の取得不能コードは厳密照合（ENOTFOUND や RecordNotFound 等の部分一致による誤判定を防ぐ）
+ * - 既知の非該当コード（レート制限・インフラ等）は false
+ * - 汎用コード（InvalidRequest 等）とコード無しは、メッセージを語境界で照合する
+ *   （bsky は「Profile not found」を InvalidRequest + message で返すため。§4.2）
+ */
+const UNAVAILABLE_CODES = new Set([
+  'NotFound',
+  'AccountNotFound',
+  'RepoNotFound',
+  'BlockedActor', // 自分がブロックしている
+  'BlockedByActor', // 相手からブロックされている
+  'AccountTakedown',
+  'RepoTakenDown',
+  'RepoDeactivated',
+  'Deactivated',
+  'AccountSuspended',
+]);
+
+/** 取得不能と無関係であることが確定しているコード（メッセージ照合に進ませない） */
+const NOT_UNAVAILABLE_CODES = new Set([
+  'RateLimitExceeded',
+  'UpstreamFailure',
+  'InternalServerError',
+  'AuthRequired',
+  'ExpiredToken',
+  'InvalidToken',
+]);
+
+export function isAccountUnavailable(e: unknown): boolean {
+  const code = (e as { error?: string })?.error ?? '';
+  if (code) {
+    if (UNAVAILABLE_CODES.has(code)) return true;
+    if (NOT_UNAVAILABLE_CODES.has(code)) return false;
+  }
+  const msg = String((e as { message?: string })?.message ?? '');
+  // 汎用コード・コード無しのエラー形状のみメッセージで照合（語境界。ENOTFOUND や unblocked 等の誤判定を防ぐ）
+  return /\b(not ?found|blocked|blocking you|taken? ?down|deactivated|suspended)\b/i.test(msg);
+}
+
+/** 取得不能アカウントを null に縮退するラッパー（getProfile / getProfilePosts の共通処理） */
+async function withUnavailableAsNull<T>(fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (e) {
+    // そのままでは 502 になるため、取得不能（null → ルートが 404 にマップ）として扱う（§9）
+    if (isAccountUnavailable(e)) return null;
+    throw e;
+  }
+}
+
+/**
+ * プロフィール概要の取得（docs/profile-view-spec.md §4.2）。id は DID（Author.id）。
+ * 削除済み・ブロック等で解決できない場合は null を返す（ルートが 404 → クライアントはプレースホルダ表示）。
+ */
+export async function getProfile(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  did: string,
+): Promise<Profile | null> {
+  const a = await getAgent(handle, appPassword);
+  return withUnavailableAsNull(async () => {
+    const res = await a.getProfile({ actor: did });
+    return mapProfile(res.data);
+  });
+}
+
+/** プロフィールの投稿一覧の1ページ件数（docs/profile-view-spec.md §5.1） */
+const PROFILE_POSTS_LIMIT = 30;
+
+/**
+ * プロフィールの投稿一覧（docs/profile-view-spec.md §5.1）。
+ * filter: 'posts_no_replies' で投稿＋リポストのみ（リプライ除外。理由は §5.1）。
+ * リポストは reasonRepost を repostedBy に映射（既存タイムラインは reason を無視するため新規）。
+ * 削除済み・ブロック等で解決できない場合は null（ルートが 404 → クライアントはエラー行表示。§8.2）。
+ */
+export async function getProfilePosts(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  did: string,
+  cursor?: string,
+): Promise<TimelineResponse | null> {
+  const a = await getAgent(handle, appPassword);
+  return withUnavailableAsNull(async () => {
+    const res = await a.getAuthorFeed({
+      actor: did,
+      limit: PROFILE_POSTS_LIMIT,
+      ...(cursor ? { cursor } : {}),
+      filter: 'posts_no_replies',
+    });
+    return {
+      posts: (res.data.feed ?? []).map(mapAuthorFeedItem),
+      nextCursor: res.data.cursor ?? null,
+    };
+  });
+}
+
+/**
+ * フォローを作成し、自分の follow レコード URI を返す（docs/profile-view-spec.md §6）。
+ * 既にフォロー中（viewer.following が取れる）なら既存レコードを返すことで、再実行・二重送信で
+ * レコードが増殖しないようにする（公式 API に冪等性は無いため、先読みで防ぐ）。
+ */
+export async function followActor(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  did: string,
+): Promise<string> {
+  const a = await getAgent(handle, appPassword);
+  // 既存の follow レコードがあればそれを返す（二重フォロー防止の冪等化）。
+  // 先読みの失敗（取得不能・一時的エラー）はそのまま伝播させる: 取得不能はルートが 404 に、
+  // 一時的失敗は 502 になり、重複レコードの作成や削除済み相手への dangling レコードを防ぐ
+  const existing = await a.getProfile({ actor: did });
+  if (existing.data.viewer?.following) return existing.data.viewer.following;
+  return createRecord(handle, appPassword, COL_FOLLOW, { subject: did });
+}
+
+/** フォローを解除する（自分の follow レコード URI 指定） */
+export async function unfollowActor(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  recordUri: string,
+): Promise<void> {
+  try {
+    await deleteRecord(handle, appPassword, COL_FOLLOW, recordUri);
+  } catch (e) {
+    // 既に解除済み（レコード消失）は成功扱いにして冪等にする（unblockActor の RecordNotFound と同じ流儀）
+    if ((e as { error?: string })?.error === 'RecordNotFound') return;
     throw e;
   }
 }

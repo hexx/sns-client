@@ -10,7 +10,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bech32 } from '@scure/base';
-import type { Author, Media, Post, RichSegment, Source, ThreadNode, ThreadResponse, TimelineResponse } from './types';
+import type { Author, Media, Post, Profile, RichSegment, Source, ThreadNode, ThreadResponse, TimelineResponse } from './types';
 
 // --- 定数（§6.1 固定リレーセット / §6.2 収集ウィンドウ） ---
 export const NOSTR_RELAYS = [
@@ -50,7 +50,7 @@ export type NostrFilter = {
   '#e'?: string[];
 };
 
-type Profile = { displayName?: string; picture?: string };
+type NostrProfile = { displayName?: string; picture?: string; about?: string; banner?: string };
 
 /** nostr Source の検証エラー（BFF が status にマップする。MisskeyApiError 同型） */
 export class NostrError extends Error {
@@ -200,7 +200,7 @@ function queryOne(
 }
 
 // --- kind 0 プロフィール（§6.4: TTL キャッシュ＋バッチ取得） ---
-const profileCache = new Map<string, { at: number; profile: Profile }>();
+const profileCache = new Map<string, { at: number; profile: NostrProfile }>();
 const CACHE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 let lastSweep = 0;
 
@@ -217,14 +217,24 @@ export function resetProfileCache(): void {
   lastSweep = 0;
 }
 
-export function parseProfile(content?: string): Profile {
+export function parseProfile(content?: string): NostrProfile {
   if (!content) return {};
   try {
-    const j = JSON.parse(content) as { display_name?: string; name?: string; picture?: string };
-    const p: Profile = {};
+    const j = JSON.parse(content) as {
+      display_name?: string;
+      name?: string;
+      picture?: string;
+      about?: string;
+      banner?: string;
+    };
+    const p: NostrProfile = {};
     const dn = j.display_name || j.name;
-    if (typeof dn === 'string' && dn.length > 0) p.displayName = dn;
-    if (typeof j.picture === 'string' && j.picture.length > 0) p.picture = j.picture;
+    if (typeof dn === 'string' && dn.length > 0) p.displayName = dn.slice(0, 200); // 悪意リレー対策の上限
+    // URL は http(s) のみ受け付ける（画像 src に入るため。長さも上限付き）
+    if (typeof j.picture === 'string' && /^https?:\/\//.test(j.picture) && j.picture.length <= 2000) p.picture = j.picture;
+    // 自己紹介・バナーはプロフィール表示で使う（docs/profile-view-spec.md §7）。長さは抑えてメモリ・レイアウトを守る
+    if (typeof j.about === 'string' && j.about.length > 0) p.about = j.about.slice(0, 500);
+    if (typeof j.banner === 'string' && /^https?:\/\//.test(j.banner) && j.banner.length <= 2000) p.banner = j.banner;
     return p;
   } catch {
     return {};
@@ -235,9 +245,10 @@ async function loadProfiles(
   pubkeys: string[],
   urls: string[],
   factory: WsFactory,
-): Promise<Map<string, Profile>> {
+  outcomes?: Map<string, boolean>,
+): Promise<Map<string, NostrProfile>> {
   sweepExpiredProfiles(Date.now());
-  const result = new Map<string, Profile>();
+  const result = new Map<string, NostrProfile>();
   const missing: string[] = [];
   for (const pk of pubkeys) {
     const c = profileCache.get(pk);
@@ -245,7 +256,7 @@ async function loadProfiles(
     else missing.push(pk);
   }
   if (missing.length > 0) {
-    const evs = await queryRelays(urls, { kinds: [0], authors: missing }, { wsFactory: factory });
+    const evs = await queryRelays(urls, { kinds: [0], authors: missing }, { wsFactory: factory, ...(outcomes ? { outcomes } : {}) });
     const latest = new Map<string, NostrEvent>();
     for (const ev of evs) {
       const cur = latest.get(ev.pubkey);
@@ -335,14 +346,14 @@ export function toSegments(content: string): { text: string; rich: RichSegment[]
 }
 
 // --- Post 組み立て ---
-function toAuthor(pubkeyHex: string, profile?: Profile): Author {
+function toAuthor(pubkeyHex: string, profile?: NostrProfile): Author {
   const handle = shortenNpub(pubkeyHex);
   const a: Author = { id: pubkeyHex, handle, displayName: profile?.displayName || handle };
   if (profile?.picture) a.avatarUrl = profile.picture;
   return a;
 }
 
-function buildPost(ev: NostrEvent, profile: Profile | undefined, repostedBy?: Author): Post {
+function buildPost(ev: NostrEvent, profile: NostrProfile | undefined, repostedBy?: Author): Post {
   const { text, rich, media } = toSegments(ev.content);
   const post: Post = {
     id: ev.id,
@@ -409,19 +420,50 @@ export async function getTimeline(
         `リレーに接続できません（現在のネットワークから到達できない可能性があります）: ${urls[0]}`,
       );
     }
-  } else if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
-    throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
+  } else {
+    assertAnyRelayReached(urls, outcomes);
   }
+
+  const { posts } = await buildFeedPosts(events, urls, opts.wsFactory);
+  const page = posts.slice(0, PAGE_SIZE);
+  // 表示順（リポストは元ノートの日時）ベースの cursor（既存挙動。TimelineCore は pid で dedup するため
+  // 境界の再取得は表示に現れない。リポストの raw 日時と表示位置の乖離による欠落は既知の制限）
+  const nextCursor =
+    page.length > 0 ? String(Math.floor(Date.parse(page[page.length - 1].createdAt) / 1000)) : null;
+  return { posts: page, nextCursor };
+}
+
+/**
+ * kind:1＋kind:6 のイベント列から投稿一覧を組み立てる共通処理（§6.5、docs/profile-view-spec.md §7）。
+ * - kind:6 の参照先（元ノート）を ids でバッチ取得し、repostedBy として包む。
+ * - 登場する全 pubkey のプロフィールをまとめて解決（§6.4。TTL キャッシュ）。
+ * - 自分の投稿の自己リポスト・同一元ノートへの複数リポストは元の投稿と重複するためスキップ。
+ * - 時系列降順で返し、各投稿の「生イベントの created_at」も併せて返す（ページング cursor は
+ *   表示日時（リポストは元ノートの日時）ではなく生イベントの日時から求める必要があるため）。
+ *   getTimeline（pubkey Source）と getProfilePosts が共用する。
+ */
+async function buildFeedPosts(
+  events: NostrEvent[],
+  urls: string[],
+  factory: WsFactory,
+): Promise<{ posts: Post[]; rawTimes: number[] }> {
   const kind1 = events.filter((e) => e.kind === 1);
   const kind6 = events.filter((e) => e.kind === 6);
 
-  // kind 6 の参照先（元ノート）を ids でバッチ取得（§6.5）
+  // kind 6 の参照先（元ノート）を ids でバッチ取得（§6.5）。
+  // この照会が全リレーで失敗した場合は取得不能として 502 にする（リポストのサイレント欠落を防ぐ）
   const refs = [...new Set(kind6.map(eTagId).filter((x): x is string => Boolean(x)))];
   const originals = new Map<string, NostrEvent>();
   if (refs.length > 0) {
-    for (const ev of await queryRelays(urls, { kinds: [1], ids: refs }, { wsFactory: opts.wsFactory })) {
+    const refOutcomes = new Map<string, boolean>();
+    for (const ev of await queryRelays(
+      urls,
+      { kinds: [1], ids: refs },
+      { wsFactory: factory, outcomes: refOutcomes },
+    )) {
       originals.set(ev.id, ev);
     }
+    assertAnyRelayReached(urls, refOutcomes);
   }
 
   // 登場する全 pubkey のプロフィールをまとめて解決（§6.4）
@@ -429,21 +471,103 @@ export async function getTimeline(
   for (const e of kind1) pubkeys.add(e.pubkey);
   for (const e of kind6) pubkeys.add(e.pubkey);
   for (const e of originals.values()) pubkeys.add(e.pubkey);
-  const profiles = await loadProfiles([...pubkeys], urls, opts.wsFactory);
+  const profiles = await loadProfiles([...pubkeys], urls, factory);
 
   const posts: Post[] = [];
-  for (const e of kind1) posts.push(buildPost(e, profiles.get(e.pubkey)));
+  const rawTimes: number[] = [];
+  const seen = new Set<string>(); // 元ノート id（同一ノートの重複表示を防ぐ）
+  for (const e of kind1) {
+    const p = buildPost(e, profiles.get(e.pubkey));
+    seen.add(p.id);
+    posts.push(p);
+    rawTimes.push(e.created_at);
+  }
   for (const e of kind6) {
     const orig = originals.get(eTagId(e) ?? '');
-    if (!orig) continue; // 参照先未取得のリポストはスキップ（§6.5）
+    if (!orig) continue; // 参照先未取得のリポストはスキップ（§6.5。kind:6 参照の連鎖（リポストのリポスト）は解決しない既知の制限）
+    // 元ノートが既に表示済み（自己リポスト・同一ノートの複数リポスト）ならスキップ。
+    // 単一 author バッチでは kind:1 は自分の投稿のみなので、他ユーザーのノートのリポストは
+    // 対象外にならず、最初のリポストだけが表示される
+    if (seen.has(orig.id)) continue;
+    seen.add(orig.id);
     posts.push(buildPost(orig, profiles.get(orig.pubkey), toAuthor(e.pubkey, profiles.get(e.pubkey))));
+    rawTimes.push(e.created_at); // リポストは「リポストした生イベント」の日時でページングする
   }
 
-  posts.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  const page = posts.slice(0, PAGE_SIZE);
-  const nextCursor =
-    page.length > 0 ? String(Math.floor(Date.parse(page[page.length - 1].createdAt) / 1000)) : null;
-  return { posts: page, nextCursor };
+  const order = posts
+    .map((_, i) => i)
+    .toSorted((a, b) => Date.parse(posts[b].createdAt) - Date.parse(posts[a].createdAt));
+  return { posts: order.map((i) => posts[i]), rawTimes: order.map((i) => rawTimes[i]) };
+}
+
+/** ページの cursor（生イベントの最古 created_at - 1。until は境界を含むため、境界イベントの再取得を防ぐ）。
+ * 注意: 同一秒に複数イベントがありリレーが FETCH_LIMIT で打ち切った場合、その秒の残りは次ページで
+ * 欠落しうる（既知の制限。クライアントは pid で重複排除するため、境界再取得より欠落を選ぶ）。
+ * エポック境界（created_at <= 1。不正な時刻のスパム等）では null を返し、ページングを止める
+ * （負の until はリクエストが 400 になり、ループするため）。 */
+function pageCursor(rawTimes: number[]): string | null {
+  if (rawTimes.length === 0) return null;
+  const min = Math.min(...rawTimes);
+  if (min <= 1) return null;
+  return String(min - 1);
+}
+
+// --- プロフィール（docs/profile-view-spec.md §7、ADR-0014/0017） ---
+
+/**
+ * nostr プロフィールのブラウザ直接解決。kind:0 を固定リレーセットから照会し、
+ * 他 Provider と同じ統一 Profile を組み立てる。カウント（stats）・viewer・permalink は
+ * リレーに無いため持たない（§7）。リレーに kind:0 が無い（または全滅）場合は handle のみに縮退。
+ * 取得は loadProfiles（TTL キャッシュ＋バッチ）を経由し、投稿一覧側の解決とキャッシュを共有する（§6.4）。
+ */
+export async function getProfile(pubkeyHex: string, opts: { wsFactory: WsFactory }): Promise<Profile> {
+  const outcomes = new Map<string, boolean>();
+  const profiles = await loadProfiles([pubkeyHex], NOSTR_RELAYS, opts.wsFactory, outcomes);
+  // 全リレー接続失敗は可視エラー化（一覧と同じ扱い。オフラインを空プロフィールに見せない）
+  assertAnyRelayReached(NOSTR_RELAYS, outcomes);
+  const profile = profiles.get(pubkeyHex) ?? {};
+  const out: Profile = { provider: 'nostr', author: toAuthor(pubkeyHex, profile) };
+  if (profile.about) out.description = profile.about;
+  if (profile.banner) out.bannerUrl = profile.banner;
+  return out;
+}
+
+/** 全リレー接続失敗の判定（可視エラー化。docs/nostr-browser-direct-spec.md §6.5、ADR-0014） */
+function assertAnyRelayReached(urls: string[], outcomes: Map<string, boolean>): void {
+  if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
+    throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
+  }
+}
+
+/**
+ * nostr プロフィールの投稿一覧（kind:1＋kind:6 を pubkey で照会。§7）。
+ * ページングは getTimeline と同じ until（created_at の unix 秒）を cursor として継続する
+ * （NIP-01 の until＋limit。リレーの標準機能で追加読み込みが可能）。
+ */
+export async function getProfilePosts(
+  pubkeyHex: string,
+  opts: { wsFactory: WsFactory },
+  cursor?: string,
+): Promise<TimelineResponse> {
+  const urls = NOSTR_RELAYS;
+  // cursor は数字のみ受け付ける（不正値は無視せず拒否し、最新ページの再取得ループを防ぐ）
+  if (cursor !== undefined && cursor !== '' && !/^\d+$/.test(cursor)) {
+    throw new NostrError(400, 'cursor が不正です');
+  }
+  const until = cursor !== undefined && cursor !== '' ? Number.parseInt(cursor, 10) : undefined;
+  const filter: NostrFilter = { kinds: [1, 6], authors: [pubkeyHex], limit: FETCH_LIMIT };
+  if (until !== undefined) filter.until = until; // /^\d+$/ 検証済みのため NaN は起きない
+  const outcomes = new Map<string, boolean>();
+  const events = await queryRelays(urls, filter, { wsFactory: opts.wsFactory, outcomes });
+  assertAnyRelayReached(urls, outcomes);
+  const { posts, rawTimes } = await buildFeedPosts(events, urls, opts.wsFactory);
+  // ページは取得上限（FETCH_LIMIT）のまま全件返す: リポストは raw 日時（リレーの until 対象）と
+  // 表示位置（元ノートの日時）が乖離するため、表示順でスライスすると深いページでリポストが
+  // 欠落する（until フィルタに掛かる）。raw ウィンドウで区切り、ページ内は表示順で整列する。
+  // 表示可能な投稿が0件（リポストの参照先が全て解決不能など）でも、取得した生イベントの
+  // 最古時刻から cursor を進めて無限ループ・早期終了を防ぐ
+  const nextCursor = pageCursor(rawTimes.length > 0 ? rawTimes : events.map((e) => e.created_at));
+  return { posts, nextCursor };
 }
 
 // --- スレッド解決（docs/thread-view-spec.md §5、ADR-0014/0017） ---
@@ -468,7 +592,7 @@ export function parentEventId(ev: NostrEvent): string | undefined {
 const sortEventsAsc = (arr: NostrEvent[]): NostrEvent[] => arr.toSorted((a, b) => a.created_at - b.created_at);
 
 /** 子孫イベント列から木を再構築し、DFS 順＋depth に平坦化する（worker/misskey の childrenToThreadNodes と同型） */
-function buildReplyNodes(children: NostrEvent[], focusId: string, profiles: Map<string, Profile>): ThreadNode[] {
+function buildReplyNodes(children: NostrEvent[], focusId: string, profiles: Map<string, NostrProfile>): ThreadNode[] {
   const byId = new Map(children.map((e) => [e.id, e]));
   const kidsOf = new Map<string, NostrEvent[]>();
   const orphans: NostrEvent[] = [];

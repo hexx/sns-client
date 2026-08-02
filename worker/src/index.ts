@@ -27,6 +27,7 @@ import type {
   Source,
   SourceCatalogEntry,
   SourceOption,
+  UnfollowRequest,
   UnrepostRequest,
   UnlikeRequest,
   View,
@@ -35,10 +36,14 @@ import {
   BskyAuthError,
   blockActor as bskyBlock,
   createPost as bskyPost,
+  followActor as bskyFollow,
   getMyDid as bskyGetMyDid,
   getNotifications as bskyNotifications,
+  getProfile as bskyProfile,
+  getProfilePosts as bskyProfilePosts,
   getThread as bskyThread,
   getTimeline as bskyTimeline,
+  isAccountUnavailable as bskyAccountUnavailable,
   likePost as bskyLike,
   listSources as bskySources,
   markNotificationsRead as bskyMarkNotificationsRead,
@@ -46,6 +51,7 @@ import {
   repostPost as bskyRepost,
   resetSession,
   unblockActor as bskyUnblock,
+  unfollowActor as bskyUnfollow,
   unmuteActor as bskyUnmute,
   unlikePost as bskyUnlike,
   unrepostPost as bskyUnrepost,
@@ -56,10 +62,13 @@ import {
   MisskeyAuthError,
   blockUser as misskeyBlock,
   createPost as misskeyPost,
+  followUser as misskeyFollow,
   getComposeCharLimit,
   getEmojiList as misskeyEmojis,
   getMyUserId as misskeyGetMyUserId,
   getNotifications as misskeyNotifications,
+  getProfile as misskeyProfile,
+  getProfilePosts as misskeyProfilePosts,
   getThread as misskeyThread,
   getTimeline as misskeyTimeline,
   listDestinations as misskeyDestinations,
@@ -69,6 +78,7 @@ import {
   react as misskeyReact,
   renote as misskeyRenote,
   unblockUser as misskeyUnblock,
+  unfollowUser as misskeyUnfollow,
   unmuteUser as misskeyUnmute,
   uploadMedia as misskeyUpload,
   type MisskeyEnv,
@@ -409,6 +419,155 @@ app.get(API.thread, async (c) => {
     if ((e as { status?: number })?.status === 404) throw new HTTPException(404, { message: 'focus unavailable' });
     throw e;
   }
+});
+
+/**
+ * profile 系 GET ルートのクエリ検証（provider / id / cursor）。
+ * nostr はブラウザ直接解決のため拒否（/api/timeline と同じガード）。不正なら 400 を投げる。
+ */
+function parseProfileQuery(c: Context<AppEnv>): { provider: 'bluesky' | 'misskey'; id: string; cursor?: string } {
+  const provider = c.req.query('provider');
+  if (provider === 'nostr') throw new HTTPException(400, { message: 'nostr is client-direct: fetch from the browser (ADR-0014)' });
+  if (!isWritableProvider(provider)) throw new HTTPException(400, { message: 'invalid provider' });
+  const id = c.req.query('id');
+  if (!id || !isValidActorId(provider, id)) throw new HTTPException(400, { message: 'invalid id' });
+  return { provider, id, cursor: c.req.query('cursor') ?? undefined };
+}
+
+/**
+ * プロフィール系 GET の取得不能（bsky の null / misskey の 404）を 404 にマップする共通処理。
+ * §9 のプレースホルダ挙動（ステータス・文言）はここに一元化する（docs/profile-view-spec.md §4）。
+ */
+async function withProfile404<T>(provider: 'bluesky' | 'misskey', bsky: () => Promise<T | null>, misskey: () => Promise<T>): Promise<T> {
+  if (provider === 'bluesky') {
+    const v = await bsky();
+    if (!v) throw new HTTPException(404, { message: 'profile unavailable' });
+    return v;
+  }
+  try {
+    return await misskey();
+  } catch (e) {
+    if (isMisskeyUnavailable(e)) throw new HTTPException(404, { message: 'profile unavailable' });
+    throw e;
+  }
+}
+
+/** misskey の取得不能（NO_SUCH_USER / YOU_ARE_BLOCKED）判定。HTTP 404 と業務コード（mkApiWithCode は 409 に正規化）の両対応 */
+function isMisskeyUnavailable(e: unknown): boolean {
+  return (
+    (e as { status?: number })?.status === 404 ||
+    (e instanceof MisskeyApiError && (e.code === 'NO_SUCH_USER' || e.code === 'YOU_ARE_BLOCKED'))
+  );
+}
+
+// --- プロフィール（docs/profile-view-spec.md §4/§5。nostr はブラウザ直接のため BFF 非対応） ---
+
+/** id は Author.id（bsky=DID / misskey=userId）。形式検証は parseProfileQuery が担う */
+app.get(API.profile, async (c) => {
+  const { provider, id } = parseProfileQuery(c);
+  c.set('provider', provider);
+  return c.json(
+    await withProfile404(
+      provider,
+      () => bskyProfile(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, id),
+      () => misskeyProfile(c.env, id),
+    ),
+  );
+});
+
+/** プロフィールの投稿一覧（概要と別ルート。応答は TimelineResponse と同形状。§5/Q12） */
+app.get(API.profilePosts, async (c) => {
+  const { provider, id, cursor } = parseProfileQuery(c);
+  c.set('provider', provider);
+  return c.json(
+    await withProfile404(
+      provider,
+      () => bskyProfilePosts(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, id, cursor),
+      () => misskeyProfilePosts(c.env, id, cursor),
+    ),
+  );
+});
+
+/**
+ * follow 系リクエストの共通検証（provider / actorId の形式。recordUri はあれば保持。不正なら null。docs/profile-view-spec.md §6）
+ * ワイヤー契約は UnfollowRequest（recordUri を含む上位互換）で型強制する（POST は provider/actorId のみ使う）。
+ */
+function parseFollowBody(body: unknown): UnfollowRequest | null {
+  const b = body as { provider?: unknown; actorId?: unknown; recordUri?: unknown } | null;
+  if (!b) return null;
+  // unknown は isWritableProvider の引数型（string|null|undefined）に合わないため先に文字列へ絞る
+  const provider: string | undefined = typeof b.provider === 'string' ? b.provider : undefined;
+  if (!isWritableProvider(provider)) return null;
+  const actorId = b.actorId;
+  if (typeof actorId !== 'string') return null;
+  if (!isValidActorId(provider, actorId)) return null;
+  const recordUri = typeof b.recordUri === 'string' ? b.recordUri : undefined;
+  return { provider, actorId, ...(recordUri ? { recordUri } : {}) };
+}
+
+// --- フォロー操作（docs/profile-view-spec.md §6。bsky=follow レコード / misskey=following API） ---
+
+app.post(API.follow, async (c) => {
+  const body = parseFollowBody(await c.req.json().catch(() => null));
+  if (!body) throw new HTTPException(400, { message: 'invalid body' });
+  c.set('provider', body.provider);
+  if (body.provider === 'bluesky') {
+    try {
+      return c.json({ recordUri: await bskyFollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.actorId) });
+    } catch (e) {
+      // 削除・ブロック等でフォローできない相手は 502 にせず 404（§9 の一貫性）
+      if (bskyAccountUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
+      throw e;
+    }
+  }
+  try {
+    await misskeyFollow(c.env, body.actorId);
+  } catch (e) {
+    // 既にフォロー中（ALREADY_FOLLOWING）は目的状態が達成されているため成功扱い（冪等。
+    // bsky は createRecord のため重複実行で二重レコードになり得るが、クライアント側の followBusy で防ぐ）
+    if (e instanceof MisskeyApiError && e.code === 'ALREADY_FOLLOWING') return c.json({});
+    // misskey も同じ論理条件（取得不能）は 409 ではなく 404 に揃える（§9 の一貫性）
+    if (isMisskeyUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
+    throw e;
+  }
+  return c.json({});
+});
+
+app.delete(API.follow, async (c) => {
+  const body = parseFollowBody(await c.req.json().catch(() => null));
+  if (!body) throw new HTTPException(400, { message: 'invalid body' });
+  c.set('provider', body.provider);
+  if (body.provider === 'bluesky') {
+    // 解除は自分の follow レコード URI 指定（viewer.followUri。like 解除と同じ流儀）
+    if (typeof body.recordUri !== 'string') {
+      throw new HTTPException(400, { message: 'recordUri required' });
+    }
+    // follow レコードの URI 構造を検証（不正な URI で upstream を叩かない）。
+    // 注: URI の repo DID は「自分の DID」（viewer.followUri は自分の follow レコード）であり、
+    // actorId（フォロー対象）とは一致しないため突合はしない
+    if (!/^at:\/\/did:[A-Za-z0-9._:%-]+\/app\.bsky\.graph\.follow\/[A-Za-z0-9._:~-]+$/.test(body.recordUri)) {
+      throw new HTTPException(400, { message: 'invalid recordUri' });
+    }
+    try {
+      await bskyUnfollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.recordUri);
+    } catch (e) {
+      // 既に解除済み（レコード消失）は bskyUnfollow 内で成功扱い（冪等）。
+      // 削除・ブロック等は POST と同じ 404 に揃える（§9 の一貫性）。
+      if (bskyAccountUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
+      throw e;
+    }
+  } else {
+    try {
+      await misskeyUnfollow(c.env, body.actorId);
+    } catch (e) {
+      // 既に解除済み（NOT_FOLLOWING）は目的状態が達成されているため成功扱い（冪等。bsky と同じ扱い）
+      if (e instanceof MisskeyApiError && e.code === 'NOT_FOLLOWING') return c.json({});
+      // 取得不能（削除済み等）は 409 ではなく 404 に揃える（§9 の一貫性）
+      if (isMisskeyUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
+      throw e;
+    }
+  }
+  return c.json({});
 });
 
 app.get(API.sources, async (c) => {

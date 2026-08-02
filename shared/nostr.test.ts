@@ -258,7 +258,7 @@ describe('getTimeline', () => {
     expect(res.posts[0].author.displayName).toBe('Alice');
     expect(res.posts[0].author.avatarUrl).toBe('https://x/a.png');
     expect(res.posts[0].stats).toEqual({ replies: 0, reposts: 0, likes: 0 });
-    expect(res.nextCursor).toBe('100'); // 最古の created_at
+    expect(res.nextCursor).toBe('100'); // 最古の表示日時（既存挙動）
   });
 
   it('kind0 未取得時は handle（npub 短縮）に縮退する', async () => {
@@ -460,5 +460,120 @@ describe('getThread（ブラウザ直接解決）', () => {
     await expect(getThread({ source: { id: 'bad' } } as never, { wsFactory: threadRelay([]) })).rejects.toMatchObject({
       status: 400,
     });
+  });
+});
+
+describe('parseProfile（docs/profile-view-spec.md §7）', () => {
+  it('name / display_name / picture に加えて about / banner も解析する', () => {
+    const p = parseProfile(
+      JSON.stringify({
+        name: 'alice',
+        display_name: 'Alice',
+        picture: 'https://example.com/a.png',
+        about: 'こんにちは',
+        banner: 'https://example.com/b.png',
+      }),
+    );
+    expect(p.displayName).toBe('Alice');
+    expect(p.picture).toBe('https://example.com/a.png');
+    expect(p.about).toBe('こんにちは');
+    expect(p.banner).toBe('https://example.com/b.png');
+  });
+
+  it('about / banner が無ければ持たない', () => {
+    const p = parseProfile(JSON.stringify({ name: 'alice' }));
+    expect(p.about).toBeUndefined();
+    expect(p.banner).toBeUndefined();
+  });
+
+  it('不正 JSON は空を返す', () => {
+    expect(parseProfile('not json')).toEqual({});
+  });
+});
+
+describe('getProfile（docs/profile-view-spec.md §7）', () => {
+  it('kind:0 から統一 Profile を組み立てる（stats/viewer/url は持たない）', async () => {
+    const ev = makeEvent({
+      kind: 0,
+      content: JSON.stringify({ display_name: 'Alice', picture: 'https://example.com/a.png', about: 'こんにちは', banner: 'https://example.com/b.png' }),
+      created_at: 2000,
+    });
+    const { getProfile } = await import('./nostr');
+    const p = await getProfile(PUB, { wsFactory: fakeRelay(onAllRelays([ev])) });
+    expect(p.provider).toBe('nostr');
+    expect(p.author.id).toBe(PUB);
+    expect(p.author.displayName).toBe('Alice');
+    expect(p.author.avatarUrl).toBe('https://example.com/a.png');
+    expect(p.description).toBe('こんにちは');
+    expect(p.bannerUrl).toBe('https://example.com/b.png');
+    expect(p.stats).toBeUndefined();
+    expect(p.viewer).toBeUndefined();
+    expect(p.url).toBeUndefined();
+  });
+
+  it('kind:0 が無いリレーは handle のみに縮退', async () => {
+    const { getProfile } = await import('./nostr');
+    const p = await getProfile(PUB, { wsFactory: fakeRelay({}) });
+    expect(p.author.id).toBe(PUB);
+    expect(p.author.displayName).toBe(p.author.handle);
+    expect(p.description).toBeUndefined();
+  });
+
+  it('全リレー接続失敗は NostrError(502)（オフラインを空プロフィールに見せない。一覧と同じ扱い）', async () => {
+    const { getProfile } = await import('./nostr');
+    await expect(getProfile(PUB, { wsFactory: blockedRelay })).rejects.toMatchObject({ status: 502 });
+  });
+});
+
+describe('getProfilePosts（docs/profile-view-spec.md §7）', () => {
+  it('kind:1 を pubkey 照会で収集し、TimelineResponse を組み立てる（nextCursor は最古投稿の unix 秒）', async () => {
+    const { getProfilePosts } = await import('./nostr');
+    const ev1 = makeEvent({ content: 'one', created_at: 1000 });
+    const ev2 = makeEvent({ content: 'two', created_at: 2000 });
+    const res = await getProfilePosts(PUB, { wsFactory: fakeRelay(onAllRelays([ev1, ev2])) });
+    expect(res.nextCursor).toBe('999'); // 最古の生イベント created_at - 1（until は境界を含むため）
+    expect(res.posts.map((p) => p.text)).toEqual(['two', 'one']);
+    expect(res.posts.every((p) => p.provider === 'nostr')).toBe(true);
+  });
+
+  it('cursor は until として渡され、それより古い投稿だけを次ページに返す（getTimeline と同じページング）', async () => {
+    const { getProfilePosts } = await import('./nostr');
+    const ev1 = makeEvent({ content: 'old', created_at: 1000 });
+    const ev2 = makeEvent({ content: 'newer', created_at: 3000 });
+    const res = await getProfilePosts(PUB, { wsFactory: fakeRelay(onAllRelays([ev1, ev2])) }, '1000');
+    expect(res.posts.map((p) => p.text)).toEqual(['old']); // until=1000（境界含む）→ created_at 1000 のみ
+    expect(res.nextCursor).toBe('999');
+  });
+
+  it('投稿が無ければ nextCursor は null', async () => {
+    const { getProfilePosts } = await import('./nostr');
+    const res = await getProfilePosts(PUB, { wsFactory: fakeRelay({}) });
+    expect(res.posts).toEqual([]);
+    expect(res.nextCursor).toBeNull();
+  });
+
+  it('kind:6（リポスト）は参照先を解決して repostedBy に載せる', async () => {
+    const { getProfilePosts } = await import('./nostr');
+    // 元ノートは別ユーザー（PUB2）の投稿で、プロフィール所有者（PUB）がリポストしている
+    const orig = makeEvent({ priv: PRIV2, content: 'original', created_at: 1000 });
+    const repost = makeEvent({ kind: 6, content: '', tags: [['e', orig.id]], created_at: 2000 });
+    const res = await getProfilePosts(PUB, { wsFactory: fakeRelay(onAllRelays([orig, repost])) });
+    expect(res.posts).toHaveLength(1);
+    expect(res.posts[0].text).toBe('original');
+    expect(res.posts[0].repostedBy?.id).toBe(PUB);
+  });
+  it('自分の投稿の自己リポストは重複させない（kind:1 と kind:6 の両方に現れる場合）', async () => {
+    const { getProfilePosts } = await import('./nostr');
+    const own = makeEvent({ content: 'own post', created_at: 1000 });
+    const selfRepost = makeEvent({ kind: 6, content: '', tags: [['e', own.id]], created_at: 2000 });
+    const res = await getProfilePosts(PUB, { wsFactory: fakeRelay(onAllRelays([own, selfRepost])) });
+    expect(res.posts).toHaveLength(1);
+    expect(res.posts[0].text).toBe('own post');
+    expect(res.posts[0].repostedBy).toBeUndefined();
+  });
+
+  it('全リレー接続失敗は NostrError(502)', async () => {
+    const { getProfilePosts } = await import('./nostr');
+    await expect(getProfilePosts(PUB, { wsFactory: blockedRelay })).rejects.toMatchObject({ status: 502 });
   });
 });

@@ -1528,10 +1528,246 @@ button.reaction:hover {
   flex: 0 0 auto;
   background: var(--border);
 }
+/* actor ボタンを持つカードの Thread 入口（投稿プレビューの button 化。§8.1） */
+.notif-post-btn {
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.notif-post-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .notif-unavailable {
   color: var(--muted);
   font-size: 13px;
   border: 1px dashed var(--border);
   border-radius: 8px;
   padding: 8px 10px;
+}
+
+/* --- プロフィール入口ボタン（docs/profile-view-spec.md §8.1） --- */
+/* アバター・表示名・@handle を button 化。既存の見た目を保ちつつクリック可能にする */
+.name-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  /* 契約: font-size は併用クラス（.display-name / .repost-name / .handle 等）か親要素の継承が担う。
+     このルールは font-family のみリセットする（font ショートカットは font-size/weight も潰すため） */
+  font-family: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+/* リポスト行の名前ボタンは .repost-badge の 12px を継承する（button は UA フォントに化けるため明示） */
+.repost-badge .name-btn {
+  font-size: inherit;
+}
+.name-btn:hover {
+  color: var(--accent);
+}
+/* キーボード操作の可視化（ボタン化した入口群）。outline は要素の border-radius に追従するため radius は指定しない */
+.name-btn:focus-visible,
+.avatar-btn:focus-visible,
+.handle-btn:focus-visible,
+.notif-actor-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.avatar-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+  display: inline-flex;
+  border-radius: 50%;
+  font-family: inherit;
+}
+.avatar-btn:hover img,
+.avatar-btn:hover .avatar-fallback {
+  filter: brightness(1.15);
+}
+/* 引用カードの小さいアバターフォールバックは 18px に揃える（.avatar-fallback の flex-basis 40px を上書き。ボタン内外共通） */
+.quote-head .avatar-fallback {
+  flex: 0 0 18px;
+}
+.handle-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  /* font ショートカットは font-size もリセットするため font-family のみにする。
+     color は .handle（muted）に委ねる（inherit は .handle を上書きしてしまうため指定しない） */
+  font-family: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+.handle-btn:hover {
+  color: var(--accent);
+}
+/* 通知カードの actor ボタン（アバター＋名前。§8.1） */
+.notif-actor-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  max-width: 100%;
+  min-width: 0;
+  font-family: inherit;
+}
+.notif-actor-btn:hover .notif-actor-name {
+  color: var(--accent);
+}
+.notif-actor-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* flex アイテムの最小幅を 0 にし、長い名前でも省略記号が効くようにする */
+  min-width: 0;
+}
+
+/* --- プロフィール表示（docs/profile-view-spec.md §8.2） --- */
+.profile-modal {
+  max-width: 640px;
+  max-height: calc(100dvh - 48px);
+}
+/* モバイルは全画面オーバーレイ（Thread と同じ。§2） */
+@media (max-width: 480px) {
+  .profile-modal {
+    max-width: none;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+}
+.profile-scroll {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px; /* ヘッダー・バナー・一覧の間隔（thread-scroll と同じ流儀） */
+  min-height: 120px;
+}
+.profile-header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.profile-banner {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  background: var(--border);
+  border-radius: 8px;
+}
+.profile-id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.profile-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--border);
+  flex: 0 0 64px;
+}
+.profile-id-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.profile-name {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.profile-handle {
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.profile-follow {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.profile-follow:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+.profile-follow:focus-visible,
+.profile-ext:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.profile-follow.following {
+  background: var(--border);
+  color: var(--text);
+}
+.profile-follow:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.profile-ext {
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+.profile-ext:hover {
+  color: var(--accent);
+}
+.profile-bio {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+.profile-stats {
+  display: flex;
+  flex-wrap: wrap; /* 狭いビューポートで横に溢れないようにする */
+  gap: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.profile-stats strong {
+  color: var(--text);
+}
+.profile-posts {
+  display: flex;
+  flex-direction: column;
+}
+.profile-posts .card {
+  margin: 0;
 }

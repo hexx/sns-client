@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
-import type { Notification, Post, Provider, Source } from '../../../shared/types';
+import type { Author, Notification, Post, Provider, Source } from '../../../shared/types';
 import { NotificationCard } from './NotificationCard';
 
 const TICK_MS = 15_000;
@@ -39,6 +39,7 @@ export function NotificationsView({
   sources,
   active,
   onOpenThread,
+  onOpenProfile,
   onPendingCountChange,
   className,
 }: {
@@ -46,6 +47,8 @@ export function NotificationsView({
   /** 表示中（モバイル: アクティブタブ / デッキ: 常に true）。表示中は新着を既読化する（§5） */
   active: boolean;
   onOpenThread?: (p: Post) => void;
+  /** actor（アバター・名前）のクリックでプロフィールを開く（docs/profile-view-spec.md §8.1） */
+  onOpenProfile?: (provider: Provider, a: Author) => void;
   /** 未読数の変化を通知（スマホ UI のタブバッジ用。docs/mobile-paging-spec.md §4.4 と同じ受け口） */
   onPendingCountChange?: (count: number) => void;
   className?: string;
@@ -305,7 +308,7 @@ export function NotificationsView({
 
       <div className="scroll">
         {merged.map((n) => (
-          <NotificationCard key={nid(n)} notification={n} onOpenThread={onOpenThread} />
+          <NotificationCard key={nid(n)} notification={n} onOpenThread={onOpenThread} onOpenProfile={onOpenProfile} />
         ))}
 
         {merged.length === 0 && errored.length === 0 && (

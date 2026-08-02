@@ -3,9 +3,10 @@ import { MobilePager } from './components/MobilePager';
 import { Deck } from './components/Deck';
 import { Compose } from './components/Compose';
 import { ThreadView } from './components/ThreadView';
+import { ProfileView } from './components/ProfileView';
 import { api } from './api';
 import { subscribeModerationToasts } from './lib/moderation';
-import type { Post, ProviderInfo, View } from '../../shared/types';
+import type { Author, Post, Provider, ProviderInfo, View } from '../../shared/types';
 
 const DECK_QUERY = '(min-width: 1024px)';
 /** ミュート/ブロックのトーストに取り消しを出すウィンドウ（docs/block-mute-spec.md §5.3） */
@@ -25,6 +26,9 @@ function useIsDeckWidth(): boolean {
 
 type ComposeState = { open: boolean; replyTo?: Post; quote?: Post };
 
+/** プロフィールオーバーレイのターゲット（Provider は Author.id の解釈に必要） */
+type ProfileTarget = { provider: Provider; author: Author };
+
 /** トースト（msg + 任意の取り消しアクション + 表示時間。docs/block-mute-spec.md §5.3） */
 type ToastState = { msg: string; undo?: () => void; ms: number };
 
@@ -34,6 +38,7 @@ export default function App() {
   const [activeViewId, setActiveViewId] = useState<string>('home');
   const [compose, setCompose] = useState<ComposeState>({ open: false });
   const [threadPost, setThreadPost] = useState<Post | null>(null);
+  const [profileTarget, setProfileTarget] = useState<ProfileTarget | null>(null);
   const [justPosted, setJustPosted] = useState<Post | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -90,6 +95,11 @@ export default function App() {
   const openReply = useCallback((p: Post) => setCompose({ open: true, replyTo: p }), []);
   const openQuote = useCallback((p: Post) => setCompose({ open: true, quote: p }), []);
 
+  /** プロフィールオーバーレイを開く（入口はアバター・表示名・handle。docs/profile-view-spec.md §8.1） */
+  const openProfile = useCallback((provider: Provider, author: Author) => {
+    setProfileTarget({ provider, author });
+  }, []);
+
   const activeView = views.find((v) => v.id === activeViewId) ?? views[0];
 
   return (
@@ -107,6 +117,7 @@ export default function App() {
               onViewsChange={handleViewsChange}
               onCompose={() => setCompose({ open: true })}
               onOpenThread={setThreadPost}
+              onOpenProfile={openProfile}
             />
           ) : (
             <p className="empty">読み込み中…</p>
@@ -122,6 +133,7 @@ export default function App() {
           onReply={openReply}
           onQuote={openQuote}
           onOpenThread={setThreadPost}
+          onOpenProfile={openProfile}
         />
       ) : (
         <p className="empty">読み込み中…</p>
@@ -140,11 +152,36 @@ export default function App() {
       )}
       {threadPost && (
         <ThreadView
+          // プロフィール経由で別の投稿のスレッドを開くとき、古い focus を引きずらないよう post 単位で再マウントする
+          key={`${threadPost.provider}:${threadPost.id}`}
           post={threadPost}
           justPosted={justPosted}
           onReply={openReply}
           onQuote={openQuote}
+          onOpenProfile={openProfile}
           onClose={() => setThreadPost(null)}
+          // プロフィールが上に被さっている間、Esc はプロフィールだけを閉じる（§8.2）
+          escDisabled={profileTarget !== null}
+        />
+      )}
+      {profileTarget && (
+        <ProfileView
+          provider={profileTarget.provider}
+          author={profileTarget.author}
+          onOpenThread={(p) => {
+            // Thread はプロフィールの上に重ねず、プロフィールを閉じて開く（§8.2。オーバーレイはスタックしない）
+            setProfileTarget(null);
+            setThreadPost(p);
+          }}
+          onReply={(p) => {
+            setProfileTarget(null);
+            openReply(p);
+          }}
+          onQuote={(p) => {
+            setProfileTarget(null);
+            openQuote(p);
+          }}
+          onClose={() => setProfileTarget(null)}
         />
       )}
       {toast && (

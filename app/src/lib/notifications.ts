@@ -43,51 +43,77 @@ export const NOTIF_ICON: Partial<Record<NotificationType, string>> = {
   scheduledNotePostFailed: '⏰',
 };
 
+/**
+ * actor 前置きを持たない文言の通知タイプ（notifText は who を付けない）。
+ * BFF が text を合成済みのため実データでは n.text 分岐が先に効く（防御的な一元管理）。
+ * notifTextBody の完文ケース（pollEnded 等）と対応させること。
+ */
+const ACTORLESS_TYPES: ReadonlySet<NotificationType> = new Set(['pollEnded']);
+
+/** actor 前置きを持たない文言の通知タイプか（通知カードの actor 要素の非表示判定にも使う。§8.1） */
+export function isActorlessType(type: NotificationType): boolean {
+  return ACTORLESS_TYPES.has(type);
+}
+
 /** 通知カードの表示文言（テキストのみ通知は BFF 合成済みの text を優先。docs/notifications-spec.md §6） */
 export function notifText(n: Notification): string {
   if (n.text) return n.text;
+  // actor 名を除いた本文（notifTextBody）に前置きを足すだけで合成する（文言の二重管理を避ける。§8.1）
+  if (isActorlessType(n.type)) return notifTextBody(n); // actor を伴わない文言は前置きを付けない
   const who = n.actor?.displayName ? `${n.actor.displayName} さん` : '誰か';
+  return `${who}${notifTextBody(n)}`;
+}
+
+/**
+ * 通知カードの本文（actor 名の部分を除いた残り。docs/profile-view-spec.md §8.1）。
+ * actor 名はカード内で別要素（クリックでプロフィールを開く）として描画するため、
+ * notifText の先頭の「◯◯ さん」を取り除いた形を返す。
+ * 契約: actor 前置きを伴う型は未完の句（「がフォローしました」）、text のみ通知は BFF 合成の完文。
+ * 呼び出し側は n.text がある場合は actor 要素を描画しないこと（二重主語の防止）。
+ */
+export function notifTextBody(n: Notification): string {
+  if (n.text) return n.text;
   switch (n.type) {
     case 'mention':
-      return `${who}があなたをメンションしました`;
+      return 'があなたをメンションしました';
     case 'reply':
-      return `${who}があなたに返信しました`;
+      return 'があなたに返信しました';
     case 'quote':
-      return `${who}があなたの投稿を引用しました`;
+      return 'があなたの投稿を引用しました';
     case 'like':
-      return `${who}があなたの投稿にいいねしました`;
+      return 'があなたの投稿にいいねしました';
     case 'like-via-repost':
-      return `${who}がリポスト経由であなたの投稿にいいねしました`;
+      return 'がリポスト経由であなたの投稿にいいねしました';
     case 'repost':
-      return `${who}がリポストしました`;
+      return 'がリポストしました';
     case 'repost-via-repost':
-      return `${who}がリポストをリポストしました`;
+      return 'がリポストをリポストしました';
     case 'reaction':
-      return `${who}がリアクションしました${n.reaction ? ` ${n.reaction}` : ''}`;
+      return `がリアクションしました${n.reaction ? ` ${n.reaction}` : ''}`;
     case 'renote':
-      return `${who}がリノートしました`;
+      return 'がリノートしました';
     case 'follow':
-      return `${who}がフォローしました`;
+      return 'がフォローしました';
     case 'starterpack-joined':
-      return `${who}がスターターパック経由でフォローしました`;
+      return 'がスターターパック経由でフォローしました';
     case 'contact-match':
-      return `${who}が連絡先マッチングで見つかりました`;
+      return 'が連絡先マッチングで見つかりました';
     case 'receiveFollowRequest':
-      return `${who}からフォローリクエストが来ました`;
+      return 'からフォローリクエストが来ました';
     case 'followRequestAccepted':
-      return `${who}へのフォローリクエストが承認されました`;
+      return 'へのフォローリクエストが承認されました';
     case 'subscribed-post':
-      return `${who}の投稿が購読フィードに届きました`;
+      return 'の投稿が購読フィードに届きました';
     case 'pollVote':
-      return `${who}があなたのアンケートに投票しました`;
+      return 'があなたのアンケートに投票しました';
     case 'pollEnded':
       return 'あなたのアンケートが終了しました';
     case 'note':
-      return `${who}が投稿しました`;
+      return 'が投稿しました';
     case 'app':
-      return `${who}からの通知`;
+      return 'からの通知';
     default:
-      return `${who}からの通知`;
+      return 'からの通知';
   }
 }
 
