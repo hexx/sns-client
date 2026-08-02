@@ -54,9 +54,19 @@ function CompactPost({ post, asButton, onOpen }: { post: Post; asButton?: boolea
     </>
   );
   if (asButton) {
+    // ボタン内に <a> を含めない（nested-interactive 回避）。リッチリンクはプレーンな本文で描画する
     return (
       <button type="button" className="notif-post notif-post-btn" onClick={onOpen}>
-        {inner}
+        {post.cw ? (
+          <span className="cw-pill">
+            <span className="cw-text">{post.cw || 'CW'}</span>
+          </span>
+        ) : (
+          <>
+            <span className="notif-post-text">{post.text}</span>
+            {post.media[0] && <img className="notif-post-thumb" src={post.media[0].url} alt="" />}
+          </>
+        )}
       </button>
     );
   }
@@ -115,7 +125,9 @@ export function NotificationCard({
               className="notif-actor-btn"
               aria-label={`${n.actor.displayName} のプロフィールを開く`}
               title="プロフィールを開く"
-              onClick={() => onOpenProfile?.(n.provider, n.actor as Author)}
+              onClick={() => {
+                if (n.actor) onOpenProfile?.(n.provider, n.actor);
+              }}
             >
               {n.actor.avatarUrl && <img className="avatar-sm" src={n.actor.avatarUrl} alt="" />}
               <span className="notif-actor-name">{n.actor.displayName}</span>

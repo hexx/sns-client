@@ -431,11 +431,11 @@ export function mapProfile(pv: AppBskyActorDefs.ProfileViewDetailed): Profile {
   };
   if (pv.description) profile.description = pv.description;
   if (pv.banner) profile.bannerUrl = pv.banner;
-  if (pv.postsCount !== undefined || pv.followsCount !== undefined || pv.followersCount !== undefined) {
+  if (pv.postsCount !== undefined && pv.followsCount !== undefined && pv.followersCount !== undefined) {
     profile.stats = {
-      posts: pv.postsCount ?? 0,
-      following: pv.followsCount ?? 0,
-      followers: pv.followersCount ?? 0,
+      posts: pv.postsCount,
+      following: pv.followsCount,
+      followers: pv.followersCount,
     };
   }
   if (pv.viewer?.following) {
@@ -470,7 +470,8 @@ export function mapAuthorFeedItem(f: {
  */
 export function isAccountUnavailable(e: unknown): boolean {
   const code = (e as { error?: string })?.error ?? '';
-  if (/(NotFound|AccountNotFound|RepoNotFound|BlockedActor|AccountTakedown|Deactivated)/i.test(code)) return true;
+  // NotFound は AccountNotFound / RepoNotFound を部分一致で含むため個別列挙は不要
+  if (/(NotFound|BlockedActor|AccountTakedown|Deactivated)/i.test(code)) return true;
   const msg = String((e as { message?: string })?.message ?? '');
   // メッセージは語境界で照合する（getaddrinfo ENOTFOUND や unblocked 等の誤判定を防ぐ）。
   // 「not found」「take(n) down」は空白有無どちらでも（not found / taken down）
@@ -504,6 +505,9 @@ export async function getProfile(
   });
 }
 
+/** プロフィールの投稿一覧の1ページ件数（docs/profile-view-spec.md §5.1） */
+const PROFILE_POSTS_LIMIT = 30;
+
 /**
  * プロフィールの投稿一覧（docs/profile-view-spec.md §5.1）。
  * filter: 'posts_no_replies' で投稿＋リポストのみ（リプライ除外。理由は §5.1）。
@@ -518,7 +522,12 @@ export async function getProfilePosts(
 ): Promise<TimelineResponse | null> {
   const a = await getAgent(handle, appPassword);
   return withUnavailableAsNull(async () => {
-    const res = await a.getAuthorFeed({ actor: did, limit: 30, ...(cursor ? { cursor } : {}), filter: 'posts_no_replies' });
+    const res = await a.getAuthorFeed({
+      actor: did,
+      limit: PROFILE_POSTS_LIMIT,
+      ...(cursor ? { cursor } : {}),
+      filter: 'posts_no_replies',
+    });
     return {
       posts: (res.data.feed ?? []).map(mapAuthorFeedItem),
       nextCursor: res.data.cursor ?? null,

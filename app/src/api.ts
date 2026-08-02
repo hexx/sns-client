@@ -20,6 +20,7 @@ import type {
   SourceCatalogEntry,
   ThreadResponse,
   TimelineResponse,
+  UnfollowRequest,
   View,
 } from '../../shared/types';
 
@@ -74,7 +75,9 @@ const unfollowImpl = (
 ): Promise<Record<string, never>> =>
   request<Record<string, never>>(API.follow, {
     method: 'DELETE',
-    body: JSON.stringify(recordUri ? { provider, actorId, recordUri } : { provider, actorId }),
+    body: JSON.stringify(
+      (recordUri ? { provider, actorId, recordUri } : { provider, actorId }) satisfies UnfollowRequest,
+    ),
   });
 
 export const api = {

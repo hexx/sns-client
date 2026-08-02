@@ -488,7 +488,9 @@ async function buildFeedPosts(
   return { posts: order.map((i) => posts[i]), rawTimes: order.map((i) => rawTimes[i]) };
 }
 
-/** ページの cursor（生イベントの最古 created_at - 1。until は境界を含むため、境界イベントの再取得を防ぐ） */
+/** ページの cursor（生イベントの最古 created_at - 1。until は境界を含むため、境界イベントの再取得を防ぐ）。
+ * 注意: 同一秒に複数イベントがありリレーが FETCH_LIMIT で打ち切った場合、その秒の残りは次ページで
+ * 欠落しうる（既知の制限。ProfileView は追記を pid で重複排除しないため、境界再取得より欠落を選ぶ）。 */
 function pageCursor(rawTimes: number[]): string | null {
   if (rawTimes.length === 0) return null;
   return String(Math.min(...rawTimes) - 1);

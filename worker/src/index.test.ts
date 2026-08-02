@@ -1330,3 +1330,17 @@ describe('follow routes: 取得不能アカウント（docs/profile-view-spec.md
     expect(res.status).toBe(502);
   });
 });
+
+describe('profile routes: misskey の取得不能（docs/profile-view-spec.md §9）', () => {
+  it('MisskeyApiError(NO_SUCH_USER) は 409 ではなく 404 にマップする（mkApiWithCode 経由の実挙動）', async () => {
+    vi.mocked(misskeyProfile).mockRejectedValue(new MisskeyApiError(409, 'misskey users/show 400', 'NO_SUCH_USER'));
+    const res = await worker.fetch(new Request('https://x/api/profile?provider=misskey&id=u1'), makeEnv());
+    expect(res.status).toBe(404);
+  });
+
+  it('profilePosts も同様に NO_SUCH_USER → 404', async () => {
+    vi.mocked(misskeyProfilePosts).mockRejectedValue(new MisskeyApiError(409, 'misskey users/notes 400', 'NO_SUCH_USER'));
+    const res = await worker.fetch(new Request('https://x/api/profile/posts?provider=misskey&id=u1'), makeEnv());
+    expect(res.status).toBe(404);
+  });
+});

@@ -665,6 +665,15 @@ async function mkApiWithCode<T>(
   });
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
+      // 403 でも業務エラー（YOU_ARE_BLOCKED 等）が code 付きで返ることがあるため、先に code を確認する
+      let code: string | undefined;
+      try {
+        const body = (await res.json()) as { error?: { code?: string } };
+        code = body?.error?.code;
+      } catch {
+        /* ignore */
+      }
+      if (code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, code);
       const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
       e.status = 401;
       throw e;
@@ -727,13 +736,14 @@ export function mapProfile(
   return profile;
 }
 
-/** プロフィール概要の取得（docs/profile-view-spec.md §4.3）。id は userId（Author.id） */
+/** プロフィール概要の取得（docs/profile-view-spec.md §4.3）。id は userId（Author.id）
+ * mkApiWithCode 経由で NO_SUCH_USER（HTTP 400 + code）を MisskeyApiError として拾い、
+ * ルートの isMisskeyNotFound → 404 に載せる（mkApi だと status 400 の素エラーになり 502 に化けるため）。 */
 export async function getProfile(env: MisskeyEnv, userId: string): Promise<Profile> {
   const [user, registry] = await Promise.all([
-    mkApi<MkUser>(env, 'users/show', { userId }),
+    mkApiWithCode<MkUser>(env, 'users/show', { userId }),
     loadEmojiRegistry(env),
   ]);
-  // mkApi は 2xx でも非 JSON 応答を null で返すため縮退させる（getProfilePosts と同じ防御）
   if (!user) throw new Error('misskey users/show returned empty');
   return mapProfile(user, registry, instanceOf(env));
 }
@@ -752,7 +762,7 @@ export async function getProfilePosts(
   if (cursor) params.untilId = cursor;
   // users/notes と絵文字レジストリは独立したネットワーク呼び出しのため並列化する（getProfile と同じ）
   const [rawNotes, registry] = await Promise.all([
-    mkApi<MkNote[]>(env, 'users/notes', params),
+    mkApiWithCode<MkNote[]>(env, 'users/notes', params),
     loadEmojiRegistry(env),
   ]);
   const notes = rawNotes ?? [];

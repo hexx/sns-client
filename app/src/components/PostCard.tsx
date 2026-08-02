@@ -648,6 +648,7 @@ export function PostCard({
               <HandleProfileButton
                 author={post.author}
                 provider={post.provider}
+                className="handle"
                 onOpenProfile={onOpenProfile}
               />
               {!onOpenProfile && <span>@{post.author.handle}</span>}

@@ -312,8 +312,9 @@ export function ProfileView({
         apply((x) => (x ? { ...x, viewer: { following: true, ...(res.recordUri ? { followUri: res.recordUri } : {}) } } : x));
       }
     } catch {
+      // どの操作に失敗したかを正確に伝える（フォロー中 → 解除に失敗、未フォロー → フォローに失敗）
       apply(() => original); // ロールバック
-      setToast('フォローに失敗しました');
+      setToast(following ? 'フォロー解除に失敗しました' : 'フォローに失敗しました');
     } finally {
       setFollowBusy(false);
     }
@@ -377,13 +378,18 @@ export function ProfileView({
     if (authorKey(p, a) === authorKey(targetRef.current.provider, targetRef.current.author)) return;
     targetRef.current = { provider: p, author: a }; // 再描画前の stale ガードを先に反映
     // 一覧・概要の状態を同期的に全リセット（useEffect は描画後に走るため、
-    // その間の描画で前ターゲットの中身が一瞬見えるのを防ぐ。§8.2）
+    // その間の描画で前ターゲットの中身が一瞬見えるのを防ぐ。§8.2）。
+    // in-flight ガード・トーストもリセットする（前ターゲットの応答が新ターゲットに影響しないように）
     setProfile(null);
     setStatus('loading');
     setPosts([]);
     setCursor(null);
     setListDone(false);
     setListError(null);
+    setToast(null);
+    setLoadingMore(false);
+    setFollowBusy(false);
+    loadingMoreRef.current = false;
     setTarget({ provider: p, author: a });
   }, []);
 

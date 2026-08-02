@@ -539,7 +539,10 @@ app.delete(API.follow, async (c) => {
     try {
       await bskyUnfollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.recordUri);
     } catch (e) {
-      // 既に解除済み（record 消失）等の取得不能も 404 に揃える（§9 の一貫性。POST と同じ扱い）
+      // 既に解除済み（レコード消失）は目的状態が達成されているため成功扱い（冪等）。
+      // 削除・ブロック等は POST と同じ 404 に揃える（§9 の一貫性）。
+      const msg = String((e as { message?: string })?.message ?? '');
+      if (/could not locate record/i.test(msg)) return c.json({});
       if (bskyAccountUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
       throw e;
     }

@@ -1590,8 +1590,8 @@ button.reaction:hover {
 .avatar-btn:hover .avatar-fallback {
   filter: brightness(1.15);
 }
-/* 引用カードの小さいアバターフォールバックは 18px に揃える（.avatar-fallback の flex-basis 40px を上書き） */
-.avatar-btn .avatar-sm.avatar-fallback {
+/* 引用カードの小さいアバターフォールバックは 18px に揃える（.avatar-fallback の flex-basis 40px を上書き。ボタン内外共通） */
+.quote-head .avatar-fallback {
   flex: 0 0 18px;
 }
 .handle-btn {
@@ -1654,6 +1654,7 @@ button.reaction:hover {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  gap: 8px; /* ヘッダー・バナー・一覧の間隔（thread-scroll と同じ流儀） */
   min-height: 120px;
 }
 .profile-header {
@@ -1751,6 +1752,7 @@ button.reaction:hover {
 }
 .profile-stats {
   display: flex;
+  flex-wrap: wrap; /* 狭いビューポートで横に溢れないようにする */
   gap: 18px;
   font-size: 13px;
   color: var(--muted);
