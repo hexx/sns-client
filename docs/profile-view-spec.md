@@ -141,8 +141,8 @@ Nostr は読み取り専用・ブラウザ直接 WebSocket（[ADR-0014](./adr/00
   - `author`: 既存 `toAuthor` を再利用（handle = npub 短縮形）。
   - `description`: about。`descriptionRich` は無し（プレーンテキスト）。
   - `stats`・`viewer`・`url`: **無し**（リレーに統計は無い。NIP-05 バッジ・外部 permalink も対象外）。
-- **投稿一覧**: `queryRelays({ kinds: [1, 6], authors: [pubkey] })` で照会し、既存のタイムライン映射（`buildPost`・kind:6 のリポスト映射）を再利用して `{posts, nextCursor: null}` を組み立てる。
-  - **ページング**: リレーに標準ページングが無いため MVP では1バッチのみ（`nextCursor` は常に `null`。スレッドの子孫1バッチと同じ扱い）。
+- **投稿一覧**: `queryRelays({ kinds: [1, 6], authors: [pubkey] })` で照会し、既存のタイムライン映射（`buildFeedPosts`。kind:6 のリポスト映射・自己リポストの重複排除）を再利用して `TimelineResponse` を組み立てる。
+  - **ページング**: getTimeline と同じ `until`（created_at の unix 秒）を cursor として継続する（NIP-01 の until＋limit。リレーの標準機能）。
 - **取得不能**: リレーに kind:0 が無い場合は `parseProfile` のフォールバック表示（handle のみ）。「削除」と「リレーに無い」は区別しない。
 - **操作**: follow / reply / like / repost / reaction は一切表示しない（読み取り専用）。
 

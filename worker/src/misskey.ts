@@ -680,7 +680,11 @@ async function mkApiWithCode<T>(
     throw new Error(`misskey ${endpoint} ${res.status}`);
   }
   const text = await res.text();
-  return (text ? JSON.parse(text) : null) as T;
+  try {
+    return (text ? JSON.parse(text) : null) as T;
+  } catch {
+    return null as T; // 2xx なのに JSON でない応答は null に縮退（パース例外で処理を壊さない）
+  }
 }
 
 // --- プロフィール（docs/profile-view-spec.md §4/§5/§6） ---
@@ -697,14 +701,15 @@ export function mapProfile(
   registry: Record<string, string> = {},
   instanceUrl?: string,
 ): Profile {
+  // 表示名・自己紹介の絵文字はユーザー由来（リモート）を優先しローカルはレジストリで補完（ADR-0006 の流儀）
+  const emojiUrls = { ...registry, ...emojiMap(u.emojis) };
   const profile: Profile = {
     provider: 'misskey',
-    // 表示名の絵文字もユーザー由来（リモート）を優先しローカルはレジストリで補完（自己紹介と同じ扱い）
-    author: authorOf(u, { ...registry, ...emojiMap(u.emojis) }),
+    author: authorOf(u, emojiUrls),
   };
   if (u.description) {
-    // 自己紹介: plain（フォールバック/検索用）と rich（表示用。カスタム絵文字はユーザー由来を優先しローカルはレジストリで補完。§4.3）
-    const { rich, plain } = mfmToRich(u.description, { ...registry, ...emojiMap(u.emojis) });
+    // 自己紹介: plain（フォールバック/検索用）と rich（表示用）。合成マップは authorOf と共有する
+    const { rich, plain } = mfmToRich(u.description, emojiUrls);
     profile.description = plain;
     if (rich.length > 0) profile.descriptionRich = rich;
   }
@@ -743,8 +748,12 @@ export async function getProfilePosts(
   // users/notes の既定（withRenotes=true・withReplies=false）に依存せず明示する（bsky の filter と同様に意図を固定）
   const params: Record<string, unknown> = { userId, limit: LIMIT, withRenotes: true, withReplies: false };
   if (cursor) params.untilId = cursor;
-  const notes = (await mkApi<MkNote[]>(env, 'users/notes', params)) ?? [];
-  const registry = await loadEmojiRegistry(env);
+  // users/notes と絵文字レジストリは独立したネットワーク呼び出しのため並列化する（getProfile と同じ）
+  const [rawNotes, registry] = await Promise.all([
+    mkApi<MkNote[]>(env, 'users/notes', params),
+    loadEmojiRegistry(env),
+  ]);
+  const notes = rawNotes ?? [];
   const inst = instanceOf(env);
   const posts = notes.map((n) => mapNote(n, registry, inst));
   const last = notes[notes.length - 1];

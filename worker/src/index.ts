@@ -17,7 +17,6 @@ import { API, VIEWS_KV_KEY } from '../../shared/constants';
 import type {
   DestinationCatalogEntry,
   DestinationOption,
-  FollowRequest,
   LikeRequest,
   ModerationRequest,
   PostInputWire,
@@ -28,7 +27,6 @@ import type {
   Source,
   SourceCatalogEntry,
   SourceOption,
-  UnfollowRequest,
   UnrepostRequest,
   UnlikeRequest,
   View,
@@ -44,6 +42,7 @@ import {
   getProfilePosts as bskyProfilePosts,
   getThread as bskyThread,
   getTimeline as bskyTimeline,
+  isAccountUnavailable as bskyAccountUnavailable,
   likePost as bskyLike,
   listSources as bskySources,
   markNotificationsRead as bskyMarkNotificationsRead,
@@ -474,26 +473,44 @@ app.get(API.profilePosts, async (c) => {
   }
 });
 
+/** follow 系リクエストの共通検証（provider / actorId の形式。recordUri はあれば保持。不正なら null。docs/profile-view-spec.md §6） */
+function parseFollowBody(
+  body: unknown,
+): { provider: 'bluesky' | 'misskey'; actorId: string; recordUri?: string } | null {
+  const b = body as { provider?: unknown; actorId?: unknown; recordUri?: unknown } | null;
+  if (!b) return null;
+  // unknown は isWritableProvider の引数型（string|null|undefined）に合わないため先に文字列へ絞る
+  const provider: string | undefined = typeof b.provider === 'string' ? b.provider : undefined;
+  if (!isWritableProvider(provider)) return null;
+  const actorId = b.actorId;
+  if (typeof actorId !== 'string') return null;
+  if (!isValidActorId(provider, actorId)) return null;
+  const recordUri = typeof b.recordUri === 'string' ? b.recordUri : undefined;
+  return { provider, actorId, ...(recordUri ? { recordUri } : {}) };
+}
+
 // --- フォロー操作（docs/profile-view-spec.md §6。bsky=follow レコード / misskey=following API） ---
 
 app.post(API.follow, async (c) => {
-  const body = (await c.req.json().catch(() => null)) as FollowRequest | null;
-  if (!body || !isWritableProvider(body.provider) || typeof body.actorId !== 'string' || !isValidActorId(body.provider, body.actorId)) {
-    throw new HTTPException(400, { message: 'invalid body' });
-  }
+  const body = parseFollowBody(await c.req.json().catch(() => null));
+  if (!body) throw new HTTPException(400, { message: 'invalid body' });
   c.set('provider', body.provider);
   if (body.provider === 'bluesky') {
-    return c.json({ recordUri: await bskyFollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.actorId) });
+    try {
+      return c.json({ recordUri: await bskyFollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.actorId) });
+    } catch (e) {
+      // 削除・ブロック等でフォローできない相手は 502 にせず 404（§9 の一貫性）
+      if (bskyAccountUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
+      throw e;
+    }
   }
   await misskeyFollow(c.env, body.actorId);
   return c.json({});
 });
 
 app.delete(API.follow, async (c) => {
-  const body = (await c.req.json().catch(() => null)) as UnfollowRequest | null;
-  if (!body || !isWritableProvider(body.provider) || typeof body.actorId !== 'string' || !isValidActorId(body.provider, body.actorId)) {
-    throw new HTTPException(400, { message: 'invalid body' });
-  }
+  const body = parseFollowBody(await c.req.json().catch(() => null));
+  if (!body) throw new HTTPException(400, { message: 'invalid body' });
   c.set('provider', body.provider);
   if (body.provider === 'bluesky') {
     // 解除は自分の follow レコード URI 指定（viewer.followUri。like 解除と同じ流儀）

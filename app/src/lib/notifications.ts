@@ -44,12 +44,16 @@ export const NOTIF_ICON: Partial<Record<NotificationType, string>> = {
 };
 
 /**
- * 通知カードの表示文言（テキストのみ通知は BFF 合成済みの text を優先。docs/notifications-spec.md §6）
+ * actor 前置きを持たない文言の通知タイプ（notifText は who を付けない）。
+ * BFF が text を合成済みのため実データでは n.text 分岐が先に効く（防御的な一元管理）。
  */
+const ACTORLESS_TYPES = new Set<NotificationType>(['pollEnded']);
+
+/** 通知カードの表示文言（テキストのみ通知は BFF 合成済みの text を優先。docs/notifications-spec.md §6） */
 export function notifText(n: Notification): string {
   if (n.text) return n.text;
   // actor 名を除いた本文（notifTextBody）に前置きを足すだけで合成する（文言の二重管理を避ける。§8.1）
-  if (n.type === 'pollEnded') return notifTextBody(n); // actor を伴わない文言は前置きを付けない
+  if (ACTORLESS_TYPES.has(n.type)) return notifTextBody(n); // actor を伴わない文言は前置きを付けない
   const who = n.actor?.displayName ? `${n.actor.displayName} さん` : '誰か';
   return `${who}${notifTextBody(n)}`;
 }

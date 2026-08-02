@@ -26,10 +26,11 @@ function relTime(iso: string): string {
   return `${d}日`;
 }
 
-/** 対象投稿のコンパクトプレビュー（本文2行クランプ＋先頭サムネ。CW は伏せて警告のみ表示） */
-function CompactPost({ post }: { post: Post }) {
-  return (
-    <div className="notif-post">
+/** 対象投稿のコンパクトプレビュー（本文2行クランプ＋先頭サムネ。CW は伏せて警告のみ表示）
+ * asButton 時は投稿プレビュー自体が Thread への入口（actor ボタンを持つカードのキーボード操作を確保）。§8.1 */
+function CompactPost({ post, asButton, onOpen }: { post: Post; asButton?: boolean; onOpen?: () => void }) {
+  const inner = (
+    <>
       <span className="notif-post-author">
         {post.author.avatarUrl && <img className="avatar-sm" src={post.author.avatarUrl} alt="" />}
         <span title={post.author.displayName}>{post.author.displayName}</span>
@@ -50,8 +51,16 @@ function CompactPost({ post }: { post: Post }) {
           {post.media[0] && <img className="notif-post-thumb" src={post.media[0].url} alt="" />}
         </>
       )}
-    </div>
+    </>
   );
+  if (asButton) {
+    return (
+      <button type="button" className="notif-post notif-post-btn" onClick={onOpen}>
+        {inner}
+      </button>
+    );
+  }
+  return <div className="notif-post">{inner}</div>;
 }
 
 export function NotificationCard({
@@ -71,26 +80,26 @@ export function NotificationCard({
   // actor ボタンは「actor が主体」の通知だけに出す。text のみ通知（verified 等）は BFF 合成の完文が
   // 表示本体で、actor を前置きすると「◯◯ さん あなたのアカウントが認証されました」のような二重主語になる（§8.1）
   const actorClickable = Boolean(onOpenProfile && n.actor && !n.text);
-  // actor ボタンを持つカードは article を role=button にしない
-  // （button のネストは ARIA の nested-interactive 違反。actor ボタンが主要な操作になるため）。§8.1
-  const cardButton = clickable && !actorClickable;
+  // actor ボタンを持つカードは article を role=button にしない（button のネストは ARIA の
+  // nested-interactive 違反）。その場合の Thread 遷移は投稿プレビュー（CompactPost ボタン）が担う（§8.1）
+  const openThreadFromCard = clickable && !actorClickable;
   const open = () => {
     if (n.post) onOpenThread?.(n.post);
   };
   const onKeyDown = (e: ReactKeyboardEvent) => {
-    if (cardButton && (e.key === 'Enter' || e.key === ' ')) {
+    if (openThreadFromCard && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       open();
     }
   };
   return (
     <article
-      className={`notif-card${clickable ? ' clickable' : ''}`}
-      role={cardButton ? 'button' : undefined}
-      tabIndex={cardButton ? 0 : undefined}
+      className={`notif-card${openThreadFromCard ? ' clickable' : ''}`}
+      role={openThreadFromCard ? 'button' : undefined}
+      tabIndex={openThreadFromCard ? 0 : undefined}
       aria-label={notifText(n)}
-      onClick={clickable ? open : undefined}
-      onKeyDown={cardButton ? onKeyDown : undefined}
+      onClick={openThreadFromCard ? open : undefined}
+      onKeyDown={openThreadFromCard ? onKeyDown : undefined}
     >
       <span className="notif-icon" aria-hidden="true">
         {icon}
@@ -128,7 +137,7 @@ export function NotificationCard({
             {relTime(n.createdAt)}
           </time>
         </div>
-        {n.post && <CompactPost post={n.post} />}
+        {n.post && (actorClickable ? <CompactPost post={n.post} asButton onOpen={open} /> : <CompactPost post={n.post} />)}
         {n.postUnavailable && <div className="notif-unavailable">投稿は取得できません</div>}
       </div>
     </article>

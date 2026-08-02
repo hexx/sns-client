@@ -1302,3 +1302,31 @@ describe('follow routes（docs/profile-view-spec.md §6）', () => {
     expect(misskeyUnfollow).toHaveBeenCalledWith(expect.anything(), 'u1');
   });
 });
+
+describe('follow routes: 取得不能アカウント（docs/profile-view-spec.md §9）', () => {
+  it('POST bluesky: 削除済みアカウントへのフォローは 404（502 にしない）', async () => {
+    vi.mocked(bskyFollow).mockRejectedValue({ error: 'AccountNotFound', message: 'Account not found' });
+    const res = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('POST bluesky: 無関係なエラーはそのまま伝播する（502）', async () => {
+    vi.mocked(bskyFollow).mockRejectedValue(new Error('boom'));
+    const res = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(502);
+  });
+});

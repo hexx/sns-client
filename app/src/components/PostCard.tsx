@@ -1,25 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent, TouchEvent as ReactTouchEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, TouchEvent as ReactTouchEvent } from 'react';
 import type { Author, Media, Post, Provider } from '../../../shared/types';
 import { PostMenu } from './PostMenu';
 import { ReactionPicker } from './ReactionPicker';
 import { RichText } from './RichText';
 
-/** アバターのプロフィール入口ボタン（docs/profile-view-spec.md §8.1）。
- * onOpenProfile が渡されたときだけ描画する（無ければ null。呼び出し側が素の表示を持つ）。
- * `<button>` のため NO_NAV_SELECTOR に含まれ、カードクリック（Thread）と干渉しない。 */
+/** アバター表示（docs/profile-view-spec.md §8.1）。onOpenProfile があれば入口ボタン、無ければ素の表示。
+ * どちらの場合も同じ見た目（img / フォールバック）を1箇所で描画する。
+ * ボタンは `<button>` のため NO_NAV_SELECTOR に含まれ、カードクリック（Thread）と干渉しない。 */
 function AvatarProfileButton({
   author,
   provider,
   avatarClass,
+  fallback,
   onOpenProfile,
 }: {
   author: Author;
   provider: Provider;
   avatarClass: string;
+  /** アバター無しのときのフォールバック要素（呼び出し側のレイアウトに合わせる。null なら何も描画しない） */
+  fallback?: ReactNode;
   onOpenProfile?: (provider: Provider, a: Author) => void;
 }) {
-  if (!onOpenProfile) return null;
+  const plain = author.avatarUrl ? (
+    <img className={avatarClass} src={author.avatarUrl} alt="" loading="lazy" />
+  ) : (
+    fallback
+  );
+  if (!onOpenProfile) return plain;
   return (
     <button
       type="button"
@@ -36,29 +44,25 @@ function AvatarProfileButton({
   );
 }
 
+/** DisplayName の props（onOpenProfile を渡すなら provider も必須。渡し忘れを型で防ぐ） */
+type DisplayNameProps = { author: Author; className?: string } & (
+  | { provider: Provider; onOpenProfile?: (provider: Provider, a: Author) => void }
+  | { provider?: never; onOpenProfile?: never }
+);
+
 /**
  * 表示名（docs/name-display-spec.md）。絵文字解決済みの displayNameRich があれば RichText inline、
  * なければプレーンテキスト。フルネームは title でホバー表示。クランプせず全文を表示する。
  * onOpenProfile があれば button 化し、クリックでプロフィールを開く（docs/profile-view-spec.md §8.1）。
  */
-function DisplayName({
-  author,
-  className,
-  provider,
-  onOpenProfile,
-}: {
-  author: Author;
-  className?: string;
-  provider?: Provider;
-  onOpenProfile?: (provider: Provider, a: Author) => void;
-}) {
+function DisplayName({ author, className, provider, onOpenProfile }: DisplayNameProps) {
   const inner =
     author.displayNameRich && author.displayNameRich.length > 0 ? (
       <RichText segments={author.displayNameRich} inline />
     ) : (
       author.displayName
     );
-  if (onOpenProfile && provider) {
+  if (onOpenProfile) {
     return (
       <button type="button" className={`${className ?? ''} name-btn`} title={author.displayName} onClick={() => onOpenProfile(provider, author)}>
         {inner}
@@ -402,10 +406,9 @@ function QuoteCard({
           author={post.author}
           provider={post.provider}
           avatarClass="avatar avatar-sm"
+          fallback={null}
           onOpenProfile={onOpenProfile}
         />
-        {!onOpenProfile &&
-          (post.author.avatarUrl ? <img className="avatar avatar-sm" src={post.author.avatarUrl} alt="" loading="lazy" /> : null)}
         <DisplayName author={post.author} className="display-name" provider={post.provider} onOpenProfile={onOpenProfile} />
         {onOpenProfile ? (
           <button type="button" className="handle handle-btn" onClick={() => onOpenProfile(post.provider, post.author)}>
@@ -608,14 +611,9 @@ export function PostCard({
           author={post.author}
           provider={post.provider}
           avatarClass="avatar"
+          fallback={<div className="avatar avatar-fallback" />}
           onOpenProfile={onOpenProfile}
         />
-        {!onOpenProfile &&
-          (post.author.avatarUrl ? (
-            <img className="avatar" src={post.author.avatarUrl} alt="" loading="lazy" />
-          ) : (
-            <div className="avatar avatar-fallback" />
-          ))}
         <div className="author">
           <div className="author-line author-line-main">
             <DisplayName author={post.author} className="display-name" provider={post.provider} onOpenProfile={onOpenProfile} />

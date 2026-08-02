@@ -16,7 +16,7 @@ export function fetchProfile(provider: Provider, author: Author): Promise<Profil
 }
 
 export function fetchProfilePosts(provider: Provider, author: Author, cursor?: string): Promise<TimelineResponse> {
-  if (provider === 'nostr') return getNostrProfilePosts(author.id, { wsFactory: browserWsFactory });
+  if (provider === 'nostr') return getNostrProfilePosts(author.id, { wsFactory: browserWsFactory }, cursor);
   if (provider !== 'bluesky' && provider !== 'misskey') return Promise.reject(new Error(`unsupported provider: ${provider}`));
   return api.profilePosts(provider, author.id, cursor);
 }

@@ -493,24 +493,28 @@ export async function getProfile(pubkeyHex: string, opts: { wsFactory: WsFactory
 
 /**
  * nostr プロフィールの投稿一覧（kind:1＋kind:6 を pubkey で照会。§7）。
- * リレーに標準ページングが無いため1バッチのみ（nextCursor は常に null。スレッド子孫と同じ扱い）。
+ * ページングは getTimeline と同じ until（created_at の unix 秒）を cursor として継続する
+ * （NIP-01 の until＋limit。リレーの標準機能で追加読み込みが可能）。
  */
 export async function getProfilePosts(
   pubkeyHex: string,
   opts: { wsFactory: WsFactory },
+  cursor?: string,
 ): Promise<TimelineResponse> {
   const urls = NOSTR_RELAYS;
+  const until = cursor ? Number.parseInt(cursor, 10) : undefined;
+  const filter: NostrFilter = { kinds: [1, 6], authors: [pubkeyHex], limit: FETCH_LIMIT };
+  if (until && !Number.isNaN(until)) filter.until = until;
   const outcomes = new Map<string, boolean>();
-  const events = await queryRelays(
-    urls,
-    { kinds: [1, 6], authors: [pubkeyHex], limit: FETCH_LIMIT },
-    { wsFactory: opts.wsFactory, outcomes },
-  );
+  const events = await queryRelays(urls, filter, { wsFactory: opts.wsFactory, outcomes });
   if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
     throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
   }
   const posts = await buildFeedPosts(events, urls, opts.wsFactory);
-  return { posts, nextCursor: null };
+  const page = posts.slice(0, PAGE_SIZE);
+  const nextCursor =
+    page.length > 0 ? String(Math.floor(Date.parse(page[page.length - 1].createdAt) / 1000)) : null;
+  return { posts: page, nextCursor };
 }
 
 // --- スレッド解決（docs/thread-view-spec.md §5、ADR-0014/0017） ---

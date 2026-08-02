@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { RichText } from '@atproto/api';
 import type { AppBskyFeedDefs, AppBskyRichtextFacet } from '@atproto/api';
-import { buildPostRecord, bskyReasonToType, bskySubjectUriOf, facetsToRich, mapAuthorFeedItem, mapBskyNotification, mapPost, mapProfile, threadViewToResponse } from './bsky';
+import { buildPostRecord, bskyReasonToType, bskySubjectUriOf, facetsToRich, isAccountUnavailable, mapAuthorFeedItem, mapBskyNotification, mapPost, mapProfile, threadViewToResponse } from './bsky';
 
 type Facets = AppBskyRichtextFacet.Main[];
 const enc = new TextEncoder();
@@ -807,5 +807,23 @@ describe('mapAuthorFeedItem（docs/profile-view-spec.md §5.1）', () => {
   it('reason 無し（リポストでない）は repostedBy を持たない', () => {
     const p = mapAuthorFeedItem(feedItem({ reason: undefined }));
     expect(p.repostedBy).toBeUndefined();
+  });
+});
+
+describe('isAccountUnavailable（docs/profile-view-spec.md §9）', () => {
+  it('エラーコード（空白無し）でも判定する: NotFound / AccountNotFound / BlockedActor / AccountTakedown', () => {
+    expect(isAccountUnavailable({ error: 'NotFound' })).toBe(true);
+    expect(isAccountUnavailable({ error: 'AccountNotFound' })).toBe(true);
+    expect(isAccountUnavailable({ error: 'BlockedActor' })).toBe(true);
+    expect(isAccountUnavailable({ error: 'AccountTakedown' })).toBe(true);
+    expect(isAccountUnavailable({ error: 'Deactivated' })).toBe(true);
+  });
+  it('メッセージ（空白有り）でも判定する', () => {
+    expect(isAccountUnavailable({ message: 'Profile not found' })).toBe(true);
+    expect(isAccountUnavailable({ message: 'Account has been taken down' })).toBe(true);
+  });
+  it('無関係なエラーは判定しない', () => {
+    expect(isAccountUnavailable({ error: 'InternalServerError' })).toBe(false);
+    expect(isAccountUnavailable({ error: 'RateLimitExceeded', message: 'too many requests' })).toBe(false);
   });
 });

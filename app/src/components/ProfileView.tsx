@@ -340,9 +340,17 @@ export function ProfileView({
   /**
    * 一覧内の別ユーザー入口（リポスト行・quote card の著者行）での置換。
    * 同一オーバーレイ内で引き直し、履歴は積まない（§2）。本人への入口は反応しない。
+   * 一覧の状態（cursor・listDone・listError）は同期リセットする（useEffect は描画後なので、
+   * その間の IntersectionObserver 発火が前ターゲットの cursor で誤ページングするのを防ぐ）。
    */
   const openProfile = useCallback((p: Provider, a: Author) => {
-    setTarget((t) => (authorKey(p, a) === authorKey(t.provider, t.author) ? t : { provider: p, author: a }));
+    setTarget((t) => {
+      if (authorKey(p, a) === authorKey(t.provider, t.author)) return t;
+      setCursor(null);
+      setListDone(false);
+      setListError(null);
+      return { provider: p, author: a };
+    });
   }, []);
 
   /** 一覧のカードへ配線するハンドラ群（nostr は閲覧専用なので操作系は undefined） */
@@ -474,12 +482,13 @@ export function ProfileView({
                 )}
                 {listDone && posts.length === 0 && !listError && <p className="empty">投稿はありません</p>}
               </div>
+              {/* sentinel は一覧の表示時のみ（概要失敗時は loadMore を連発させない。§8.2） */}
+              <div ref={sentinelRef} className="sentinel">
+                {loadingMore && 'さらに読み込み中…'}
+              </div>
             </>
           )}
 
-          <div ref={sentinelRef} className="sentinel">
-            {loadingMore && 'さらに読み込み中…'}
-          </div>
           {toast && <div className="toast">{toast}</div>}
         </div>
       </div>

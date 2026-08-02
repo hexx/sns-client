@@ -529,14 +529,30 @@ describe('getProfile（docs/profile-view-spec.md §7）', () => {
 });
 
 describe('getProfilePosts（docs/profile-view-spec.md §7）', () => {
-  it('kind:1 を pubkey 照会で収集し、TimelineResponse を組み立てる（nextCursor は null）', async () => {
+  it('kind:1 を pubkey 照会で収集し、TimelineResponse を組み立てる（nextCursor は最古投稿の unix 秒）', async () => {
     const { getProfilePosts } = await import('./nostr');
     const ev1 = makeEvent({ content: 'one', created_at: 1000 });
     const ev2 = makeEvent({ content: 'two', created_at: 2000 });
     const res = await getProfilePosts(PUB, { wsFactory: fakeRelay(onAllRelays([ev1, ev2])) });
-    expect(res.nextCursor).toBeNull();
+    expect(res.nextCursor).toBe('1000'); // 最古（one, created_at 1000）の unix 秒
     expect(res.posts.map((p) => p.text)).toEqual(['two', 'one']);
     expect(res.posts.every((p) => p.provider === 'nostr')).toBe(true);
+  });
+
+  it('cursor は until として渡され、それより古い投稿だけを次ページに返す（getTimeline と同じページング）', async () => {
+    const { getProfilePosts } = await import('./nostr');
+    const ev1 = makeEvent({ content: 'old', created_at: 1000 });
+    const ev2 = makeEvent({ content: 'newer', created_at: 3000 });
+    const res = await getProfilePosts(PUB, { wsFactory: fakeRelay(onAllRelays([ev1, ev2])) }, '1000');
+    expect(res.posts.map((p) => p.text)).toEqual(['old']);
+    expect(res.nextCursor).toBe('1000');
+  });
+
+  it('投稿が無ければ nextCursor は null', async () => {
+    const { getProfilePosts } = await import('./nostr');
+    const res = await getProfilePosts(PUB, { wsFactory: fakeRelay({}) });
+    expect(res.posts).toEqual([]);
+    expect(res.nextCursor).toBeNull();
   });
 
   it('kind:6（リポスト）は参照先を解決して repostedBy に載せる', async () => {
@@ -549,7 +565,6 @@ describe('getProfilePosts（docs/profile-view-spec.md §7）', () => {
     expect(res.posts[0].text).toBe('original');
     expect(res.posts[0].repostedBy?.id).toBe(PUB);
   });
-
   it('自分の投稿の自己リポストは重複させない（kind:1 と kind:6 の両方に現れる場合）', async () => {
     const { getProfilePosts } = await import('./nostr');
     const own = makeEvent({ content: 'own post', created_at: 1000 });

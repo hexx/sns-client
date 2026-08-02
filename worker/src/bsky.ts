@@ -463,11 +463,27 @@ export function mapAuthorFeedItem(f: {
   return post;
 }
 
-/** アカウント取得不能の判定（削除・ブロック・停止・BAN 等。§9 の 404 マップに使う） */
-function isAccountUnavailable(e: unknown): boolean {
+/**
+ * アカウント取得不能の判定（削除・ブロック・停止・BAN 等。§9 の 404 マップに使う）。
+ * エラーコード（NotFound / AccountNotFound / BlockedActor / AccountTakedown / Deactivated）と
+ * メッセージの両方を見る（getThread の NotFound 判定と同じ流儀）。
+ */
+export function isAccountUnavailable(e: unknown): boolean {
   const code = (e as { error?: string })?.error ?? '';
   const msg = String((e as { message?: string })?.message ?? '');
-  return /(not found|blocked|takedown|deactivated)/i.test(`${code} ${msg}`);
+  // 「not found」「take(n) down」は空白有無どちらでも（NotFound / AccountNotFound / AccountTakedown / taken down）
+  return /(not ?found|blocked|taken? ?down|deactivated)/i.test(`${code} ${msg}`);
+}
+
+/** 取得不能アカウントを null に縮退するラッパー（getProfile / getProfilePosts の共通処理） */
+async function withUnavailableAsNull<T>(fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (e) {
+    // そのままでは 502 になるため、取得不能（null → ルートが 404 にマップ）として扱う（§9）
+    if (isAccountUnavailable(e)) return null;
+    throw e;
+  }
 }
 
 /**
@@ -480,14 +496,10 @@ export async function getProfile(
   did: string,
 ): Promise<Profile | null> {
   const a = await getAgent(handle, appPassword);
-  try {
+  return withUnavailableAsNull(async () => {
     const res = await a.getProfile({ actor: did });
     return mapProfile(res.data as AppBskyActorDefs.ProfileViewDetailed);
-  } catch (e) {
-    // そのままでは 502 になるため、取得不能（null → ルートが 404 にマップ）として扱う（§9）
-    if (isAccountUnavailable(e)) return null;
-    throw e;
-  }
+  });
 }
 
 /**
@@ -503,17 +515,13 @@ export async function getProfilePosts(
   cursor?: string,
 ): Promise<TimelineResponse | null> {
   const a = await getAgent(handle, appPassword);
-  try {
+  return withUnavailableAsNull(async () => {
     const res = await a.getAuthorFeed({ actor: did, limit: 30, ...(cursor ? { cursor } : {}), filter: 'posts_no_replies' });
     return {
       posts: (res.data.feed ?? []).map(mapAuthorFeedItem),
       nextCursor: res.data.cursor ?? null,
     };
-  } catch (e) {
-    // 概要ルートと同じく、取得不能アカウントは 502 にせず 404 にマップする（§9 の一貫性）
-    if (isAccountUnavailable(e)) return null;
-    throw e;
-  }
+  });
 }
 
 /** フォローを作成し、自分の follow レコード URI を返す（docs/profile-view-spec.md §6） */

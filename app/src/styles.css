@@ -1528,6 +1528,19 @@ button.reaction:hover {
   flex: 0 0 auto;
   background: var(--border);
 }
+/* actor ボタンを持つカードの Thread 入口（投稿プレビューの button 化。§8.1） */
+.notif-post-btn {
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.notif-post-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .notif-unavailable {
   color: var(--muted);
   font-size: 13px;
