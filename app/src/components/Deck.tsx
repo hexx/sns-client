@@ -5,6 +5,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
+import { isNotificationsView } from '../lib/notifications';
+import { NotificationsView } from './NotificationsView';
 import { TimelineCore } from './TimelineCore';
 import type { Post, Provider, Source, SourceCatalogEntry, View } from '../../../shared/types';
 
@@ -12,7 +14,7 @@ function sourceKey(s: Source): string {
   return `${s.provider}:${s.kind}:${s.id ?? ''}`;
 }
 
-const KIND_LABEL: Record<string, string> = { home: 'ホーム', list: 'リスト', antenna: 'アンテナ', feed: 'フィード', channel: 'チャンネル', pubkey: 'ユーザー', relay: 'リレー' };
+const KIND_LABEL: Record<string, string> = { home: 'ホーム', list: 'リスト', antenna: 'アンテナ', feed: 'フィード', channel: 'チャンネル', pubkey: 'ユーザー', relay: 'リレー', notifications: '通知' };
 const PROVIDER_LABEL: Record<string, string> = { bluesky: 'Bluesky', misskey: 'Misskey', mastodon: 'Mastodon', mixi2: 'mixi2', nostr: 'Nostr' };
 
 /** Nostr 自由入力の形式判定（docs/nostr-integration-spec.md §6.6）。npub/nprofile → pubkey、wss:// → relay */
@@ -293,7 +295,11 @@ export function Deck({
             </button>
           </header>
           {view.sources.length > 0 ? (
-            <TimelineCore sources={view.sources} interactive badgeFor={badgeFor} onOpenThread={onOpenThread} />
+            isNotificationsView(view) ? (
+              <NotificationsView sources={view.sources} active onOpenThread={onOpenThread} />
+            ) : (
+              <TimelineCore sources={view.sources} interactive badgeFor={badgeFor} onOpenThread={onOpenThread} />
+            )
           ) : (
             <p className="empty">ソースがありません（⚙ から追加）</p>
           )}

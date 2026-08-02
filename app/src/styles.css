@@ -1428,3 +1428,110 @@ button.reaction:hover {
   align-self: center;
   padding: 8px;
 }
+
+/* --- 通知 View / 通知カード（docs/notifications-spec.md §6） --- */
+.notif-view .scroll {
+  overscroll-behavior: contain;
+}
+.notif-card {
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: default;
+}
+.notif-card.clickable {
+  cursor: pointer;
+}
+.notif-card.clickable:hover {
+  filter: brightness(1.08);
+}
+.notif-card.clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.notif-icon {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  margin-top: 2px;
+}
+.notif-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.notif-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.notif-text {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.notif-time {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+/* 対象投稿のコンパクトプレビュー（本文2行クランプ＋先頭サムネ） */
+.notif-post {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg);
+  font-size: 13px;
+  overflow: hidden;
+}
+.notif-post-author {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.notif-post-author > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notif-post-text {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted);
+}
+.notif-post-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: 0 0 auto;
+  background: var(--border);
+}
+.notif-unavailable {
+  color: var(--muted);
+  font-size: 13px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}

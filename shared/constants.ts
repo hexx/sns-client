@@ -14,6 +14,8 @@ export const API = {
   likes: '/api/likes',
   reposts: '/api/reposts',
   emojis: '/api/emojis',
+  notifications: '/api/notifications',
+  notificationsRead: '/api/notifications/read',
   mutes: '/api/mutes',
   blocks: '/api/blocks',
   me: '/api/me',

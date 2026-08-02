@@ -6,6 +6,7 @@ import type {
   Health,
   MediaUploadResponse,
   MeResponse,
+  NotificationsResponse,
   Post,
   PostInputWire,
   Provider,
@@ -106,6 +107,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(reaction ? { provider: 'misskey', postId, reaction } : { provider: 'misskey', postId }),
     }),
+  /** 通知一覧（provider ごと。docs/notifications-spec.md §4.1） */
+  notifications: (provider: 'bluesky' | 'misskey', cursor?: string) => {
+    const q = new URLSearchParams({ provider });
+    if (cursor) q.set('cursor', cursor);
+    return request<NotificationsResponse>(`${API.notifications}?${q.toString()}`);
+  },
+  /** 通知の全既読（View 表示時の既読化。docs/notifications-spec.md §4.2） */
+  markNotificationsRead: () => request<Record<string, never>>(API.notificationsRead, { method: 'POST' }),
   /** ピッカー用のローカルカスタム絵文字一覧（Misskey のみ） */
   emojis: (provider: Provider = 'misskey') =>
     request<EmojiInfo[]>(`${API.emojis}?${new URLSearchParams({ provider }).toString()}`),

@@ -9,6 +9,9 @@ import type {
   DestinationOption,
   EmojiInfo,
   Media,
+  Notification,
+  NotificationType,
+  NotificationsResponse,
   Post,
   PostInputWire,
   Reaction,
@@ -80,6 +83,19 @@ type MkNote = {
   channel?: { id: string; name: string } | null; // 所属チャンネル（使うのは id/name のみ）
 };
 type MfmNode = { type: string; props?: Record<string, unknown>; children?: MfmNode[] };
+
+/** i/notifications の1通知（使うフィールドのみ） */
+type MkNotification = {
+  id: string;
+  createdAt: string;
+  type: string;
+  isRead?: boolean;
+  user?: MkUser | null;
+  note?: MkNote | null;
+  reaction?: string | null;
+  body?: string | null; // app 通知の本文
+  achievement?: { name?: string } | null;
+};
 
 function instanceOf(env: MisskeyEnv): string {
   return (env.MISSKEY_INSTANCE_URL ?? DEFAULT_INSTANCE).replace(/\/+$/, '');
@@ -395,6 +411,120 @@ export function mapNote(note: MkNote, registry: Record<string, string> = {}, ins
     post.quote = basePost(note.renote, registry, instanceUrl);
   }
   return post;
+}
+
+// --- 通知（docs/notifications-spec.md、ADR-0019） ---
+
+/** Misskey の通知 type を統一 NotificationType へ写像する（未知 type は生のまま。UI はフィールドの有無で描画を決める） */
+export function misskeyTypeToType(type: string): NotificationType {
+  switch (type) {
+    case 'follow':
+    case 'mention':
+    case 'reply':
+    case 'renote':
+    case 'quote':
+    case 'reaction':
+    case 'pollVote':
+    case 'pollEnded':
+    case 'note':
+    case 'app':
+    case 'receiveFollowRequest':
+    case 'followRequestAccepted':
+    case 'achievementEarned':
+    case 'roleAssigned':
+    case 'chatRoomInvitationReceived':
+    case 'exportCompleted':
+    case 'login':
+    case 'createToken':
+    case 'test':
+    case 'scheduledNotePosted':
+    case 'scheduledNotePostFailed':
+      return type;
+    default:
+      return type as NotificationType;
+  }
+}
+
+/** テキストのみの通知の表示文（BFF が合成。docs/notifications-spec.md §6） */
+export function misskeyNotificationText(type: NotificationType, n?: MkNotification): string | undefined {
+  switch (type) {
+    case 'achievementEarned':
+      return n?.achievement?.name
+        ? `実績「${n.achievement.name}」を獲得しました`
+        : '実績を獲得しました';
+    case 'login':
+      return '新しいデバイスからログインしました';
+    case 'createToken':
+      return 'API トークンが作成されました';
+    case 'test':
+      return 'テスト通知';
+    case 'exportCompleted':
+      return 'エクスポートが完了しました';
+    case 'roleAssigned':
+      return 'ロールが付与されました';
+    case 'chatRoomInvitationReceived':
+      return 'チャットルームに招待されました';
+    case 'scheduledNotePosted':
+      return '予約したノートが投稿されました';
+    case 'scheduledNotePostFailed':
+      return '予約したノートの投稿に失敗しました';
+    case 'pollEnded':
+      return 'あなたのアンケートが終了しました';
+    case 'app':
+      return n?.body ?? undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** i/notifications の1通知を統一 Notification に写像する純粋関数（ADR-0019） */
+export function mapMisskeyNotification(
+  n: MkNotification,
+  registry: Record<string, string> = {},
+  instanceUrl?: string,
+): Notification {
+  const type = misskeyTypeToType(n.type);
+  const notif: Notification = {
+    id: n.id,
+    provider: 'misskey',
+    type,
+    createdAt: n.createdAt,
+    isRead: n.isRead ?? false,
+  };
+  if (n.user) notif.actor = authorOf(n.user, registry);
+  if (n.note) notif.post = mapNote(n.note, registry, instanceUrl);
+  if (n.reaction) notif.reaction = n.reaction;
+  const text = misskeyNotificationText(type, n);
+  if (text) notif.text = text;
+  return notif;
+}
+
+/**
+ * 通知一覧（docs/notifications-spec.md §4.1）。markAsRead: false を明示（デフォルト true のため、
+ * ポーリングだけで全既読になるのを防ぐ。既読化は POST /api/notifications/read に閉じる）。
+ * 未読数は i の unreadNotificationsCount（旧バージョンは unreadNotifications）。
+ */
+export async function getNotifications(env: MisskeyEnv, cursor?: string): Promise<NotificationsResponse> {
+  const params: Record<string, unknown> = { limit: LIMIT, markAsRead: false };
+  if (cursor) params.untilId = cursor;
+  const [list, me] = await Promise.all([
+    mkApi<MkNotification[]>(env, 'i/notifications', params),
+    mkApi<{ unreadNotificationsCount?: number; unreadNotifications?: number }>(env, 'i'),
+  ]);
+  const registry = await loadEmojiRegistry(env);
+  const inst = instanceOf(env);
+  const items = list ?? [];
+  const last = items[items.length - 1];
+  return {
+    notifications: items.map((n) => mapMisskeyNotification(n, registry, inst)),
+    unreadCount: me?.unreadNotificationsCount ?? me?.unreadNotifications ?? 0,
+    nextCursor: items.length >= LIMIT && last ? last.id : null,
+  };
+}
+
+/** 通知の全既読（markAsRead: true で取得。サーバー側で readAllNotification が走る。docs/notifications-spec.md §4.2） */
+export async function markNotificationsRead(env: MisskeyEnv): Promise<void> {
+  await mkApi(env, 'i/notifications', { limit: 1, markAsRead: true });
 }
 
 // --- BFF 処理本体 ---

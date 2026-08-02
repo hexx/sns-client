@@ -36,10 +36,12 @@ import {
   blockActor as bskyBlock,
   createPost as bskyPost,
   getMyDid as bskyGetMyDid,
+  getNotifications as bskyNotifications,
   getThread as bskyThread,
   getTimeline as bskyTimeline,
   likePost as bskyLike,
   listSources as bskySources,
+  markNotificationsRead as bskyMarkNotificationsRead,
   muteActor as bskyMute,
   repostPost as bskyRepost,
   resetSession,
@@ -57,10 +59,12 @@ import {
   getComposeCharLimit,
   getEmojiList as misskeyEmojis,
   getMyUserId as misskeyGetMyUserId,
+  getNotifications as misskeyNotifications,
   getThread as misskeyThread,
   getTimeline as misskeyTimeline,
   listDestinations as misskeyDestinations,
   listSources as misskeySources,
+  markNotificationsRead as misskeyMarkNotificationsRead,
   muteUser as misskeyMute,
   react as misskeyReact,
   renote as misskeyRenote,
@@ -118,10 +122,23 @@ function validateDestination(input: PostInputWire): string | null {
 
 /** プロバイダごとに許容する Source kind（docs/deck-view-spec.md §3） */
 const KINDS: Record<string, string[]> = {
-  bluesky: ['home', 'list', 'feed'],
-  misskey: ['home', 'list', 'antenna', 'channel'],
+  bluesky: ['home', 'list', 'feed', 'notifications'],
+  misskey: ['home', 'list', 'antenna', 'channel', 'notifications'],
   mixi2: [], // 型上予約のみ。公式 API に TL 取得手段が無いため Source 種別なし（docs/mixi2-integration-spec.md）
   nostr: ['pubkey', 'relay'], // 読み取り専用。両方とも id 必須（docs/nostr-integration-spec.md §5.1）
+};
+
+/**
+ * 通知 View（プリセット＋既存ユーザーへの注入用。docs/notifications-spec.md §2、ADR-0020）。
+ * 通知 Source 同士（bluesky + misskey）の時系列合成で、Post ストリームとは混ぜない。
+ */
+const NOTIFICATIONS_VIEW: View = {
+  id: 'notifications',
+  name: '通知',
+  sources: [
+    { provider: 'bluesky', kind: 'notifications' },
+    { provider: 'misskey', kind: 'notifications' },
+  ],
 };
 
 /** 固定プリセットの View 定義（KV 未設定時のフォールバック。ADR-0004） */
@@ -134,7 +151,17 @@ const VIEWS_PRESET: View[] = [
       { provider: 'misskey', kind: 'home' },
     ],
   },
+  NOTIFICATIONS_VIEW,
 ];
+
+/**
+ * KV のカスタム View に通知 View が無ければ先頭に注入して返す（docs/notifications-spec.md §2）。
+ * KV には書き戻さない（PUT /api/views で保存された views に含まれない状態 = 削除済み。再注入しない）。
+ */
+function withNotificationsView(views: View[]): View[] {
+  if (views.some((v) => v.sources.some((s) => s.kind === 'notifications'))) return views;
+  return [NOTIFICATIONS_VIEW, ...views];
+}
 
 /** PUT /api/views の検証。問題なければ null、あればエラー文言を返す */
 function validateViews(body: unknown): string | null {
@@ -149,7 +176,15 @@ function validateViews(body: unknown): string | null {
     for (const s of v.sources as Source[]) {
       if (!isProvider(s?.provider)) return 'invalid source.provider';
       if (!KINDS[s.provider].includes(s.kind)) return `invalid source.kind: ${s.kind}`;
-      if (s.kind !== 'home' && (typeof s.id !== 'string' || s.id.length === 0)) return 'source.id required';
+      // notifications は id 不要（専用ルート /api/notifications。docs/notifications-spec.md §4）
+      if (s.kind !== 'home' && s.kind !== 'notifications' && (typeof s.id !== 'string' || s.id.length === 0)) {
+        return 'source.id required';
+      }
+    }
+    // 通知 Source は通知 Source とのみ共存できる（Post ストリームと混ぜない。docs/notifications-spec.md §2、ADR-0020）
+    const hasNotifications = v.sources.some((s) => s.kind === 'notifications');
+    if (hasNotifications && v.sources.some((s) => s.kind !== 'notifications')) {
+      return `notifications view cannot mix post sources: ${v.id}`;
     }
   }
   return null;
@@ -281,7 +316,7 @@ app.get(API.views, async (c) => {
   // KV のカスタム View を優先。未設定・読み取り失敗はプリセットへフォールバック
   try {
     const stored = await c.env.VIEWS?.get(VIEWS_KV_KEY, 'json');
-    if (Array.isArray(stored)) return c.json(stored);
+    if (Array.isArray(stored)) return c.json(withNotificationsView(stored));
   } catch (e) {
     console.error('[api/views] KV get failed; fallback to preset', e);
   }
@@ -331,6 +366,8 @@ app.get(API.timeline, async (c) => {
   if (provider === 'nostr') throw new HTTPException(400, { message: 'nostr is client-direct: fetch from the browser (ADR-0014)' });
   const kind = c.req.query('kind') ?? 'home';
   if (!KINDS[provider].includes(kind)) throw new HTTPException(400, { message: 'invalid kind' });
+  // 通知は /api/notifications の専用ルート（Post ストリームではない。docs/notifications-spec.md §4）
+  if (kind === 'notifications') throw new HTTPException(400, { message: 'notifications is not a timeline source' });
   const id = c.req.query('id') ?? undefined;
   if (kind !== 'home' && !id) throw new HTTPException(400, { message: 'id required' });
   const source = { provider, kind, ...(id ? { id } : {}) };
@@ -379,6 +416,12 @@ app.get(API.sources, async (c) => {
     collectSources('bluesky', () => bskySources(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD)),
     collectSources('misskey', () => misskeySources(c.env)),
   ]);
+  // 通知 Source は認証不要の静的オプション（カタログ取得失敗時も必ず残る。docs/notifications-spec.md §2）
+  for (const entry of entries) {
+    if (!entry.options.some((o) => o.source.kind === 'notifications')) {
+      entry.options.unshift({ source: { provider: entry.provider as 'bluesky' | 'misskey', kind: 'notifications' }, name: '通知' });
+    }
+  }
   return c.json(entries);
 });
 
@@ -493,6 +536,39 @@ app.get(API.emojis, async (c) => {
   if (provider !== 'misskey') throw new HTTPException(400, { message: 'unsupported provider' });
   c.set('provider', 'misskey');
   return c.json(await misskeyEmojis(c.env));
+});
+
+// --- 通知（docs/notifications-spec.md。bsky=updateSeen / misskey=markAsRead の差を BFF が吸収） ---
+
+app.get(API.notifications, async (c) => {
+  const provider = c.req.query('provider');
+  if (!isWritableProvider(provider)) throw new HTTPException(400, { message: 'invalid provider' });
+  const cursor = c.req.query('cursor') ?? undefined;
+  c.set('provider', provider);
+  if (provider === 'bluesky') {
+    return c.json(await bskyNotifications(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, cursor));
+  }
+  return c.json(await misskeyNotifications(c.env, cursor));
+});
+
+/**
+ * 通知の全既読（View 表示時の既読化。docs/notifications-spec.md §5）。
+ * 未設定 Provider はスキップし、片方の失敗はもう片方に影響させない（ログのみ）。
+ */
+app.post(API.notificationsRead, async (c) => {
+  const jobs: Promise<unknown>[] = [];
+  if (c.env.BSKY_HANDLE && c.env.BSKY_APP_PASSWORD) {
+    jobs.push(
+      bskyMarkNotificationsRead(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD).catch((e) =>
+        console.error('[api/notifications/read:bluesky]', e),
+      ),
+    );
+  }
+  if (c.env.MISSKEY_TOKEN) {
+    jobs.push(misskeyMarkNotificationsRead(c.env).catch((e) => console.error('[api/notifications/read:misskey]', e)));
+  }
+  await Promise.all(jobs);
+  return c.json({});
 });
 
 // --- ブロック・ミュート（docs/block-mute-spec.md §4。サーバー側（Provider ネイティブ）方式、ADR-0018） ---
