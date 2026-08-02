@@ -62,8 +62,7 @@ function HandleProfileButton({
 }) {
   if (!onOpenProfile) {
     return <span className={className}>@{author.handle}</span>; // className は呼び出し側が .handle を渡す
-  }
-  return (
+  }  return (
     <button
       type="button"
       className={`${className ?? ''} handle-btn`}
@@ -650,7 +649,7 @@ export function PostCard({
               <HandleProfileButton
                 author={post.author}
                 provider={post.provider}
-                className="handle"
+                className={onOpenProfile ? 'handle' : undefined}
                 onOpenProfile={onOpenProfile}
               />
               <VisibilityBadge post={post} />

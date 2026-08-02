@@ -475,11 +475,11 @@ async function buildFeedPosts(
   }
   for (const e of kind6) {
     const orig = originals.get(eTagId(e) ?? '');
-    if (!orig) continue; // 参照先未取得のリポストはスキップ（§6.5）
-    // 自己リポスト（元ノートが同一 author の kind:1 として同バッチに存在）は元の投稿と重複するためスキップ。
-    // 他ユーザーのノートのリポストは表示対象（repostedBy を付ける）。単一 author バッチでは
-    // seen に入るのは自分の kind:1 のみなので、実質は自己リポストの判定になる
-    if (seen.has(orig.id) && orig.pubkey === e.pubkey) continue;
+    if (!orig) continue; // 参照先未取得のリポストはスキップ（§6.5。kind:6 参照の連鎖（リポストのリポスト）は解決しない既知の制限）
+    // 元ノートが既に表示済み（自己リポスト・同一ノートの複数リポスト）ならスキップ。
+    // 単一 author バッチでは kind:1 は自分の投稿のみなので、他ユーザーのノートのリポストは
+    // 対象外にならず、最初のリポストだけが表示される
+    if (seen.has(orig.id)) continue;
     seen.add(orig.id);
     posts.push(buildPost(orig, profiles.get(orig.pubkey), toAuthor(e.pubkey, profiles.get(e.pubkey))));
     rawTimes.push(e.created_at); // リポストは「リポストした生イベント」の日時でページングする
@@ -527,9 +527,9 @@ export async function getProfilePosts(
   cursor?: string,
 ): Promise<TimelineResponse> {
   const urls = NOSTR_RELAYS;
-  const until = cursor ? Number.parseInt(cursor, 10) : undefined;
+  const until = cursor !== undefined && cursor !== '' ? Number.parseInt(cursor, 10) : undefined;
   const filter: NostrFilter = { kinds: [1, 6], authors: [pubkeyHex], limit: FETCH_LIMIT };
-  if (until && !Number.isNaN(until)) filter.until = until;
+  if (until !== undefined && !Number.isNaN(until)) filter.until = until;
   const outcomes = new Map<string, boolean>();
   const events = await queryRelays(urls, filter, { wsFactory: opts.wsFactory, outcomes });
   if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {

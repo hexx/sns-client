@@ -76,7 +76,7 @@ const unfollowImpl = (
   request<Record<string, never>>(API.follow, {
     method: 'DELETE',
     body: JSON.stringify(
-      (recordUri ? { provider, actorId, recordUri } : { provider, actorId }) satisfies UnfollowRequest,
+      (recordUri !== undefined ? { provider, actorId, recordUri } : { provider, actorId }) satisfies UnfollowRequest,
     ),
   });
 

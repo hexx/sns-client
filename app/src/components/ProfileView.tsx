@@ -312,7 +312,13 @@ export function ProfileView({
         apply((x) => (x ? { ...x, viewer: { following: false } } : x));
       } else {
         const res = await api.follow(p.provider, p.author.id);
-        apply((x) => (x ? { ...x, viewer: { following: true, ...(res.recordUri ? { followUri: res.recordUri } : {}) } } : x));
+        if (res.recordUri) {
+          apply((x) => (x ? { ...x, viewer: { following: true, followUri: res.recordUri } } : x));
+        } else {
+          // recordUri が返らないと解除（followUri）に使えずトグル状態を追跡できないため戻す（like/repost と同じ）
+          apply(() => original);
+          if (targetRef.current === t) setToast('フォローに失敗しました');
+        }
       }
     } catch {
       // どの操作に失敗したかを正確に伝える（フォロー中 → 解除に失敗、未フォロー → フォローに失敗）
@@ -343,7 +349,9 @@ export function ProfileView({
 
   // --- 追加読み込み（cursor ページング。無限スクロール。§8.2。ターゲット置換後の stale 応答は破棄） ---
   const loadMore = useCallback(async () => {
-    if (!cursor || loadingMore || loadingMoreRef.current) return;
+    // in-flight は ref で管理（deps に入れない。失敗時に loadMore が再生成されると
+    // IntersectionObserver が再購読され、可視中の sentinel で無限リトライになるため）
+    if (!cursor || loadingMoreRef.current) return;
     const t = target;
     loadingMoreRef.current = true;
     setLoadingMore(true);
@@ -361,7 +369,7 @@ export function ProfileView({
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [cursor, loadingMore, target]);
+  }, [cursor, target]);
 
   /** 一覧表示の準備ができたか（sentinel のマウント条件。IO の再購読トリガに使う） */
   const profileReady = profile !== null && status === 'done';
