@@ -61,8 +61,9 @@
 - テスト追加: bsky/misskey mapProfile・index ルート・nostr parseProfile/getProfile/getProfilePosts・PostCard 入口・NotificationCard actor・ProfileView（新規 12 件）
 
 ## 残タスク
+- **PR 作成済み**: https://github.com/hexx/sns-client/pull/43（feature/profile-view → main）。コードレビュー（ocr）実施・指摘修正済み・差し込み解説コメント 12 件追加済み。マージ待ち。
 - 実機確認（wrangler dev での目視）はユーザー任せ。
-- .handoff/outbox.md: thread-view の PR 作成がコードレビュー（ocr）の LLM 未設定で中断中（別タスク・保留）
+- outbox の thread-view PR 中断は解消済み（PR #39 として main にマージ済み）
 
 ## 確定済み決定（ユーザー承認済み）
 - **Q1（スコープ）= A 概要＋投稿一覧** — 承認済み。「プロフィールを見たい」に「その人の投稿も見たい」が含まれる。プロフィールオーバーレイにヘッダー情報（アイコン・表示名・handle・自己紹介・フォロワー数等）＋そのユーザーの投稿一覧を表示する。取得は各 Provider 標準（bsky getAuthorFeed / Misskey users/notes）。
