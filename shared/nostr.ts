@@ -421,6 +421,22 @@ export async function getTimeline(
   } else if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
     throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
   }
+
+  const posts = await buildFeedPosts(events, urls, opts.wsFactory);
+  const page = posts.slice(0, PAGE_SIZE);
+  const nextCursor =
+    page.length > 0 ? String(Math.floor(Date.parse(page[page.length - 1].createdAt) / 1000)) : null;
+  return { posts: page, nextCursor };
+}
+
+/**
+ * kind:1＋kind:6 のイベント列から投稿一覧を組み立てる共通処理（§6.5、docs/profile-view-spec.md §7）。
+ * - kind:6 の参照先（元ノート）を ids でバッチ取得し、repostedBy として包む。
+ * - 登場する全 pubkey のプロフィールをまとめて解決（§6.4。TTL キャッシュ）。
+ * - 自分の投稿の自己リポストは元の投稿と重複するためスキップ（重複表示を防ぐ）。
+ * - 時系列降順で返す。getTimeline（pubkey Source）と getProfilePosts が共用する。
+ */
+async function buildFeedPosts(events: NostrEvent[], urls: string[], factory: WsFactory): Promise<Post[]> {
   const kind1 = events.filter((e) => e.kind === 1);
   const kind6 = events.filter((e) => e.kind === 6);
 
@@ -428,7 +444,7 @@ export async function getTimeline(
   const refs = [...new Set(kind6.map(eTagId).filter((x): x is string => Boolean(x)))];
   const originals = new Map<string, NostrEvent>();
   if (refs.length > 0) {
-    for (const ev of await queryRelays(urls, { kinds: [1], ids: refs }, { wsFactory: opts.wsFactory })) {
+    for (const ev of await queryRelays(urls, { kinds: [1], ids: refs }, { wsFactory: factory })) {
       originals.set(ev.id, ev);
     }
   }
@@ -438,21 +454,24 @@ export async function getTimeline(
   for (const e of kind1) pubkeys.add(e.pubkey);
   for (const e of kind6) pubkeys.add(e.pubkey);
   for (const e of originals.values()) pubkeys.add(e.pubkey);
-  const profiles = await loadProfiles([...pubkeys], urls, opts.wsFactory);
+  const profiles = await loadProfiles([...pubkeys], urls, factory);
 
   const posts: Post[] = [];
-  for (const e of kind1) posts.push(buildPost(e, profiles.get(e.pubkey)));
+  const seen = new Set<string>();
+  for (const e of kind1) {
+    const p = buildPost(e, profiles.get(e.pubkey));
+    seen.add(p.id);
+    posts.push(p);
+  }
   for (const e of kind6) {
     const orig = originals.get(eTagId(e) ?? '');
     if (!orig) continue; // 参照先未取得のリポストはスキップ（§6.5）
+    if (seen.has(orig.id)) continue; // 自分の投稿の自己リポストは元の投稿と重複するためスキップ
     posts.push(buildPost(orig, profiles.get(orig.pubkey), toAuthor(e.pubkey, profiles.get(e.pubkey))));
   }
 
   posts.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  const page = posts.slice(0, PAGE_SIZE);
-  const nextCursor =
-    page.length > 0 ? String(Math.floor(Date.parse(page[page.length - 1].createdAt) / 1000)) : null;
-  return { posts: page, nextCursor };
+  return posts;
 }
 
 // --- プロフィール（docs/profile-view-spec.md §7、ADR-0014/0017） ---
@@ -490,35 +509,7 @@ export async function getProfilePosts(
   if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
     throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
   }
-  const kind1 = events.filter((e) => e.kind === 1);
-  const kind6 = events.filter((e) => e.kind === 6);
-  // kind 6 の参照先（元ノート）を ids でバッチ取得（タイムラインと同じ流儀）
-  const refs = [...new Set(kind6.map(eTagId).filter((x): x is string => Boolean(x)))];
-  const originals = new Map<string, NostrEvent>();
-  if (refs.length > 0) {
-    for (const ev of await queryRelays(urls, { kinds: [1], ids: refs }, { wsFactory: opts.wsFactory })) {
-      originals.set(ev.id, ev);
-    }
-  }
-  const pubkeys = new Set<string>([pubkeyHex]);
-  for (const e of kind6) pubkeys.add(e.pubkey);
-  for (const e of originals.values()) pubkeys.add(e.pubkey);
-  const profiles = await loadProfiles([...pubkeys], urls, opts.wsFactory);
-  const posts: Post[] = [];
-  const seen = new Set<string>();
-  for (const e of kind1) {
-    const p = buildPost(e, profiles.get(e.pubkey));
-    seen.add(p.id);
-    posts.push(p);
-  }
-  for (const e of kind6) {
-    const orig = originals.get(eTagId(e) ?? '');
-    if (!orig) continue; // 参照先未取得のリポストはスキップ（タイムラインと同じ）
-    // 自分の投稿の自己リポストは元の投稿と重複するためスキップ（投稿一覧の重複表示を防ぐ）
-    if (seen.has(orig.id)) continue;
-    posts.push(buildPost(orig, profiles.get(orig.pubkey), toAuthor(e.pubkey, profiles.get(e.pubkey))));
-  }
-  posts.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const posts = await buildFeedPosts(events, urls, opts.wsFactory);
   return { posts, nextCursor: null };
 }
 

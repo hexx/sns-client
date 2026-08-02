@@ -65,6 +65,17 @@ function sourceQuery(source: Source, cursor?: string): string {
   return q.toString();
 }
 
+/** follow 解除の実装（unfollow のオーバーロード本体。bsky は recordUri 必須・misskey は不要） */
+const unfollowImpl = (
+  provider: 'bluesky' | 'misskey',
+  actorId: string,
+  recordUri?: string,
+): Promise<Record<string, never>> =>
+  request<Record<string, never>>(API.follow, {
+    method: 'DELETE',
+    body: JSON.stringify(recordUri ? { provider, actorId, recordUri } : { provider, actorId }),
+  });
+
 export const api = {
   health: () => request<Health>(API.health),
   views: () => request<View[]>(API.views),
@@ -96,12 +107,14 @@ export const api = {
   /** フォロー（docs/profile-view-spec.md §6） */
   follow: (provider: 'bluesky' | 'misskey', actorId: string) =>
     request<FollowResponse>(API.follow, { method: 'POST', body: JSON.stringify({ provider, actorId }) }),
-  /** フォロー解除（bsky は viewer.followUri を recordUri で渡す） */
-  unfollow: (provider: 'bluesky' | 'misskey', actorId: string, recordUri?: string) =>
-    request<Record<string, never>>(API.follow, {
-      method: 'DELETE',
-      body: JSON.stringify(recordUri ? { provider, actorId, recordUri } : { provider, actorId }),
-    }),
+  /** フォロー解除（bsky は viewer.followUri を recordUri で渡す。misskey は不要）。
+   * オーバーロードで bsky の recordUri 必須を型レベルで強制する（渡し忘れはコンパイルエラー） */
+  unfollow: unfollowImpl as ((
+    provider: 'bluesky',
+    actorId: string,
+    recordUri: string,
+  ) => Promise<Record<string, never>>) &
+    ((provider: 'misskey', actorId: string) => Promise<Record<string, never>>),
   uploadMedia: (provider: Provider, bytes: ArrayBuffer, mimeType: string, alt: string) =>
     request<MediaUploadResponse>(
       `${API.media}?${new URLSearchParams({ provider, alt }).toString()}`,

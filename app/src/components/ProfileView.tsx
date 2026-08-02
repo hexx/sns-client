@@ -273,7 +273,12 @@ export function ProfileView({
     apply((x) => (x ? { ...x, viewer: { following: !following, followUri: x.viewer?.followUri } } : x));
     try {
       if (following) {
-        await api.unfollow(p.provider, p.author.id, p.viewer?.followUri);
+        // bsky は解除に viewer.followUri（getProfile で必ず取得済み）が必要（api.unfollow の型で強制）
+        if (p.provider === 'bluesky') {
+          await api.unfollow('bluesky', p.author.id, p.viewer?.followUri as string);
+        } else {
+          await api.unfollow('misskey', p.author.id);
+        }
         apply((x) => (x ? { ...x, viewer: { following: false } } : x));
       } else {
         const res = await api.follow(p.provider, p.author.id);
@@ -291,6 +296,7 @@ export function ProfileView({
   const retryList = useCallback(async () => {
     const t = target;
     setListError(null);
+    setListDone(false); // 再試行中は「投稿はありません」を出さない（空状態の誤表示防止）
     try {
       const data = await fetchProfilePosts(t.provider, t.author);
       if (targetRef.current !== t) return;

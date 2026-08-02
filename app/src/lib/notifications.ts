@@ -43,7 +43,9 @@ export const NOTIF_ICON: Partial<Record<NotificationType, string>> = {
   scheduledNotePostFailed: '⏰',
 };
 
-/** 通知カードの表示文言（テキストのみ通知は BFF 合成済みの text を優先。docs/notifications-spec.md §6） */
+/**
+ * 通知カードの表示文言（テキストのみ通知は BFF 合成済みの text を優先。docs/notifications-spec.md §6）
+ */
 export function notifText(n: Notification): string {
   if (n.text) return n.text;
   // actor 名を除いた本文（notifTextBody）に前置きを足すだけで合成する（文言の二重管理を避ける。§8.1）
@@ -55,7 +57,9 @@ export function notifText(n: Notification): string {
 /**
  * 通知カードの本文（actor 名の部分を除いた残り。docs/profile-view-spec.md §8.1）。
  * actor 名はカード内で別要素（クリックでプロフィールを開く）として描画するため、
- * notifText の先頭の「◯◯ さん」を取り除いた形を返す。text のみ通知は全文をそのまま返す。
+ * notifText の先頭の「◯◯ さん」を取り除いた形を返す。
+ * 契約: actor 前置きを伴う型は未完の句（「がフォローしました」）、text のみ通知は BFF 合成の完文。
+ * 呼び出し側は n.text がある場合は actor 要素を描画しないこと（二重主語の防止）。
  */
 export function notifTextBody(n: Notification): string {
   if (n.text) return n.text;

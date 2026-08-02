@@ -67,4 +67,16 @@ describe('NotificationCard のプロフィール入口（docs/profile-view-spec.
     );
     expect(screen.getByText('新しいデバイスからログインしました')).toBeTruthy();
   });
+
+  it('text のみ通知に actor が居てもボタン化しない（BFF 合成の完文が本体。二重主語の防止。§8.1）', () => {
+    render(
+      <NotificationCard
+        notification={notif({ type: 'verified', text: 'あなたのアカウントが認証されました' })}
+        onOpenProfile={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Alice' })).toBeNull();
+    expect(screen.getByText('あなたのアカウントが認証されました')).toBeTruthy();
+    expect(screen.queryByText(/Alice さん.*認証されました/)).toBeNull();
+  });
 });

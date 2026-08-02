@@ -68,7 +68,9 @@ export function NotificationCard({
   const n = notification;
   const icon = NOTIF_ICON[n.type] ?? '🔔';
   const clickable = Boolean(n.post);
-  const actorClickable = Boolean(onOpenProfile && n.actor);
+  // actor ボタンは「actor が主体」の通知だけに出す。text のみ通知（verified 等）は BFF 合成の完文が
+  // 表示本体で、actor を前置きすると「◯◯ さん あなたのアカウントが認証されました」のような二重主語になる（§8.1）
+  const actorClickable = Boolean(onOpenProfile && n.actor && !n.text);
   // actor ボタンを持つカードは article を role=button にしない
   // （button のネストは ARIA の nested-interactive 違反。actor ボタンが主要な操作になるため）。§8.1
   const cardButton = clickable && !actorClickable;

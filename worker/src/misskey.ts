@@ -647,6 +647,42 @@ export async function getThread(env: MisskeyEnv, noteId: string, cursor?: string
   return { focus: mapNote(focus, registry, inst), ancestors, replies, nextCursor };
 }
 
+/**
+ * 業務エラーコードを抽出する API 呼び出し（follow/unfollow 用）。
+ * 認証エラー（401/403）は status=401、code 付き業務エラーは MisskeyApiError(409) に正規化する
+ * （react と同じ流儀。mkApi は code を抽出しないため、ALREADY_FOLLOWING 等が 502 に化けるのを防ぐ）。
+ */
+async function mkApiWithCode<T>(
+  env: MisskeyEnv,
+  endpoint: string,
+  params: Record<string, unknown> = {},
+): Promise<T> {
+  if (!env.MISSKEY_TOKEN) throw new MisskeyAuthError('missing-secrets');
+  const res = await fetch(`${instanceOf(env)}/api/${endpoint}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ i: env.MISSKEY_TOKEN, ...params }),
+  });
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
+      e.status = 401;
+      throw e;
+    }
+    let code: string | undefined;
+    try {
+      const body = (await res.json()) as { error?: { code?: string } };
+      code = body?.error?.code;
+    } catch {
+      /* ignore */
+    }
+    if (code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, code);
+    throw new Error(`misskey ${endpoint} ${res.status}`);
+  }
+  const text = await res.text();
+  return (text ? JSON.parse(text) : null) as T;
+}
+
 // --- プロフィール（docs/profile-view-spec.md §4/§5/§6） ---
 
 /** ユーザーのプロフィール permalink（ローカルはインスタンス、リモートはホームインスタンスのユーザーページ） */
@@ -717,12 +753,12 @@ export async function getProfilePosts(
 
 /** フォローする（following/create。docs/profile-view-spec.md §6） */
 export async function followUser(env: MisskeyEnv, userId: string): Promise<void> {
-  await mkApi(env, 'following/create', { userId });
+  await mkApiWithCode(env, 'following/create', { userId });
 }
 
 /** フォローを解除する（following/delete） */
 export async function unfollowUser(env: MisskeyEnv, userId: string): Promise<void> {
-  await mkApi(env, 'following/delete', { userId });
+  await mkApiWithCode(env, 'following/delete', { userId });
 }
 
 /**

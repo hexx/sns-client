@@ -60,8 +60,8 @@ export type Profile = {
 export type FollowRequest = { provider: 'bluesky' | 'misskey'; actorId: string };
 /** フォロー解除リクエスト。bsky は viewer.followUri を recordUri で渡す（misskey は不要・無視） */
 export type UnfollowRequest = { provider: 'bluesky' | 'misskey'; actorId: string; recordUri?: string };
-/** 作成した follow レコード URI の応答（bsky のみ。misskey は URI 無しのため任意） */
-export type FollowResponse = { recordUri?: string };
+/** 作成した follow レコード URI の応答（bsky のみ。misskey は URI 無しのため任意）。like/repost と同じ形状を再利用 */
+export type FollowResponse = RecordUriResponse;
 
 /** 統一インラインリッチテキスト（ADR-0005）。BFF が MFM/facets から生成 */
 export type RichSegment =
