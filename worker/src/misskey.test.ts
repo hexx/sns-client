@@ -425,10 +425,26 @@ describe('react（リアクション操作）', () => {
     expect(err).not.toBeInstanceOf(MisskeyApiError);
   });
 
-  it('認証エラー（401/403）→ status=401 に正規化（MisskeyApiError ではない）', async () => {
-    captureFetch(new Response('no', { status: 403 }));
+  it('認証エラー（403 + AUTHENTICATION_FAILED）→ status=401 に正規化（MisskeyApiError ではない）', async () => {
+    captureFetch(
+      new Response(JSON.stringify({ error: { code: 'AUTHENTICATION_FAILED', kind: 'authentication' } }), {
+        status: 403,
+      }),
+    );
     await expect(react(env, 'n1', '👍')).rejects.toMatchObject({ status: 401 });
     await expect(react(env, 'n1', '👍')).rejects.not.toBeInstanceOf(MisskeyApiError);
+  });
+
+  it('code/kind 無しの素の 403（WAF 等）は 401 に誤分類しない（素の Error → 502）', async () => {
+    captureFetch(new Response('no', { status: 403 }));
+    await expect(react(env, 'n1', '👍')).rejects.toThrow();
+    await expect(react(env, 'n1', '👍')).rejects.not.toMatchObject({ status: 401 });
+    await expect(react(env, 'n1', '👍')).rejects.not.toBeInstanceOf(MisskeyApiError);
+  });
+
+  it('403 + 業務 code（YOU_ARE_BLOCKED）→ MisskeyApiError(409)', async () => {
+    captureFetch(new Response(JSON.stringify({ error: { code: 'YOU_ARE_BLOCKED', kind: 'permission' } }), { status: 403 }));
+    await expect(react(env, 'n1', '👍')).rejects.toMatchObject({ status: 409, code: 'YOU_ARE_BLOCKED' });
   });
 
   it('トークン無し → MisskeyAuthError', async () => {
