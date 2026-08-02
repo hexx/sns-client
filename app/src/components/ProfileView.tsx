@@ -325,6 +325,7 @@ export function ProfileView({
       } else {
         // misskey は recordUri を持たない（解除は actorId 指定）ため、成功ならそのまま反映する
         if (p.provider === 'misskey') {
+          await api.follow('misskey', p.author.id);
           apply((x) => (x ? { ...x, viewer: { following: true } } : x));
         } else {
           const res = await api.follow('bluesky', p.author.id);

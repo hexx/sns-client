@@ -647,10 +647,10 @@ export async function getThread(env: MisskeyEnv, noteId: string, cursor?: string
   return { focus: mapNote(focus, registry, inst), ancestors, replies, nextCursor };
 }
 
-/** レスポンスボディから Misskey の業務エラー情報を抽出する（code / kind。JSON でなければ undefined） */
-async function readMisskeyError(res: Response): Promise<{ code?: string; kind?: string } | undefined> {
+/** レスポンスボディから Misskey の業務エラー情報を抽出する（code。JSON でなければ undefined） */
+async function readMisskeyError(res: Response): Promise<{ code?: string } | undefined> {
   try {
-    const body = (await res.json()) as { error?: { code?: string; kind?: string } };
+    const body = (await res.json()) as { error?: { code?: string } };
     return body?.error ?? undefined;
   } catch {
     return undefined;
@@ -742,7 +742,7 @@ export function mapProfile(
       followers: u.followersCount,
     };
   }
-  if (u.isFollowing !== undefined) profile.viewer = { following: u.isFollowing };
+  if (typeof u.isFollowing === 'boolean') profile.viewer = { following: u.isFollowing };
   const url = userUrl(u, instanceUrl);
   if (url) profile.url = url;
   return profile;

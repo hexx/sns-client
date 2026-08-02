@@ -450,13 +450,20 @@ async function buildFeedPosts(
   const kind1 = events.filter((e) => e.kind === 1);
   const kind6 = events.filter((e) => e.kind === 6);
 
-  // kind 6 の参照先（元ノート）を ids でバッチ取得（§6.5）
+  // kind 6 の参照先（元ノート）を ids でバッチ取得（§6.5）。
+  // この照会が全リレーで失敗した場合は取得不能として 502 にする（リポストのサイレント欠落を防ぐ）
   const refs = [...new Set(kind6.map(eTagId).filter((x): x is string => Boolean(x)))];
   const originals = new Map<string, NostrEvent>();
   if (refs.length > 0) {
-    for (const ev of await queryRelays(urls, { kinds: [1], ids: refs }, { wsFactory: factory })) {
+    const refOutcomes = new Map<string, boolean>();
+    for (const ev of await queryRelays(
+      urls,
+      { kinds: [1], ids: refs },
+      { wsFactory: factory, outcomes: refOutcomes },
+    )) {
       originals.set(ev.id, ev);
     }
+    assertAnyRelayReached(urls, refOutcomes);
   }
 
   // 登場する全 pubkey のプロフィールをまとめて解決（§6.4）
@@ -495,7 +502,7 @@ async function buildFeedPosts(
 
 /** ページの cursor（生イベントの最古 created_at - 1。until は境界を含むため、境界イベントの再取得を防ぐ）。
  * 注意: 同一秒に複数イベントがありリレーが FETCH_LIMIT で打ち切った場合、その秒の残りは次ページで
- * 欠落しうる（既知の制限。ProfileView は追記を pid で重複排除しないため、境界再取得より欠落を選ぶ）。
+ * 欠落しうる（既知の制限。クライアントは pid で重複排除するため、境界再取得より欠落を選ぶ）。
  * エポック境界（created_at <= 1。不正な時刻のスパム等）では null を返し、ページングを止める
  * （負の until はリクエストが 400 になり、ループするため）。 */
 function pageCursor(rawTimes: number[]): string | null {

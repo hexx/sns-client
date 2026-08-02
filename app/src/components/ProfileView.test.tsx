@@ -237,3 +237,30 @@ describe('ProfileView', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ProfileView: misskey follow（docs/profile-view-spec.md §6）', () => {
+  it('misskey のフォローは api.follow(misskey) を呼び、recordUri 無しでも成功として反映する', async () => {
+    mockProfile.mockResolvedValue({
+      provider: 'misskey',
+      author: { id: 'u-alice', handle: 'alice', displayName: 'Alice' },
+      viewer: { following: false },
+    });
+    mockFollow.mockResolvedValue({}); // misskey は recordUri 無し
+    render(<ProfileView provider="misskey" author={{ id: 'u-alice', handle: 'alice', displayName: 'Alice' }} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'フォロー' }));
+    expect(mockFollow).toHaveBeenCalledWith('misskey', 'u-alice');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'フォロー中' })).toBeTruthy());
+  });
+
+  it('misskey のフォロー解除は api.unfollow(misskey) を actorId で呼ぶ', async () => {
+    mockProfile.mockResolvedValue({
+      provider: 'misskey',
+      author: { id: 'u-alice', handle: 'alice', displayName: 'Alice' },
+      viewer: { following: true },
+    });
+    render(<ProfileView provider="misskey" author={{ id: 'u-alice', handle: 'alice', displayName: 'Alice' }} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'フォロー中' }));
+    expect(mockUnfollow).toHaveBeenCalledWith('misskey', 'u-alice');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'フォロー' })).toBeTruthy());
+  });
+});

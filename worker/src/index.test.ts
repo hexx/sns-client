@@ -1267,12 +1267,12 @@ describe('follow routes（docs/profile-view-spec.md §6）', () => {
       new Request('https://x/api/follow', {
         method: 'DELETE',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice', recordUri: 'at://did:plc:me/app.bsky.graph.follow/abc' }),
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice', recordUri: 'at://did:plc:alice/app.bsky.graph.follow/abc' }),
       }),
       makeEnv(),
     );
     expect(res.status).toBe(200);
-    expect(bskyUnfollow).toHaveBeenCalledWith('h', 'p', 'at://did:plc:me/app.bsky.graph.follow/abc');
+    expect(bskyUnfollow).toHaveBeenCalledWith('h', 'p', 'at://did:plc:alice/app.bsky.graph.follow/abc');
   });
 
   it('DELETE bluesky で recordUri 無しは 400', async () => {
@@ -1342,5 +1342,20 @@ describe('profile routes: misskey の取得不能（docs/profile-view-spec.md §
     vi.mocked(misskeyProfilePosts).mockRejectedValue(new MisskeyApiError(409, 'misskey users/notes 400', 'NO_SUCH_USER'));
     const res = await worker.fetch(new Request('https://x/api/profile/posts?provider=misskey&id=u1'), makeEnv());
     expect(res.status).toBe(404);
+  });
+});
+
+describe('follow routes: recordUri の検証（docs/profile-view-spec.md §6）', () => {
+  it('DELETE bluesky: recordUri 内の DID が actorId と不一致なら 400', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice', recordUri: 'at://did:plc:other/app.bsky.graph.follow/abc' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(bskyUnfollow).not.toHaveBeenCalled();
   });
 });

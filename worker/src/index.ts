@@ -539,11 +539,15 @@ app.delete(API.follow, async (c) => {
   c.set('provider', body.provider);
   if (body.provider === 'bluesky') {
     // 解除は自分の follow レコード URI 指定（viewer.followUri。like 解除と同じ流儀）
-    if (typeof body.recordUri !== 'string' || body.recordUri.length === 0) {
+    if (typeof body.recordUri !== 'string') {
       throw new HTTPException(400, { message: 'recordUri required' });
     }
-    // follow レコードの URI 形式を検証（不正な URI で upstream を叩かない）
-    if (!/^at:\/\/did:[A-Za-z0-9._:%-]+\/app\.bsky\.graph\.follow\/[A-Za-z0-9._:~-]+$/.test(body.recordUri)) {
+    // follow レコードの URI 形式を検証し、URI 内の DID と actorId の一致も確認する
+    // （不一致の URI で別ユーザーの follow を誤って解除しない。docs/profile-view-spec.md §6）
+    const uriMatch = /^at:\/\/(did:[A-Za-z0-9._:%-]+)\/app\.bsky\.graph\.follow\/[A-Za-z0-9._:~-]+$/.exec(
+      body.recordUri,
+    );
+    if (!uriMatch || uriMatch[1] !== body.actorId) {
       throw new HTTPException(400, { message: 'invalid recordUri' });
     }
     try {

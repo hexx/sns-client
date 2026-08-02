@@ -36,6 +36,7 @@ function CompactPost({ post, asButton, onOpen }: { post: Post; asButton?: boolea
     if (post.cw) label = `投稿を開く（CW）: ${post.cw}`;
     else if (post.text) label = `投稿を開く: ${post.text}`;
     else label = `${post.author.displayName} の投稿を開く`;
+    if (label.length > 100) label = `${label.slice(0, 100)}…`; // 長文は視覚的な2行クランプに合わせて簡潔に
     return (
       <button type="button" className="notif-post notif-post-btn" aria-label={label} onClick={onOpen}>
         {post.cw ? (
