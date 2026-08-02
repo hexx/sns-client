@@ -65,6 +65,8 @@ export function ProfileView({
   const engageInflight = useRef<Set<string>>(new Set());
   /** 追加読み込みの in-flight ガード（再描画前の連続発火で同じ cursor を二重取得しない。TimelineCore と同じ流儀） */
   const loadingMoreRef = useRef(false);
+  /** 表示済み投稿 id の Set（追記時の重複排除を O(1) にする。ターゲット切替でリセット） */
+  const seenPostIds = useRef<Set<string>>(new Set());
   /** ターゲットの最新値（loadMore / retryList の stale 応答破棄に使う。§8.2） */
   const targetRef = useRef(target);
   targetRef.current = target;
@@ -102,6 +104,7 @@ export function ProfileView({
     fetchProfilePosts(target.provider, target.author)
       .then((t) => {
         if (cancelled) return;
+        seenPostIds.current = new Set(t.posts.map(pid));
         setPosts(t.posts);
         setCursor(t.nextCursor);
         setListDone(true);
@@ -347,8 +350,10 @@ export function ProfileView({
     try {
       const data = await fetchProfilePosts(t.provider, t.author, cursor);
       if (targetRef.current !== t) return;
-      // ページ境界の重複（nostr の自己リポスト等）を pid で除いて追記する
-      setPosts((prev) => [...prev, ...data.posts.filter((q) => !prev.some((r) => pid(r) === pid(q)))]);
+      // ページ境界の重複（nostr の自己リポスト等）を pid の Set で除いて追記する
+      const fresh = data.posts.filter((q) => !seenPostIds.current.has(pid(q)));
+      for (const q of fresh) seenPostIds.current.add(pid(q));
+      setPosts((prev) => [...prev, ...fresh]);
       setCursor(data.nextCursor);
     } catch {
       if (targetRef.current === t) setToast('追加の読み込みに失敗しました');
@@ -394,6 +399,10 @@ export function ProfileView({
     setLoadingMore(false);
     setFollowBusy(false);
     loadingMoreRef.current = false;
+    seenPostIds.current = new Set();
+    // 前ターゲットの in-flight セットも破棄（同一 pid が新ターゲットに現れてもボタンが固まらないように）
+    reactionInflight.current.clear();
+    engageInflight.current.clear();
     setTarget({ provider: p, author: a });
   }, []);
 

@@ -470,12 +470,13 @@ export function mapAuthorFeedItem(f: {
  */
 export function isAccountUnavailable(e: unknown): boolean {
   const code = (e as { error?: string })?.error ?? '';
-  // NotFound は AccountNotFound / RepoNotFound を部分一致で含むため個別列挙は不要
-  if (/(NotFound|BlockedActor|AccountTakedown|Deactivated)/i.test(code)) return true;
+  // NotFound は AccountNotFound / RepoNotFound を部分一致で含む。BlockedByActor（相手からブロック）・
+  // 停止系（Suspended / TakenDown / Deactivated）も取得不能として扱う（§9）
+  if (/(NotFound|BlockedActor|BlockedByActor|AccountTakedown|Suspended|Deactivated)/i.test(code)) return true;
   const msg = String((e as { message?: string })?.message ?? '');
   // メッセージは語境界で照合する（getaddrinfo ENOTFOUND や unblocked 等の誤判定を防ぐ）。
-  // 「not found」「take(n) down」は空白有無どちらでも（not found / taken down）
-  return /\b(not ?found|blocked|taken? ?down|deactivated)\b/i.test(msg);
+  // 「not found」「take(n) down」「blocking you」「suspended」も空白有無どちらでも
+  return /\b(not ?found|blocked|blocking you|taken? ?down|deactivated|suspended)\b/i.test(msg);
 }
 
 /** 取得不能アカウントを null に縮退するラッパー（getProfile / getProfilePosts の共通処理） */

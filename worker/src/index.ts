@@ -523,6 +523,8 @@ app.post(API.follow, async (c) => {
   try {
     await misskeyFollow(c.env, body.actorId);
   } catch (e) {
+    // 既にフォロー中（ALREADY_FOLLOWING）は目的状態が達成されているため成功扱い（冪等。bsky の putRecord と同じ）
+    if (e instanceof MisskeyApiError && e.code === 'ALREADY_FOLLOWING') return c.json({});
     // misskey も同じ論理条件（取得不能）は 409 ではなく 404 に揃える（§9 の一貫性）
     if (isMisskeyNotFound(e)) throw new HTTPException(404, { message: 'actor unavailable' });
     throw e;

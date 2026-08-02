@@ -678,16 +678,20 @@ async function mkApiWithCode<T>(
   if (!res.ok) {
     const err = await readMisskeyError(res);
     if (res.status === 401 || res.status === 403) {
-      // 認証失敗（HTTP 401、kind: 'authentication'、または認証系 code）は 401 のままにし、
-      // 業務 code（YOU_ARE_BLOCKED 等）のみ 409 にする（トークン失効を業務エラーに化けさせない）
+      // 認証失敗（HTTP 401、kind: 'authentication'、または認証系 code）のみ 401 にし、
+      // 業務 code（YOU_ARE_BLOCKED 等）は 409 にする。code も kind も無い素の 401/403（WAF 等）は
+      // 素の Error のまま投げ、catch-all で 502 にする（恒久認証失敗に誤分類しない）
       const isAuth =
         res.status === 401 ||
         err?.kind === 'authentication' ||
         /AUTHENTICATION_FAILED|PERMISSION_DENIED/i.test(err?.code ?? '');
-      if (!isAuth && err?.code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
-      const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
-      e.status = 401;
-      throw e;
+      if (err?.code && !isAuth) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
+      if (isAuth) {
+        const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
+        e.status = 401;
+        throw e;
+      }
+      throw new Error(`misskey ${endpoint} ${res.status}`);
     }
     if (err?.code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
     throw new Error(`misskey ${endpoint} ${res.status}`);

@@ -35,7 +35,11 @@ function CompactPost({ post, asButton, onOpen }: { post: Post; asButton?: boolea
       <button
         type="button"
         className="notif-post notif-post-btn"
-        aria-label={post.text ? undefined : `${post.author.displayName} の投稿を開く`}
+        aria-label={
+          post.text || post.cw
+            ? `投稿を開く: ${post.text || post.cw}`
+            : `${post.author.displayName} の投稿を開く`
+        }
         onClick={onOpen}
       >
         {post.cw ? (
