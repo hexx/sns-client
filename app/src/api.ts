@@ -3,12 +3,14 @@ import { API } from '../../shared/constants';
 import type {
   DestinationCatalogEntry,
   EmojiInfo,
+  FollowResponse,
   Health,
   MediaUploadResponse,
   MeResponse,
   NotificationsResponse,
   Post,
   PostInputWire,
+  Profile,
   Provider,
   ProviderInfo,
   ReactionResponse,
@@ -82,6 +84,24 @@ export const api = {
     if (cursor) q.set('cursor', cursor);
     return request<ThreadResponse>(`${API.thread}?${q.toString()}`);
   },
+  /** プロフィール概要の取得（bsky/misskey。nostr はブラウザ直接解決のため app/src/lib/profile.ts 参照。docs/profile-view-spec.md §4） */
+  profile: (provider: 'bluesky' | 'misskey', id: string) =>
+    request<Profile>(`${API.profile}?${new URLSearchParams({ provider, id }).toString()}`),
+  /** プロフィールの投稿一覧（TimelineResponse と同形状。docs/profile-view-spec.md §5） */
+  profilePosts: (provider: 'bluesky' | 'misskey', id: string, cursor?: string) => {
+    const q = new URLSearchParams({ provider, id });
+    if (cursor) q.set('cursor', cursor);
+    return request<TimelineResponse>(`${API.profilePosts}?${q.toString()}`);
+  },
+  /** フォロー（docs/profile-view-spec.md §6） */
+  follow: (provider: 'bluesky' | 'misskey', actorId: string) =>
+    request<FollowResponse>(API.follow, { method: 'POST', body: JSON.stringify({ provider, actorId }) }),
+  /** フォロー解除（bsky は viewer.followUri を recordUri で渡す） */
+  unfollow: (provider: 'bluesky' | 'misskey', actorId: string, recordUri?: string) =>
+    request<Record<string, never>>(API.follow, {
+      method: 'DELETE',
+      body: JSON.stringify(recordUri ? { provider, actorId, recordUri } : { provider, actorId }),
+    }),
   uploadMedia: (provider: Provider, bytes: ArrayBuffer, mimeType: string, alt: string) =>
     request<MediaUploadResponse>(
       `${API.media}?${new URLSearchParams({ provider, alt }).toString()}`,

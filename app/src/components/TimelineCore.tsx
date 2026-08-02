@@ -12,7 +12,7 @@ import { fetchTimeline } from '../lib/timeline';
 import { isHiddenPost, subscribeHidden } from '../lib/moderation';
 import { applyReaction } from '../lib/reactions';
 import { withLike, withRenoteIncrement, withRepost } from '../lib/engagements';
-import type { Post, Provider, Source } from '../../../shared/types';
+import type { Author, Post, Provider, Source } from '../../../shared/types';
 import { PostCard } from './PostCard';
 
 const TICK_MS = 15_000;
@@ -60,6 +60,8 @@ export const TimelineCore = forwardRef<
     onQuote?: (p: Post) => void;
     /** カード本文クリックでスレッドを開く（docs/thread-view-spec.md §6.1） */
     onOpenThread?: (p: Post) => void;
+    /** アバター・表示名・handle のクリックでプロフィールを開く（docs/profile-view-spec.md §8.1） */
+    onOpenProfile?: (provider: Provider, a: Author) => void;
     /** Like/リポストボタンを有効化（デッキ向け。docs/deck-view-spec.md §6） */
     interactive?: boolean;
     /** 帰属バッジの生成（sourceKey と provider から「Misskey · 技術リスト」のような文字列） */
@@ -81,6 +83,7 @@ export const TimelineCore = forwardRef<
     onReply,
     onQuote,
     onOpenThread,
+    onOpenProfile,
     interactive,
     badgeFor,
     onRefreshingChange,
@@ -594,6 +597,7 @@ export const TimelineCore = forwardRef<
                 onLike={interactive && !readOnly ? () => void toggleLike(post) : undefined}
                 onRepost={interactive && !readOnly ? () => void toggleRepost(post) : undefined}
                 onOpenThread={onOpenThread}
+                onOpenProfile={onOpenProfile}
                 badge={badgeFor?.(skey, post.provider)}
                 unread={unread}
               />

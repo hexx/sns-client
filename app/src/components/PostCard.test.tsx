@@ -873,3 +873,56 @@ describe('ユーザーメニュー（docs/block-mute-spec.md §5.1）', () => {
     expect(onOpenThread).not.toHaveBeenCalled();
   });
 });
+
+describe('プロフィール入口（docs/profile-view-spec.md §8.1）', () => {
+  it('onOpenProfile 有り: アバター・表示名・@handle がボタンになり、クリックで発火する', () => {
+    const onOpenProfile = vi.fn();
+    render(<PostCard post={makePost()} onOpenProfile={onOpenProfile} />);
+    fireEvent.click(screen.getByRole('button', { name: /プロフィールを開く/ }));
+    expect(onOpenProfile).toHaveBeenCalledWith('bluesky', expect.objectContaining({ id: 'did:plc:alice' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Alice' }));
+    expect(onOpenProfile).toHaveBeenCalledWith('bluesky', expect.objectContaining({ id: 'did:plc:alice' }));
+    fireEvent.click(screen.getByRole('button', { name: '@alice.bsky.social' }));
+    expect(onOpenProfile).toHaveBeenCalledWith('bluesky', expect.objectContaining({ id: 'did:plc:alice' }));
+    expect(onOpenProfile).toHaveBeenCalledTimes(3);
+  });
+
+  it('onOpenProfile が無ければ入口はボタン化しない（名前は span）', () => {
+    render(<PostCard post={makePost()} />);
+    expect(screen.queryByRole('button', { name: 'Alice' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /プロフィールを開く/ })).toBeNull();
+  });
+
+  it('プロフィールボタンのクリックでスレッドは開かない（貫通制御）', () => {
+    const onOpenThread = vi.fn();
+    const onOpenProfile = vi.fn();
+    render(<PostCard post={makePost()} onOpenThread={onOpenThread} onOpenProfile={onOpenProfile} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Alice' }));
+    expect(onOpenProfile).toHaveBeenCalledTimes(1);
+    expect(onOpenThread).not.toHaveBeenCalled();
+  });
+
+  it('リポスト行の名前クリックでリポストした人のプロフィールを開く', () => {
+    const onOpenProfile = vi.fn();
+    const post = makePost({
+      repostedBy: { id: 'did:plc:bob', handle: 'bob.bsky.social', displayName: 'Bob' },
+    });
+    render(<PostCard post={post} onOpenProfile={onOpenProfile} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Bob' }));
+    expect(onOpenProfile).toHaveBeenCalledWith('bluesky', expect.objectContaining({ id: 'did:plc:bob' }));
+  });
+
+  it('quote card の著者行クリックで引用元の投稿者のプロフィールを開く（スレッド遷移はしない）', () => {
+    const onOpenThread = vi.fn();
+    const onOpenProfile = vi.fn();
+    const quoted = makePost({
+      id: 'q1',
+      author: { id: 'did:plc:carol', handle: 'carol.bsky.social', displayName: 'Carol' },
+      text: '引用される投稿',
+    });
+    render(<PostCard post={makePost({ quote: quoted })} onOpenThread={onOpenThread} onOpenProfile={onOpenProfile} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Carol' }));
+    expect(onOpenProfile).toHaveBeenCalledWith('bluesky', expect.objectContaining({ id: 'did:plc:carol' }));
+    expect(onOpenThread).not.toHaveBeenCalled();
+  });
+});

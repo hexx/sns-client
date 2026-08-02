@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { RichText } from '@atproto/api';
 import type { AppBskyFeedDefs, AppBskyRichtextFacet } from '@atproto/api';
-import { buildPostRecord, bskyReasonToType, bskySubjectUriOf, facetsToRich, mapBskyNotification, mapPost, threadViewToResponse } from './bsky';
+import { buildPostRecord, bskyReasonToType, bskySubjectUriOf, facetsToRich, mapAuthorFeedItem, mapBskyNotification, mapPost, mapProfile, threadViewToResponse } from './bsky';
 
 type Facets = AppBskyRichtextFacet.Main[];
 const enc = new TextEncoder();
@@ -712,5 +712,100 @@ describe('通知マッピング（docs/notifications-spec.md §3、ADR-0019）',
     expect(v.text).toBe('あなたのアカウントが認証されました');
     const u = mapBskyNotification(bskyNotif({ reason: 'unverified' }), new Map());
     expect(u.text).toBe('あなたのアカウントの認証が解除されました');
+  });
+});
+
+function profileView(overrides: Record<string, unknown> = {}) {
+  return {
+    did: 'did:plc:alice',
+    handle: 'alice.bsky.social',
+    displayName: 'Alice',
+    description: 'こんにちは',
+    avatar: 'https://example.com/a.png',
+    banner: 'https://example.com/b.png',
+    postsCount: 10,
+    followsCount: 20,
+    followersCount: 30,
+    viewer: { following: 'at://did:plc:me/app.bsky.graph.follow/abc' },
+    ...overrides,
+  } as never;
+}
+
+describe('mapProfile（docs/profile-view-spec.md §4.2）', () => {
+
+  it('ProfileViewDetailed を統一 Profile に映射する', () => {
+    const p = mapProfile(profileView());
+    expect(p.provider).toBe('bluesky');
+    expect(p.author).toEqual({
+      id: 'did:plc:alice',
+      handle: 'alice.bsky.social',
+      displayName: 'Alice',
+      avatarUrl: 'https://example.com/a.png',
+    });
+    expect(p.description).toBe('こんにちは');
+    expect(p.bannerUrl).toBe('https://example.com/b.png');
+    expect(p.stats).toEqual({ posts: 10, following: 20, followers: 30 });
+    expect(p.viewer).toEqual({
+      following: true,
+      followUri: 'at://did:plc:me/app.bsky.graph.follow/abc',
+    });
+    expect(p.url).toBe('https://bsky.app/profile/did:plc:alice');
+  });
+
+  it('displayName 無しは handle にフォールバック', () => {
+    const p = mapProfile(profileView({ displayName: undefined }));
+    expect(p.author.displayName).toBe('alice.bsky.social');
+  });
+
+  it('カウント欠落は stats を載せない', () => {
+    const p = mapProfile(profileView({ postsCount: undefined, followsCount: undefined, followersCount: undefined }));
+    expect(p.stats).toBeUndefined();
+  });
+
+  it('viewer.following 無しは following: false', () => {
+    const p = mapProfile(profileView({ viewer: {} }));
+    expect(p.viewer).toEqual({ following: false });
+  });
+
+  it('viewer 自体が無ければ viewer を持たない', () => {
+    const p = mapProfile(profileView({ viewer: undefined }));
+    expect(p.viewer).toBeUndefined();
+  });
+});
+
+describe('mapAuthorFeedItem（docs/profile-view-spec.md §5.1）', () => {
+  function feedItem(overrides: Record<string, unknown> = {}) {
+    return {
+      post: makePostView({ author: { did: 'did:plc:alice', handle: 'alice.bsky.social', displayName: 'Alice' } }),
+      ...overrides,
+    } as never;
+  }
+
+  it('通常ノードは mapPost と同じ映射', () => {
+    const p = mapAuthorFeedItem(feedItem());
+    expect(p.id).toBe('at://did/app.bsky.feed.post/abc');
+    expect(p.repostedBy).toBeUndefined();
+  });
+
+  it('reasonRepost は repostedBy に映射する', () => {
+    const p = mapAuthorFeedItem(
+      feedItem({
+        reason: {
+          $type: 'app.bsky.feed.defs#reasonRepost',
+          by: { did: 'did:plc:bob', handle: 'bob.bsky.social', displayName: 'Bob', avatar: 'https://example.com/b.png' },
+        },
+      }),
+    );
+    expect(p.repostedBy).toEqual({
+      id: 'did:plc:bob',
+      handle: 'bob.bsky.social',
+      displayName: 'Bob',
+      avatarUrl: 'https://example.com/b.png',
+    });
+  });
+
+  it('reason 無し（リポストでない）は repostedBy を持たない', () => {
+    const p = mapAuthorFeedItem(feedItem({ reason: undefined }));
+    expect(p.repostedBy).toBeUndefined();
   });
 });

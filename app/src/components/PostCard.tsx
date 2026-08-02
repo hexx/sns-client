@@ -1,25 +1,73 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, TouchEvent as ReactTouchEvent } from 'react';
-import type { Author, Media, Post } from '../../../shared/types';
+import type { Author, Media, Post, Provider } from '../../../shared/types';
 import { PostMenu } from './PostMenu';
 import { ReactionPicker } from './ReactionPicker';
 import { RichText } from './RichText';
 
+/** アバターのプロフィール入口ボタン（docs/profile-view-spec.md §8.1）。
+ * onOpenProfile が渡されたときだけ描画する（無ければ null。呼び出し側が素の表示を持つ）。
+ * `<button>` のため NO_NAV_SELECTOR に含まれ、カードクリック（Thread）と干渉しない。 */
+function AvatarProfileButton({
+  author,
+  provider,
+  avatarClass,
+  onOpenProfile,
+}: {
+  author: Author;
+  provider: Provider;
+  avatarClass: string;
+  onOpenProfile?: (provider: Provider, a: Author) => void;
+}) {
+  if (!onOpenProfile) return null;
+  return (
+    <button
+      type="button"
+      className="avatar-btn"
+      aria-label={`${author.handle} のプロフィールを開く`}
+      onClick={() => onOpenProfile(provider, author)}
+    >
+      {author.avatarUrl ? (
+        <img className={avatarClass} src={author.avatarUrl} alt="" loading="lazy" />
+      ) : (
+        <span className={`${avatarClass} avatar-fallback`} />
+      )}
+    </button>
+  );
+}
+
 /**
  * 表示名（docs/name-display-spec.md）。絵文字解決済みの displayNameRich があれば RichText inline、
  * なければプレーンテキスト。フルネームは title でホバー表示。クランプせず全文を表示する。
+ * onOpenProfile があれば button 化し、クリックでプロフィールを開く（docs/profile-view-spec.md §8.1）。
  */
-function DisplayName({ author, className }: { author: Author; className?: string }) {
-  if (author.displayNameRich && author.displayNameRich.length > 0) {
+function DisplayName({
+  author,
+  className,
+  provider,
+  onOpenProfile,
+}: {
+  author: Author;
+  className?: string;
+  provider?: Provider;
+  onOpenProfile?: (provider: Provider, a: Author) => void;
+}) {
+  const inner =
+    author.displayNameRich && author.displayNameRich.length > 0 ? (
+      <RichText segments={author.displayNameRich} inline />
+    ) : (
+      author.displayName
+    );
+  if (onOpenProfile && provider) {
     return (
-      <span className={className} title={author.displayName}>
-        <RichText segments={author.displayNameRich} inline />
-      </span>
+      <button type="button" className={`${className ?? ''} name-btn`} title={author.displayName} onClick={() => onOpenProfile(provider, author)}>
+        {inner}
+      </button>
     );
   }
   return (
     <span className={className} title={author.displayName}>
-      {author.displayName}
+      {inner}
     </span>
   );
 }
@@ -319,7 +367,16 @@ function CwPill({ cw, open, onToggle }: { cw: string; open: boolean; onToggle: (
 const NO_NAV_SELECTOR = 'button, a, .lightbox, .picker, .card-menu-wrap';
 
 /** 引用カード（1階層・表示専用。docs/quote-display-spec.md。カード本体クリックで引用先 Thread へ遷移: thread-view-spec.md §7） */
-function QuoteCard({ post, onOpenThread }: { post: Post; onOpenThread?: (p: Post) => void }) {
+function QuoteCard({
+  post,
+  onOpenThread,
+  onOpenProfile,
+}: {
+  post: Post;
+  onOpenThread?: (p: Post) => void;
+  /** 著者行（アバター・名前・handle）のクリックでプロフィールを開く（docs/profile-view-spec.md §8.1） */
+  onOpenProfile?: (provider: Provider, a: Author) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [cwOpen, setCwOpen] = useState(false);
   const hasCw = post.cw !== undefined;
@@ -341,11 +398,22 @@ function QuoteCard({ post, onOpenThread }: { post: Post; onOpenThread?: (p: Post
       }
     >
       <div className="quote-head">
-        {post.author.avatarUrl ? (
-          <img className="avatar avatar-sm" src={post.author.avatarUrl} alt="" loading="lazy" />
-        ) : null}
-        <DisplayName author={post.author} className="display-name" />
-        <span className="handle">@{post.author.handle}</span>
+        <AvatarProfileButton
+          author={post.author}
+          provider={post.provider}
+          avatarClass="avatar avatar-sm"
+          onOpenProfile={onOpenProfile}
+        />
+        {!onOpenProfile &&
+          (post.author.avatarUrl ? <img className="avatar avatar-sm" src={post.author.avatarUrl} alt="" loading="lazy" /> : null)}
+        <DisplayName author={post.author} className="display-name" provider={post.provider} onOpenProfile={onOpenProfile} />
+        {onOpenProfile ? (
+          <button type="button" className="handle handle-btn" onClick={() => onOpenProfile(post.provider, post.author)}>
+            @{post.author.handle}
+          </button>
+        ) : (
+          <span className="handle">@{post.author.handle}</span>
+        )}
         {!hasCw && (
           <button
             type="button"
@@ -488,6 +556,7 @@ export function PostCard({
   onLike,
   onRepost,
   onOpenThread,
+  onOpenProfile,
   badge,
   unread,
 }: {
@@ -501,6 +570,8 @@ export function PostCard({
   onRepost?: (p: Post) => void;
   /** スレッドを開く（カード本文クリック。docs/thread-view-spec.md §6.1。無指定時はクリックできない） */
   onOpenThread?: (p: Post) => void;
+  /** プロフィールを開く（アバター・表示名・handle・リポスト行。docs/profile-view-spec.md §8.1。無指定時はクリックできない） */
+  onOpenProfile?: (provider: Provider, a: Author) => void;
   /** 帰属バッジ（プラットフォーム名 + 由来ソース名。デッキ表示用） */
   badge?: string;
   /** 未読強調（docs/unread-divider-spec.md） */
@@ -527,20 +598,27 @@ export function PostCard({
     >
       {post.repostedBy && (
         <div className="repost-badge">
-          🔁 <DisplayName author={post.repostedBy} className="repost-name" /> がリポスト
+          🔁 <DisplayName author={post.repostedBy} className="repost-name" provider={post.provider} onOpenProfile={onOpenProfile} /> がリポスト
         </div>
       )}
 
       {/* 2行ヘッダー（docs/name-display-spec.md §3）: 1行目=名前…時刻、2行目=@handle+補足チップ */}
       <div className="card-head">
-        {post.author.avatarUrl ? (
-          <img className="avatar" src={post.author.avatarUrl} alt="" loading="lazy" />
-        ) : (
-          <div className="avatar avatar-fallback" />
-        )}
+        <AvatarProfileButton
+          author={post.author}
+          provider={post.provider}
+          avatarClass="avatar"
+          onOpenProfile={onOpenProfile}
+        />
+        {!onOpenProfile &&
+          (post.author.avatarUrl ? (
+            <img className="avatar" src={post.author.avatarUrl} alt="" loading="lazy" />
+          ) : (
+            <div className="avatar avatar-fallback" />
+          ))}
         <div className="author">
           <div className="author-line author-line-main">
-            <DisplayName author={post.author} className="display-name" />
+            <DisplayName author={post.author} className="display-name" provider={post.provider} onOpenProfile={onOpenProfile} />
             <time className="time" dateTime={post.createdAt}>
               {relTime(post.createdAt)}
             </time>
@@ -548,7 +626,13 @@ export function PostCard({
           {/* 2行目=投稿者情報（handle+公開範囲）、3行目=帰属情報（チャンネル+由来ソース）。docs/card-meta-row-spec.md §3 */}
           <div className="author-line author-line-meta">
             <span className="handle">
-              @{post.author.handle}
+              {onOpenProfile ? (
+                <button type="button" className="handle-btn" onClick={() => onOpenProfile(post.provider, post.author)}>
+                  @{post.author.handle}
+                </button>
+              ) : (
+                <span>@{post.author.handle}</span>
+              )}
               <VisibilityBadge post={post} />
             </span>
           </div>
@@ -575,7 +659,7 @@ export function PostCard({
         <>
           <Body post={post} />
           <MediaGrid post={post} />
-          {post.quote && <QuoteCard post={post.quote} onOpenThread={onOpenThread} />}
+          {post.quote && <QuoteCard post={post.quote} onOpenThread={onOpenThread} onOpenProfile={onOpenProfile} />}
           {post.quoteUnavailable && <div className="quote-unavailable">元の投稿は表示できません</div>}
           <LinkCardView post={post} />
           {post.provider === 'misskey' && onReact ? (

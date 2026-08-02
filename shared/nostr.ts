@@ -10,7 +10,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bech32 } from '@scure/base';
-import type { Author, Media, Post, RichSegment, Source, ThreadNode, ThreadResponse, TimelineResponse } from './types';
+import type { Author, Media, Post, Profile, RichSegment, Source, ThreadNode, ThreadResponse, TimelineResponse } from './types';
 
 // --- 定数（§6.1 固定リレーセット / §6.2 収集ウィンドウ） ---
 export const NOSTR_RELAYS = [
@@ -50,7 +50,7 @@ export type NostrFilter = {
   '#e'?: string[];
 };
 
-type Profile = { displayName?: string; picture?: string };
+type NostrProfile = { displayName?: string; picture?: string; about?: string; banner?: string };
 
 /** nostr Source の検証エラー（BFF が status にマップする。MisskeyApiError 同型） */
 export class NostrError extends Error {
@@ -200,7 +200,7 @@ function queryOne(
 }
 
 // --- kind 0 プロフィール（§6.4: TTL キャッシュ＋バッチ取得） ---
-const profileCache = new Map<string, { at: number; profile: Profile }>();
+const profileCache = new Map<string, { at: number; profile: NostrProfile }>();
 const CACHE_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 let lastSweep = 0;
 
@@ -217,14 +217,23 @@ export function resetProfileCache(): void {
   lastSweep = 0;
 }
 
-export function parseProfile(content?: string): Profile {
+export function parseProfile(content?: string): NostrProfile {
   if (!content) return {};
   try {
-    const j = JSON.parse(content) as { display_name?: string; name?: string; picture?: string };
-    const p: Profile = {};
+    const j = JSON.parse(content) as {
+      display_name?: string;
+      name?: string;
+      picture?: string;
+      about?: string;
+      banner?: string;
+    };
+    const p: NostrProfile = {};
     const dn = j.display_name || j.name;
     if (typeof dn === 'string' && dn.length > 0) p.displayName = dn;
     if (typeof j.picture === 'string' && j.picture.length > 0) p.picture = j.picture;
+    // 自己紹介・バナーはプロフィール表示で使う（docs/profile-view-spec.md §7）
+    if (typeof j.about === 'string' && j.about.length > 0) p.about = j.about;
+    if (typeof j.banner === 'string' && j.banner.length > 0) p.banner = j.banner;
     return p;
   } catch {
     return {};
@@ -235,9 +244,9 @@ async function loadProfiles(
   pubkeys: string[],
   urls: string[],
   factory: WsFactory,
-): Promise<Map<string, Profile>> {
+): Promise<Map<string, NostrProfile>> {
   sweepExpiredProfiles(Date.now());
-  const result = new Map<string, Profile>();
+  const result = new Map<string, NostrProfile>();
   const missing: string[] = [];
   for (const pk of pubkeys) {
     const c = profileCache.get(pk);
@@ -335,14 +344,14 @@ export function toSegments(content: string): { text: string; rich: RichSegment[]
 }
 
 // --- Post 組み立て ---
-function toAuthor(pubkeyHex: string, profile?: Profile): Author {
+function toAuthor(pubkeyHex: string, profile?: NostrProfile): Author {
   const handle = shortenNpub(pubkeyHex);
   const a: Author = { id: pubkeyHex, handle, displayName: profile?.displayName || handle };
   if (profile?.picture) a.avatarUrl = profile.picture;
   return a;
 }
 
-function buildPost(ev: NostrEvent, profile: Profile | undefined, repostedBy?: Author): Post {
+function buildPost(ev: NostrEvent, profile: NostrProfile | undefined, repostedBy?: Author): Post {
   const { text, rich, media } = toSegments(ev.content);
   const post: Post = {
     id: ev.id,
@@ -446,6 +455,73 @@ export async function getTimeline(
   return { posts: page, nextCursor };
 }
 
+// --- プロフィール（docs/profile-view-spec.md §7、ADR-0014/0017） ---
+
+/**
+ * nostr プロフィールのブラウザ直接解決。kind:0 を固定リレーセットから照会し、
+ * 他 Provider と同じ統一 Profile を組み立てる。カウント（stats）・viewer・permalink は
+ * リレーに無いため持たない（§7）。リレーに kind:0 が無い（または全滅）場合は handle のみに縮退。
+ * 取得は loadProfiles（TTL キャッシュ＋バッチ）を経由し、投稿一覧側の解決とキャッシュを共有する（§6.4）。
+ */
+export async function getProfile(pubkeyHex: string, opts: { wsFactory: WsFactory }): Promise<Profile> {
+  const profiles = await loadProfiles([pubkeyHex], NOSTR_RELAYS, opts.wsFactory);
+  const profile = profiles.get(pubkeyHex) ?? {};
+  const out: Profile = { provider: 'nostr', author: toAuthor(pubkeyHex, profile) };
+  if (profile.about) out.description = profile.about;
+  if (profile.banner) out.bannerUrl = profile.banner;
+  return out;
+}
+
+/**
+ * nostr プロフィールの投稿一覧（kind:1＋kind:6 を pubkey で照会。§7）。
+ * リレーに標準ページングが無いため1バッチのみ（nextCursor は常に null。スレッド子孫と同じ扱い）。
+ */
+export async function getProfilePosts(
+  pubkeyHex: string,
+  opts: { wsFactory: WsFactory },
+): Promise<TimelineResponse> {
+  const urls = NOSTR_RELAYS;
+  const outcomes = new Map<string, boolean>();
+  const events = await queryRelays(
+    urls,
+    { kinds: [1, 6], authors: [pubkeyHex], limit: FETCH_LIMIT },
+    { wsFactory: opts.wsFactory, outcomes },
+  );
+  if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
+    throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
+  }
+  const kind1 = events.filter((e) => e.kind === 1);
+  const kind6 = events.filter((e) => e.kind === 6);
+  // kind 6 の参照先（元ノート）を ids でバッチ取得（タイムラインと同じ流儀）
+  const refs = [...new Set(kind6.map(eTagId).filter((x): x is string => Boolean(x)))];
+  const originals = new Map<string, NostrEvent>();
+  if (refs.length > 0) {
+    for (const ev of await queryRelays(urls, { kinds: [1], ids: refs }, { wsFactory: opts.wsFactory })) {
+      originals.set(ev.id, ev);
+    }
+  }
+  const pubkeys = new Set<string>([pubkeyHex]);
+  for (const e of kind6) pubkeys.add(e.pubkey);
+  for (const e of originals.values()) pubkeys.add(e.pubkey);
+  const profiles = await loadProfiles([...pubkeys], urls, opts.wsFactory);
+  const posts: Post[] = [];
+  const seen = new Set<string>();
+  for (const e of kind1) {
+    const p = buildPost(e, profiles.get(e.pubkey));
+    seen.add(p.id);
+    posts.push(p);
+  }
+  for (const e of kind6) {
+    const orig = originals.get(eTagId(e) ?? '');
+    if (!orig) continue; // 参照先未取得のリポストはスキップ（タイムラインと同じ）
+    // 自分の投稿の自己リポストは元の投稿と重複するためスキップ（投稿一覧の重複表示を防ぐ）
+    if (seen.has(orig.id)) continue;
+    posts.push(buildPost(orig, profiles.get(orig.pubkey), toAuthor(e.pubkey, profiles.get(e.pubkey))));
+  }
+  posts.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  return { posts, nextCursor: null };
+}
+
 // --- スレッド解決（docs/thread-view-spec.md §5、ADR-0014/0017） ---
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -468,7 +544,7 @@ export function parentEventId(ev: NostrEvent): string | undefined {
 const sortEventsAsc = (arr: NostrEvent[]): NostrEvent[] => arr.toSorted((a, b) => a.created_at - b.created_at);
 
 /** 子孫イベント列から木を再構築し、DFS 順＋depth に平坦化する（worker/misskey の childrenToThreadNodes と同型） */
-function buildReplyNodes(children: NostrEvent[], focusId: string, profiles: Map<string, Profile>): ThreadNode[] {
+function buildReplyNodes(children: NostrEvent[], focusId: string, profiles: Map<string, NostrProfile>): ThreadNode[] {
   const byId = new Map(children.map((e) => [e.id, e]));
   const kidsOf = new Map<string, NostrEvent[]>();
   const orphans: NostrEvent[] = [];

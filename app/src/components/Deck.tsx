@@ -8,7 +8,7 @@ import { api } from '../api';
 import { isNotificationsView } from '../lib/notifications';
 import { NotificationsView } from './NotificationsView';
 import { TimelineCore } from './TimelineCore';
-import type { Post, Provider, Source, SourceCatalogEntry, View } from '../../../shared/types';
+import type { Author, Post, Provider, Source, SourceCatalogEntry, View } from '../../../shared/types';
 
 function sourceKey(s: Source): string {
   return `${s.provider}:${s.kind}:${s.id ?? ''}`;
@@ -181,6 +181,7 @@ export function Deck({
   onViewsChange,
   onCompose,
   onOpenThread,
+  onOpenProfile,
 }: {
   views: View[];
   /** View 構成の変更（App が状態反映＋BFF 保存を担う） */
@@ -189,6 +190,8 @@ export function Deck({
   onCompose: () => void;
   /** カード本文クリックでスレッドを開く（docs/thread-view-spec.md §6.1） */
   onOpenThread?: (p: Post) => void;
+  /** アバター・表示名・handle のクリックでプロフィールを開く（docs/profile-view-spec.md §8.1） */
+  onOpenProfile?: (provider: Provider, a: Author) => void;
 }) {
   const [editing, setEditing] = useState<{ view: View; isNew: boolean } | null>(null);
   const [catalog, setCatalog] = useState<SourceCatalogEntry[]>([]);
@@ -296,9 +299,15 @@ export function Deck({
           </header>
           {view.sources.length > 0 ? (
             isNotificationsView(view) ? (
-              <NotificationsView sources={view.sources} active onOpenThread={onOpenThread} />
+              <NotificationsView sources={view.sources} active onOpenThread={onOpenThread} onOpenProfile={onOpenProfile} />
             ) : (
-              <TimelineCore sources={view.sources} interactive badgeFor={badgeFor} onOpenThread={onOpenThread} />
+              <TimelineCore
+                sources={view.sources}
+                interactive
+                badgeFor={badgeFor}
+                onOpenThread={onOpenThread}
+                onOpenProfile={onOpenProfile}
+              />
             )
           ) : (
             <p className="empty">ソースがありません（⚙ から追加）</p>

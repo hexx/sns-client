@@ -5,8 +5,11 @@ import {
   BskyAuthError,
   blockActor as bskyBlock,
   createPost as bskyPost,
+  followActor as bskyFollow,
   getMyDid as bskyGetMyDid,
   getNotifications as bskyNotifications,
+  getProfile as bskyProfile,
+  getProfilePosts as bskyProfilePosts,
   getThread as bskyThread,
   getTimeline as bskyTimeline,
   likePost as bskyLike,
@@ -16,6 +19,7 @@ import {
   repostPost as bskyRepost,
   resetSession,
   unblockActor as bskyUnblock,
+  unfollowActor as bskyUnfollow,
   unmuteActor as bskyUnmute,
   unlikePost as bskyUnlike,
   unrepostPost as bskyUnrepost,
@@ -26,10 +30,13 @@ import {
   MisskeyAuthError,
   blockUser as misskeyBlock,
   createPost as misskeyPost,
+  followUser as misskeyFollow,
   getComposeCharLimit,
   getEmojiList as misskeyEmojis,
   getMyUserId as misskeyGetMyUserId,
   getNotifications as misskeyNotifications,
+  getProfile as misskeyProfile,
+  getProfilePosts as misskeyProfilePosts,
   getThread as misskeyThread,
   getTimeline as misskeyTimeline,
   listDestinations as misskeyDestinations,
@@ -39,6 +46,7 @@ import {
   react as misskeyReact,
   renote as misskeyRenote,
   unblockUser as misskeyUnblock,
+  unfollowUser as misskeyUnfollow,
   unmuteUser as misskeyUnmute,
   uploadMedia as misskeyUpload,
 } from './misskey';
@@ -65,6 +73,10 @@ vi.mock('./bsky', async (importOriginal) => {
     getMyDid: vi.fn(),
     getNotifications: vi.fn(),
     markNotificationsRead: vi.fn(),
+    getProfile: vi.fn(),
+    getProfilePosts: vi.fn(),
+    followActor: vi.fn(),
+    unfollowActor: vi.fn(),
   };
 });
 vi.mock('./misskey', async (importOriginal) => {
@@ -88,6 +100,10 @@ vi.mock('./misskey', async (importOriginal) => {
     getMyUserId: vi.fn(),
     getNotifications: vi.fn(),
     markNotificationsRead: vi.fn(),
+    getProfile: vi.fn(),
+    getProfilePosts: vi.fn(),
+    followUser: vi.fn(),
+    unfollowUser: vi.fn(),
   };
 });
 
@@ -1101,5 +1117,188 @@ describe('ブロック・ミュート（docs/block-mute-spec.md §4）', () => {
     );
     expect(res.status).toBe(400);
     expect(misskeyBlock).not.toHaveBeenCalled();
+  });
+});
+
+describe('profile routes（docs/profile-view-spec.md §4）', () => {
+  it('provider=bluesky → bskyProfile（id は DID）', async () => {
+    const profile = { provider: 'bluesky', author: { id: 'did:plc:alice', handle: 'a', displayName: 'A' } };
+    vi.mocked(bskyProfile).mockResolvedValue(profile as never);
+    const res = await worker.fetch(
+      new Request('https://x/api/profile?provider=bluesky&id=did%3Aplc%3Aalice'),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(profile);
+    expect(bskyProfile).toHaveBeenCalledWith('h', 'p', 'did:plc:alice');
+  });
+
+  it('provider=misskey → misskeyProfile', async () => {
+    const profile = { provider: 'misskey', author: { id: 'u1', handle: 'a', displayName: 'A' } };
+    vi.mocked(misskeyProfile).mockResolvedValue(profile as never);
+    const res = await worker.fetch(new Request('https://x/api/profile?provider=misskey&id=u1'), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(profile);
+    expect(misskeyProfile).toHaveBeenCalledWith(expect.anything(), 'u1');
+  });
+
+  it('nostr は 400（ブラウザ直接解決。ADR-0014）', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/profile?provider=nostr&id=abc'),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('mastodon（型上予約のみ）は 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/profile?provider=mastodon&id=x'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('id 欠落・形式不正は 400', async () => {
+    const noId = await worker.fetch(new Request('https://x/api/profile?provider=bluesky'), makeEnv());
+    expect(noId.status).toBe(400);
+    const badId = await worker.fetch(
+      new Request('https://x/api/profile?provider=bluesky&id=not-a-did'),
+      makeEnv(),
+    );
+    expect(badId.status).toBe(400);
+  });
+
+  it('bskyProfile が null（取得不能）→ 404', async () => {
+    vi.mocked(bskyProfile).mockResolvedValue(null);
+    const res = await worker.fetch(
+      new Request('https://x/api/profile?provider=bluesky&id=did%3Aplc%3Aalice'),
+      makeEnv(),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('misskey の 404（NO_SUCH_USER）は 404 を引き継ぐ', async () => {
+    const e = new Error('no such user') as Error & { status?: number };
+    e.status = 404;
+    vi.mocked(misskeyProfile).mockRejectedValue(e);
+    const res = await worker.fetch(new Request('https://x/api/profile?provider=misskey&id=u1'), makeEnv());
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('profile posts routes（docs/profile-view-spec.md §5）', () => {
+  it('provider=bluesky → bskyProfilePosts（cursor 付き）', async () => {
+    vi.mocked(bskyProfilePosts).mockResolvedValue({ posts: [], nextCursor: 'c2' });
+    const res = await worker.fetch(
+      new Request('https://x/api/profile/posts?provider=bluesky&id=did%3Aplc%3Aalice&cursor=c1'),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ posts: [], nextCursor: 'c2' });
+    expect(bskyProfilePosts).toHaveBeenCalledWith('h', 'p', 'did:plc:alice', 'c1');
+  });
+
+  it('provider=misskey → misskeyProfilePosts', async () => {
+    vi.mocked(misskeyProfilePosts).mockResolvedValue({ posts: [], nextCursor: null });
+    const res = await worker.fetch(new Request('https://x/api/profile/posts?provider=misskey&id=u1'), makeEnv());
+    expect(res.status).toBe(200);
+    expect(misskeyProfilePosts).toHaveBeenCalledWith(expect.anything(), 'u1', undefined);
+  });
+
+  it('nostr は 400', async () => {
+    const res = await worker.fetch(new Request('https://x/api/profile/posts?provider=nostr&id=abc'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('follow routes（docs/profile-view-spec.md §6）', () => {
+  it('POST bluesky → followActor、recordUri を返す', async () => {
+    vi.mocked(bskyFollow).mockResolvedValue('at://did:plc:me/app.bsky.graph.follow/abc');
+    const res = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recordUri: 'at://did:plc:me/app.bsky.graph.follow/abc' });
+    expect(bskyFollow).toHaveBeenCalledWith('h', 'p', 'did:plc:alice');
+  });
+
+  it('POST misskey → followUser、空オブジェクトを返す', async () => {
+    vi.mocked(misskeyFollow).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'misskey', actorId: 'u1' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+    expect(misskeyFollow).toHaveBeenCalledWith(expect.anything(), 'u1');
+  });
+
+  it('POST 不正ボディ（nostr / id 形式不正）は 400', async () => {
+    const nostr = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'nostr', actorId: 'abc' }),
+      }),
+      makeEnv(),
+    );
+    expect(nostr.status).toBe(400);
+    const badId = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'not-a-did' }),
+      }),
+      makeEnv(),
+    );
+    expect(badId.status).toBe(400);
+    expect(bskyFollow).not.toHaveBeenCalled();
+  });
+
+  it('DELETE bluesky → unfollowActor（recordUri 必須）', async () => {
+    vi.mocked(bskyUnfollow).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice', recordUri: 'at://did:plc:me/app.bsky.graph.follow/abc' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(bskyUnfollow).toHaveBeenCalledWith('h', 'p', 'at://did:plc:me/app.bsky.graph.follow/abc');
+  });
+
+  it('DELETE bluesky で recordUri 無しは 400', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(bskyUnfollow).not.toHaveBeenCalled();
+  });
+
+  it('DELETE misskey → unfollowUser（recordUri 不要）', async () => {
+    vi.mocked(misskeyUnfollow).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'misskey', actorId: 'u1' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyUnfollow).toHaveBeenCalledWith(expect.anything(), 'u1');
   });
 });

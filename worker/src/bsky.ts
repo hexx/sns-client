@@ -1,4 +1,4 @@
-import { AtpAgent, AppBskyFeedDefs, AppBskyRichtextFacet, RichText, type AtpSessionData } from '@atproto/api';
+import { AtpAgent, AppBskyActorDefs, AppBskyFeedDefs, AppBskyRichtextFacet, RichText, type AtpSessionData } from '@atproto/api';
 import type {
   LinkCard,
   Media,
@@ -7,6 +7,7 @@ import type {
   NotificationsResponse,
   Post,
   PostInputWire,
+  Profile,
   RichSegment,
   Source,
   SourceOption,
@@ -19,6 +20,7 @@ const SERVICE = 'https://bsky.social';
 const COL_LIKE = 'app.bsky.feed.like';
 const COL_REPOST = 'app.bsky.feed.repost';
 const COL_BLOCK = 'app.bsky.graph.block';
+const COL_FOLLOW = 'app.bsky.graph.follow';
 /** 通知一覧の1ページ件数と、対象投稿の補完取得バッチサイズ（docs/notifications-spec.md §4） */
 const NOTIFICATION_LIMIT = 30;
 const POSTS_BATCH = 25;
@@ -411,6 +413,125 @@ export async function getThread(
     if ((e as { error?: string })?.error === 'NotFound') return null;
     throw e;
   }
+}
+
+// --- プロフィール（docs/profile-view-spec.md §4/§5） ---
+
+/** getProfile 応答（ProfileViewDetailed）を統一 Profile へ映射する純粋関数 */
+export function mapProfile(pv: AppBskyActorDefs.ProfileViewDetailed): Profile {
+  const profile: Profile = {
+    provider: 'bluesky',
+    author: {
+      id: pv.did,
+      handle: pv.handle,
+      displayName: pv.displayName || pv.handle,
+      ...(pv.avatar ? { avatarUrl: pv.avatar } : {}),
+    },
+    url: `https://bsky.app/profile/${pv.did}`,
+  };
+  if (pv.description) profile.description = pv.description;
+  if (pv.banner) profile.bannerUrl = pv.banner;
+  if (pv.postsCount !== undefined || pv.followsCount !== undefined || pv.followersCount !== undefined) {
+    profile.stats = {
+      posts: pv.postsCount ?? 0,
+      following: pv.followsCount ?? 0,
+      followers: pv.followersCount ?? 0,
+    };
+  }
+  if (pv.viewer?.following) {
+    profile.viewer = { following: true, followUri: pv.viewer.following };
+  } else if (pv.viewer) {
+    profile.viewer = { following: false };
+  }
+  return profile;
+}
+
+/** getAuthorFeed の1アイテムを Post へ映射する（reasonRepost → repostedBy。profile-view-spec §5.1） */
+export function mapAuthorFeedItem(f: {
+  post: AppBskyFeedDefs.PostView;
+  reason?: { $type?: string; by?: { did: string; handle: string; displayName?: string; avatar?: string } };
+}): Post {
+  const post = mapPost(f.post);
+  if (f.reason?.$type === 'app.bsky.feed.defs#reasonRepost' && f.reason.by) {
+    post.repostedBy = {
+      id: f.reason.by.did,
+      handle: f.reason.by.handle,
+      displayName: f.reason.by.displayName || f.reason.by.handle,
+      ...(f.reason.by.avatar ? { avatarUrl: f.reason.by.avatar } : {}),
+    };
+  }
+  return post;
+}
+
+/** アカウント取得不能の判定（削除・ブロック・停止・BAN 等。§9 の 404 マップに使う） */
+function isAccountUnavailable(e: unknown): boolean {
+  const code = (e as { error?: string })?.error ?? '';
+  const msg = String((e as { message?: string })?.message ?? '');
+  return /(not found|blocked|takedown|deactivated)/i.test(`${code} ${msg}`);
+}
+
+/**
+ * プロフィール概要の取得（docs/profile-view-spec.md §4.2）。id は DID（Author.id）。
+ * 削除済み・ブロック等で解決できない場合は null を返す（ルートが 404 → クライアントはプレースホルダ表示）。
+ */
+export async function getProfile(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  did: string,
+): Promise<Profile | null> {
+  const a = await getAgent(handle, appPassword);
+  try {
+    const res = await a.getProfile({ actor: did });
+    return mapProfile(res.data as AppBskyActorDefs.ProfileViewDetailed);
+  } catch (e) {
+    // そのままでは 502 になるため、取得不能（null → ルートが 404 にマップ）として扱う（§9）
+    if (isAccountUnavailable(e)) return null;
+    throw e;
+  }
+}
+
+/**
+ * プロフィールの投稿一覧（docs/profile-view-spec.md §5.1）。
+ * filter: 'posts_no_replies' で投稿＋リポストのみ（リプライ除外。理由は §5.1）。
+ * リポストは reasonRepost を repostedBy に映射（既存タイムラインは reason を無視するため新規）。
+ * 削除済み・ブロック等で解決できない場合は null（ルートが 404 → クライアントはエラー行表示。§8.2）。
+ */
+export async function getProfilePosts(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  did: string,
+  cursor?: string,
+): Promise<TimelineResponse | null> {
+  const a = await getAgent(handle, appPassword);
+  try {
+    const res = await a.getAuthorFeed({ actor: did, limit: 30, ...(cursor ? { cursor } : {}), filter: 'posts_no_replies' });
+    return {
+      posts: (res.data.feed ?? []).map(mapAuthorFeedItem),
+      nextCursor: res.data.cursor ?? null,
+    };
+  } catch (e) {
+    // 概要ルートと同じく、取得不能アカウントは 502 にせず 404 にマップする（§9 の一貫性）
+    if (isAccountUnavailable(e)) return null;
+    throw e;
+  }
+}
+
+/** フォローを作成し、自分の follow レコード URI を返す（docs/profile-view-spec.md §6） */
+export async function followActor(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  did: string,
+): Promise<string> {
+  return createRecord(handle, appPassword, COL_FOLLOW, { subject: did });
+}
+
+/** フォローを解除する（自分の follow レコード URI 指定） */
+export async function unfollowActor(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  recordUri: string,
+): Promise<void> {
+  return deleteRecord(handle, appPassword, COL_FOLLOW, recordUri);
 }
 
 // --- 通知（docs/notifications-spec.md、ADR-0019） ---

@@ -9,8 +9,12 @@ SNS 横断で統一された「1つの投稿」のドメインモデル。UI は
 _Avoid_: status, toot, record
 
 **Author**:
-Post を著した主体の、SNS 横断統一モデル。Provider 内で安定した opaque な識別子（`id`。Bluesky の DID、Misskey のユーザー ID、Nostr の pubkey 等）と、変わりうる表示名（`handle` / `displayName`）を持つ。block / mute の対象はこの `id` で特定される。
+Post を著した主体の、SNS 横断統一モデル。Provider 内で安定した opaque な識別子（`id`。Bluesky の DID、Misskey のユーザー ID、Nostr の pubkey 等）と、変わりうる表示名（`handle` / `displayName`）を持つ。block / mute の対象はこの `id` で特定される。投稿に埋め込まれる軽量な姿であり、詳細情報（自己紹介・統計）は Profile で見る。
 _Avoid_: user, account, actor
+
+**Profile（プロフィール）**:
+Author の詳細情報（自己紹介・バナー・統計）と、それを表示する単位。投稿に埋め込まれる軽量な Author に対し、Profile は「その人の中身を見た」姿で、プロフィール表示（オーバーレイ）で見る。Provider によって持てる情報が異なり（Nostr は kind:0 メタデータのみで統計を持たない）、表示は各 Provider の能力に応じて欠ける。日本語の「プロフィール画面」は説明語。
+_Avoid_: user page, account page, profile page
 
 **block（ブロック）**:
 ある Author との相互作用（リプライ・reaction・repost 等）を Provider 側で遮断する操作。相手の投稿も自分から見えなくなる。安全のための硬い操作で、Provider 本体の状態として成立する（クライアント側のフィルタではない）。
@@ -19,6 +23,10 @@ _Avoid_: 拒否, reject
 **mute（ミュート）**:
 ある Author の投稿・再共有を、自分から見えなくする Provider 側の操作。相手には分からず、相互作用は遮断しない。block より柔らかく、主にタイムラインのノイズ低減のためのもの。
 _Avoid_: 非表示, hide, ignore
+
+**follow（フォロー）**:
+ある Author を自分のタイムラインに迎え入れる Provider 側の基本関係。ブロック・ミュートと対になる操作で、Profile 表示から行う（bsky / misskey のみ。nostr は読み取り専用のため持たない）。
+_Avoid_: フォローする（動詞としての説明語）, subscribe
 
 **Provider**:
 投稿の由来となる SNS の種別（`bluesky` / `misskey` / `mastodon` / `mixi2` / `nostr`）。`mastodon`・`mixi2` は型上予約のみ（mixi2 は公式 API が Bot 用のため Provider 不成立、docs/mixi2-integration-spec.md）。Threads は Misskey の ActivityPub 連合で吸収するため Provider 不成立（docs/threads-integration-spec.md、ADR-0011）。型予約もしない。`nostr` は初の読み取り専用 Provider（閲覧のみで Destination を持たない、docs/nostr-integration-spec.md、ADR-0013）。

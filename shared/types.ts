@@ -38,6 +38,31 @@ export type Author = {
   avatarUrl?: string;
 };
 
+/**
+ * プロフィールの概要（docs/profile-view-spec.md §3/§4）。
+ * bsky/misskey は BFF（GET /api/profile）が、nostr はブラウザ直接解決がこの形状を組み立てる。
+ * Author は投稿に埋め込まれる軽量な姿、Profile は「その人の中身を見た」詳細（CONTEXT.md）。
+ */
+export type Profile = {
+  provider: 'bluesky' | 'misskey' | 'nostr';
+  author: Author; // 既存の軽量モデルを再利用（id/handle/displayName/displayNameRich/avatarUrl）
+  description?: string; // 自己紹介（プレーンテキスト。フォールバック/検索用）
+  /** リッチ自己紹介（Misskey のみ。あれば UI はこちらを描画。name-display-spec と同じイディオム） */
+  descriptionRich?: RichSegment[];
+  bannerUrl?: string; // bsky/misskey のみ（nostr は無し）
+  stats?: { posts: number; following: number; followers: number }; // nostr は無し
+  url?: string; // Provider 上の permalink（BFF 生成。bsky=bsky.app/profile / misskey=ユーザーページ）
+  /** 自分がフォロー中か（bsky/misskey）。followUri は bsky のみ（解除用。Post.viewer.likeUri と同じイディオム） */
+  viewer?: { following: boolean; followUri?: string };
+};
+
+/** フォロー操作リクエスト（ブラウザ → BFF。docs/profile-view-spec.md §6） */
+export type FollowRequest = { provider: 'bluesky' | 'misskey'; actorId: string };
+/** フォロー解除リクエスト。bsky は viewer.followUri を recordUri で渡す（misskey は不要・無視） */
+export type UnfollowRequest = { provider: 'bluesky' | 'misskey'; actorId: string; recordUri?: string };
+/** 作成した follow レコード URI の応答（bsky のみ。misskey は URI 無しのため任意） */
+export type FollowResponse = { recordUri?: string };
+
 /** 統一インラインリッチテキスト（ADR-0005）。BFF が MFM/facets から生成 */
 export type RichSegment =
   | { type: 'text'; text: string }

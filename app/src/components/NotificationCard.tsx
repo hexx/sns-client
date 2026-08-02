@@ -7,9 +7,9 @@
  * - カード単位の未読強調は行わない（表示中のものは常に既読。§5）。
  */
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type { Notification, Post } from '../../../shared/types';
+import type { Author, Notification, Post, Provider } from '../../../shared/types';
 import { PROVIDER_LABEL } from '../lib/sourceLabels';
-import { NOTIF_ICON, notifText } from '../lib/notifications';
+import { NOTIF_ICON, notifText, notifTextBody } from '../lib/notifications';
 import { RichText } from './RichText';
 
 function relTime(iso: string): string {
@@ -57,19 +57,26 @@ function CompactPost({ post }: { post: Post }) {
 export function NotificationCard({
   notification,
   onOpenThread,
+  onOpenProfile,
 }: {
   notification: Notification;
   /** 投稿を伴う通知のクリックで開く Thread（docs/thread-view-spec.md） */
   onOpenThread?: (p: Post) => void;
+  /** actor（アバター・名前）のクリックでプロフィールを開く（docs/profile-view-spec.md §8.1） */
+  onOpenProfile?: (provider: Provider, a: Author) => void;
 }) {
   const n = notification;
   const icon = NOTIF_ICON[n.type] ?? '🔔';
   const clickable = Boolean(n.post);
+  const actorClickable = Boolean(onOpenProfile && n.actor);
+  // actor ボタンを持つカードは article を role=button にしない
+  // （button のネストは ARIA の nested-interactive 違反。actor ボタンが主要な操作になるため）。§8.1
+  const cardButton = clickable && !actorClickable;
   const open = () => {
     if (n.post) onOpenThread?.(n.post);
   };
   const onKeyDown = (e: ReactKeyboardEvent) => {
-    if (clickable && (e.key === 'Enter' || e.key === ' ')) {
+    if (cardButton && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       open();
     }
@@ -77,19 +84,42 @@ export function NotificationCard({
   return (
     <article
       className={`notif-card${clickable ? ' clickable' : ''}`}
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : undefined}
+      role={cardButton ? 'button' : undefined}
+      tabIndex={cardButton ? 0 : undefined}
       aria-label={notifText(n)}
       onClick={clickable ? open : undefined}
-      onKeyDown={clickable ? onKeyDown : undefined}
+      onKeyDown={cardButton ? onKeyDown : undefined}
     >
       <span className="notif-icon" aria-hidden="true">
         {icon}
       </span>
       <div className="notif-body">
         <div className="notif-line">
-          {n.actor?.avatarUrl && <img className="avatar-sm" src={n.actor.avatarUrl} alt="" />}
-          <span className="notif-text">{notifText(n)}</span>
+          {actorClickable && n.actor ? (
+            <button
+              type="button"
+              className="notif-actor-btn"
+              title="プロフィールを開く"
+              onClick={(e) => {
+                // カード全体クリック（Thread 遷移）を発火させない（§8.1）
+                e.stopPropagation();
+                onOpenProfile?.(n.provider, n.actor as Author);
+              }}
+              onKeyDown={(e) => {
+                // キーボード操作（Enter/Space）でもカード全体の Thread 遷移を発火させない
+                e.stopPropagation();
+              }}
+            >
+              {n.actor.avatarUrl && <img className="avatar-sm" src={n.actor.avatarUrl} alt="" />}
+              <span className="notif-actor-name">{n.actor.displayName}</span>
+            </button>
+          ) : (
+            <>
+              {n.actor?.avatarUrl && <img className="avatar-sm" src={n.actor.avatarUrl} alt="" />}
+              <span className="notif-text">{notifText(n)}</span>
+            </>
+          )}
+          {actorClickable && <span className="notif-text">{notifTextBody(n)}</span>}
           {/* 帰属バッジ: 由来 Provider 名のみ（通知 View 内では Source が自明。§6）。色分けなし（deck-view-spec §5） */}
           <span className="provider-badge">{PROVIDER_LABEL[n.provider]}</span>
           <time className="notif-time" dateTime={n.createdAt}>

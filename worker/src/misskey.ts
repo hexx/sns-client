@@ -14,6 +14,7 @@ import type {
   NotificationsResponse,
   Post,
   PostInputWire,
+  Profile,
   Reaction,
   RichSegment,
   Source,
@@ -54,6 +55,13 @@ type MkUser = {
   name?: string | null;
   avatarUrl?: string | null;
   host?: string | null;
+  description?: string | null;
+  bannerUrl?: string | null;
+  notesCount?: number;
+  followingCount?: number;
+  followersCount?: number;
+  isFollowing?: boolean;
+  emojis?: Record<string, string> | { name: string; url: string }[]; // 名前・自己紹介のカスタム絵文字
 };
 type MkFile = {
   id: string;
@@ -637,6 +645,84 @@ export async function getThread(env: MisskeyEnv, noteId: string, cursor?: string
   const last = kids[kids.length - 1];
   const nextCursor = kids.length >= LIMIT && last ? last.id : null;
   return { focus: mapNote(focus, registry, inst), ancestors, replies, nextCursor };
+}
+
+// --- プロフィール（docs/profile-view-spec.md §4/§5/§6） ---
+
+/** ユーザーのプロフィール permalink（ローカルはインスタンス、リモートはホームインスタンスのユーザーページ） */
+function userUrl(u: MkUser, instanceUrl?: string): string | undefined {
+  if (!instanceUrl) return undefined;
+  return u.host ? `https://${u.host}/@${u.username}` : `${instanceUrl}/@${u.username}`;
+}
+
+/** users/show の応答（MkUser）を統一 Profile へ映射する純粋関数 */
+export function mapProfile(
+  u: MkUser,
+  registry: Record<string, string> = {},
+  instanceUrl?: string,
+): Profile {
+  const profile: Profile = {
+    provider: 'misskey',
+    // 表示名の絵文字もユーザー由来（リモート）を優先しローカルはレジストリで補完（自己紹介と同じ扱い）
+    author: authorOf(u, { ...registry, ...emojiMap(u.emojis) }),
+  };
+  if (u.description) {
+    // 自己紹介: plain（フォールバック/検索用）と rich（表示用。カスタム絵文字はユーザー由来を優先しローカルはレジストリで補完。§4.3）
+    const { rich, plain } = mfmToRich(u.description, { ...registry, ...emojiMap(u.emojis) });
+    profile.description = plain;
+    if (rich.length > 0) profile.descriptionRich = rich;
+  }
+  if (u.bannerUrl) profile.bannerUrl = u.bannerUrl;
+  if (u.notesCount !== undefined || u.followingCount !== undefined || u.followersCount !== undefined) {
+    profile.stats = {
+      posts: u.notesCount ?? 0,
+      following: u.followingCount ?? 0,
+      followers: u.followersCount ?? 0,
+    };
+  }
+  if (u.isFollowing !== undefined) profile.viewer = { following: u.isFollowing };
+  const url = userUrl(u, instanceUrl);
+  if (url) profile.url = url;
+  return profile;
+}
+
+/** プロフィール概要の取得（docs/profile-view-spec.md §4.3）。id は userId（Author.id） */
+export async function getProfile(env: MisskeyEnv, userId: string): Promise<Profile> {
+  const [user, registry] = await Promise.all([
+    mkApi<MkUser>(env, 'users/show', { userId }),
+    loadEmojiRegistry(env),
+  ]);
+  return mapProfile(user, registry, instanceOf(env));
+}
+
+/**
+ * プロフィールの投稿一覧（docs/profile-view-spec.md §5.2）。users/notes の既定で
+ * リノート含む（withRenotes=true）・リプライ含まず（withReplies=false）。untilId ページング。
+ */
+export async function getProfilePosts(
+  env: MisskeyEnv,
+  userId: string,
+  cursor?: string,
+): Promise<TimelineResponse> {
+  // users/notes の既定（withRenotes=true・withReplies=false）に依存せず明示する（bsky の filter と同様に意図を固定）
+  const params: Record<string, unknown> = { userId, limit: LIMIT, withRenotes: true, withReplies: false };
+  if (cursor) params.untilId = cursor;
+  const notes = (await mkApi<MkNote[]>(env, 'users/notes', params)) ?? [];
+  const registry = await loadEmojiRegistry(env);
+  const inst = instanceOf(env);
+  const posts = notes.map((n) => mapNote(n, registry, inst));
+  const last = notes[notes.length - 1];
+  return { posts, nextCursor: notes.length >= LIMIT && last ? last.id : null };
+}
+
+/** フォローする（following/create。docs/profile-view-spec.md §6） */
+export async function followUser(env: MisskeyEnv, userId: string): Promise<void> {
+  await mkApi(env, 'following/create', { userId });
+}
+
+/** フォローを解除する（following/delete） */
+export async function unfollowUser(env: MisskeyEnv, userId: string): Promise<void> {
+  await mkApi(env, 'following/delete', { userId });
 }
 
 /**

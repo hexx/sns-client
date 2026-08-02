@@ -21,6 +21,7 @@
 - [name-display-spec.md](name-display-spec.md) — 投稿者名表示 仕様書（長い名前の縦伸び解消＋名前絵文字の解決）
 - [card-meta-row-spec.md](card-meta-row-spec.md) — カードメタ行 仕様書（ヘッダー3行化＋公開範囲バッジのアイコン化）
 - [thread-view-spec.md](thread-view-spec.md) — スレッド表示 仕様書（フォーカス投稿の祖先＋子孫をオーバーレイ表示）
+- [profile-view-spec.md](profile-view-spec.md) — プロフィール表示 仕様書（投稿者の概要＋投稿一覧をオーバーレイ表示・フォロー操作）
 - [block-mute-spec.md](block-mute-spec.md) — ユーザーのブロック・ミュート 仕様（サーバー側ネイティブ方式）
 - [notifications-spec.md](notifications-spec.md) — 通知表示 仕様書（View 統合・既読管理・Thread 遷移）
 

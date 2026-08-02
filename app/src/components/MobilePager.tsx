@@ -10,7 +10,7 @@ import { isNotificationsView } from '../lib/notifications';
 import { NotificationsView } from './NotificationsView';
 import { TimelineCore, type TimelineCoreHandle } from './TimelineCore';
 import { useBadgeFor } from '../lib/sourceLabels';
-import type { Post, View } from '../../../shared/types';
+import type { Author, Post, Provider, View } from '../../../shared/types';
 
 // docs/mobile-paging-spec.md §5 のジェスチャ調停パラメータ（数値は目安。操作感で調整可）
 const AXIS_SLOP = 8; // 軸決定のスロップ（px）
@@ -34,6 +34,7 @@ export function MobilePager({
   onReply,
   onQuote,
   onOpenThread,
+  onOpenProfile,
   justPosted,
 }: {
   views: View[];
@@ -44,6 +45,8 @@ export function MobilePager({
   onQuote: (p: Post) => void;
   /** カード本文クリックでスレッドを開く（docs/thread-view-spec.md §6.1） */
   onOpenThread?: (p: Post) => void;
+  /** アバター・表示名・handle のクリックでプロフィールを開く（docs/profile-view-spec.md §8.1） */
+  onOpenProfile?: (provider: Provider, a: Author) => void;
   justPosted: Post | null;
 }) {
   const badgeFor = useBadgeFor();
@@ -161,6 +164,7 @@ export function MobilePager({
                 sources={view.sources}
                 active={vi === index}
                 onOpenThread={onOpenThread}
+                onOpenProfile={onOpenProfile}
                 onPendingCountChange={pendingFor(view.id)}
               />
             ) : (
@@ -174,6 +178,7 @@ export function MobilePager({
                 onReply={onReply}
                 onQuote={onQuote}
                 onOpenThread={onOpenThread}
+                onOpenProfile={onOpenProfile}
                 interactive
                 badgeFor={badgeFor}
                 pullToRefresh
@@ -186,7 +191,7 @@ export function MobilePager({
           )}
         </section>
       )),
-    [views, index, justPosted, onReply, onQuote, onOpenThread, badgeFor, pendingFor],
+    [views, index, justPosted, onReply, onQuote, onOpenThread, onOpenProfile, badgeFor, pendingFor],
   );
 
   return (
