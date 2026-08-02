@@ -495,10 +495,14 @@ async function buildFeedPosts(
 
 /** ページの cursor（生イベントの最古 created_at - 1。until は境界を含むため、境界イベントの再取得を防ぐ）。
  * 注意: 同一秒に複数イベントがありリレーが FETCH_LIMIT で打ち切った場合、その秒の残りは次ページで
- * 欠落しうる（既知の制限。ProfileView は追記を pid で重複排除しないため、境界再取得より欠落を選ぶ）。 */
+ * 欠落しうる（既知の制限。ProfileView は追記を pid で重複排除しないため、境界再取得より欠落を選ぶ）。
+ * エポック境界（created_at <= 1。不正な時刻のスパム等）では null を返し、ページングを止める
+ * （負の until はリクエストが 400 になり、ループするため）。 */
 function pageCursor(rawTimes: number[]): string | null {
   if (rawTimes.length === 0) return null;
-  return String(Math.min(...rawTimes) - 1);
+  const min = Math.min(...rawTimes);
+  if (min <= 1) return null;
+  return String(min - 1);
 }
 
 // --- プロフィール（docs/profile-view-spec.md §7、ADR-0014/0017） ---

@@ -67,8 +67,11 @@ export function ProfileView({
   const engageInflight = useRef<Set<string>>(new Set());
   /** 追加読み込みの in-flight ガード（再描画前の連続発火で同じ cursor を二重取得しない。TimelineCore と同じ流儀） */
   const loadingMoreRef = useRef(false);
-  /** 読み込みの世代トークン（openProfile で increment。旧ターゲットの応答・finally を無効化する） */
+  /** 読み込みの世代トークン（openProfile / 再試行で increment。旧ターゲット・旧ページの応答・finally を無効化する） */
   const loadGenRef = useRef(0);
+  /** cursor の latest ref（loadMore を安定化し、IntersectionObserver の再購読・連鎖読み込みを防ぐ） */
+  const cursorRef = useRef<string | null>(null);
+  cursorRef.current = cursor;
   /** 表示済み投稿 id の Set（追記時の重複排除を O(1) にする。ターゲット切替でリセット） */
   const seenPostIds = useRef<Set<string>>(new Set());
   /** ターゲットの最新値（loadMore / retryList の stale 応答破棄に使う。§8.2） */
@@ -84,13 +87,16 @@ export function ProfileView({
   // --- 概要＋一覧の読み込み（ターゲット置換・再試行で再実行。概要と一覧は別々に失敗を扱う） ---
   useEffect(() => {
     let cancelled = false;
-    const gen = loadGenRef.current; // openProfile で increment される世代（stale 書込みの防止）
+    loadGenRef.current += 1; // 再取得・再試行ごとに世代を進める（in-flight の loadMore 応答を無効化）
+    const gen = loadGenRef.current;
+    loadingMoreRef.current = false;
     setStatus('loading');
     setProfile(null);
     setPosts([]);
     setCursor(null);
     setListDone(false);
     setListError(null);
+    setLoadingMore(false);
     fetchProfile(target.provider, target.author)
       .then((p) => {
         if (cancelled || gen !== loadGenRef.current) return;
@@ -344,6 +350,8 @@ export function ProfileView({
   /** 一覧の再試行（概要は表示したまま。§8.2。ターゲット置換後の stale 応答は破棄） */
   const retryList = useCallback(async () => {
     const t = target;
+    loadGenRef.current += 1; // in-flight の loadMore 応答を無効化（再試行後のリストに混入させない）
+    loadingMoreRef.current = false;
     setListError(null);
     setListDone(false); // 再試行中は「投稿はありません」を出さない（空状態の誤表示防止）
     try {
@@ -362,15 +370,16 @@ export function ProfileView({
 
   // --- 追加読み込み（cursor ページング。無限スクロール。§8.2。ターゲット置換後の stale 応答は破棄） ---
   const loadMore = useCallback(async () => {
-    // in-flight は ref で管理（deps に入れない。失敗時に loadMore が再生成されると
-    // IntersectionObserver が再購読され、可視中の sentinel で無限リトライになるため）
-    if (!cursor || loadingMoreRef.current) return;
-    const t = target;
+    // deps を空にして安定化する（再生成 → IO 再購読 → 可視中の sentinel で連鎖読み込みになるため）。
+    // 最新の cursor / target は ref から読み、in-flight は ref で管理する
+    const cur = cursorRef.current;
+    const t = targetRef.current;
+    if (!cur || loadingMoreRef.current) return;
     const gen = loadGenRef.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
-      const data = await fetchProfilePosts(t.provider, t.author, cursor);
+      const data = await fetchProfilePosts(t.provider, t.author, cur);
       if (targetRef.current !== t || gen !== loadGenRef.current) return;
       // ページ境界の重複（nostr の自己リポスト等）を pid の Set で除いて追記する
       const fresh = data.posts.filter((q) => !seenPostIds.current.has(pid(q)));
@@ -388,7 +397,7 @@ export function ProfileView({
         setLoadingMore(false);
       }
     }
-  }, [cursor, target]);
+  }, []);
 
   /** 一覧表示の準備ができたか（sentinel のマウント条件。IO の再購読トリガに使う） */
   const profileReady = profile !== null && status === 'done';
@@ -559,6 +568,7 @@ export function ProfileView({
                   <button type="button" onClick={() => void retryList()}>再試行</button>
                 </div>
               )}
+              {!listDone && <p className="empty">読み込み中…</p>}
               <div className="profile-posts">
                 {posts.map((p) =>
                   isHiddenPost(p) ? null : (
