@@ -79,11 +79,13 @@ function HandleProfileButton({
  * なければプレーンテキスト。フルネームは title でホバー表示。クランプせず全文を表示する。
  * onOpenProfile があれば button 化し、クリックでプロフィールを開く（docs/profile-view-spec.md §8.1）。
  */
-function DisplayName({ author, className, provider, onOpenProfile }: DisplayNameProps) {
-  // 注: provider と onOpenProfile はユニオンで相関する。分割代入のまま truthiness で狭めると
-  // 相関が失われる TS バージョンがあり得るため、分岐内では props 経由（property access）で扱う
-  const open = onOpenProfile;
-  if (open) {
+function DisplayName(props: DisplayNameProps) {
+  const { author, className } = props;
+  // provider / onOpenProfile はユニオンで相関する。分割代入した変数を truthiness で狭めると
+  // 相関が失われ得るため、分岐内では props 経由（property access）で扱う
+  if (props.onOpenProfile) {
+    const onOpenProfile = props.onOpenProfile;
+    const provider = props.provider; // この分岐では Provider に狭まる
     // ボタン内では <a>（link セグメント）を出さない（nested-interactive 回避）。
     // リンクのテキストは text セグメントに置き換えて内容を失わない
     const safe = author.displayNameRich?.length ? (
@@ -97,7 +99,7 @@ function DisplayName({ author, className, provider, onOpenProfile }: DisplayName
       author.displayName
     );
     return (
-      <button type="button" className={`${className ?? ''} name-btn`} title={author.displayName} onClick={() => open(provider, author)}>
+      <button type="button" className={`${className ?? ''} name-btn`} title={author.displayName} onClick={() => onOpenProfile(provider, author)}>
         {safe}
       </button>
     );

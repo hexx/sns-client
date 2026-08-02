@@ -357,6 +357,7 @@ export function ProfileView({
     const t = target;
     loadGenRef.current += 1; // in-flight の loadMore 応答を無効化（再試行後のリストに混入させない）
     loadingMoreRef.current = false;
+    setLoadingMore(false); // 旧世代の in-flight が finally で消せないため、ここで表示も戻す
     setListError(null);
     setListDone(false); // 再試行中は「投稿はありません」を出さない（空状態の誤表示防止）
     try {
@@ -417,7 +418,9 @@ export function ProfileView({
     });
     io.observe(el);
     return () => io.disconnect();
-  }, [loadMore, profileReadyOrListReady]);
+    // listDone を依存に含める: 概要が先に解決して一覧が後から届く場合、sentinel マウント後に
+    // 再購読して最初の intersection（cursor がまだ null で空振りした分）を取り直す
+  }, [loadMore, profileReadyOrListReady, listDone]);
 
   /**
    * 一覧内の別ユーザー入口（リポスト行・quote card の著者行）での置換。

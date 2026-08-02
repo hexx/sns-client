@@ -1346,16 +1346,39 @@ describe('profile routes: misskey の取得不能（docs/profile-view-spec.md §
 });
 
 describe('follow routes: recordUri の検証（docs/profile-view-spec.md §6）', () => {
-  it('DELETE bluesky: recordUri 内の DID が actorId と不一致なら 400', async () => {
+  it('DELETE bluesky: URI の repo DID は自分の DID のため actorId と一致しなくても良い（通常の解除が通る）', async () => {
+    vi.mocked(bskyUnfollow).mockResolvedValue(undefined);
     const res = await worker.fetch(
       new Request('https://x/api/follow', {
         method: 'DELETE',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice', recordUri: 'at://did:plc:other/app.bsky.graph.follow/abc' }),
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice', recordUri: 'at://did:plc:me/app.bsky.graph.follow/abc' }),
       }),
       makeEnv(),
     );
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(bskyUnfollow).toHaveBeenCalledWith('h', 'p', 'at://did:plc:me/app.bsky.graph.follow/abc');
+  });
+
+  it('DELETE bluesky: follow コレクション以外・形式不正の URI は 400', async () => {
+    const bad = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice', recordUri: 'at://did:plc:me/app.bsky.feed.like/abc' }),
+      }),
+      makeEnv(),
+    );
+    expect(bad.status).toBe(400);
+    const malformed = await worker.fetch(
+      new Request('https://x/api/follow', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice', recordUri: 'not-a-uri' }),
+      }),
+      makeEnv(),
+    );
+    expect(malformed.status).toBe(400);
     expect(bskyUnfollow).not.toHaveBeenCalled();
   });
 });

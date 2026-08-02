@@ -542,12 +542,10 @@ app.delete(API.follow, async (c) => {
     if (typeof body.recordUri !== 'string') {
       throw new HTTPException(400, { message: 'recordUri required' });
     }
-    // follow レコードの URI 形式を検証し、URI 内の DID と actorId の一致も確認する
-    // （不一致の URI で別ユーザーの follow を誤って解除しない。docs/profile-view-spec.md §6）
-    const uriMatch = /^at:\/\/(did:[A-Za-z0-9._:%-]+)\/app\.bsky\.graph\.follow\/[A-Za-z0-9._:~-]+$/.exec(
-      body.recordUri,
-    );
-    if (!uriMatch || uriMatch[1] !== body.actorId) {
+    // follow レコードの URI 構造を検証（不正な URI で upstream を叩かない）。
+    // 注: URI の repo DID は「自分の DID」（viewer.followUri は自分の follow レコード）であり、
+    // actorId（フォロー対象）とは一致しないため突合はしない
+    if (!/^at:\/\/did:[A-Za-z0-9._:%-]+\/app\.bsky\.graph\.follow\/[A-Za-z0-9._:~-]+$/.test(body.recordUri)) {
       throw new HTTPException(400, { message: 'invalid recordUri' });
     }
     try {
