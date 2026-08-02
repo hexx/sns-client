@@ -229,11 +229,11 @@ export function parseProfile(content?: string): NostrProfile {
     };
     const p: NostrProfile = {};
     const dn = j.display_name || j.name;
-    if (typeof dn === 'string' && dn.length > 0) p.displayName = dn;
-    if (typeof j.picture === 'string' && j.picture.length > 0) p.picture = j.picture;
-    // 自己紹介・バナーはプロフィール表示で使う（docs/profile-view-spec.md §7）
-    if (typeof j.about === 'string' && j.about.length > 0) p.about = j.about;
-    if (typeof j.banner === 'string' && j.banner.length > 0) p.banner = j.banner;
+    if (typeof dn === 'string' && dn.length > 0) p.displayName = dn.slice(0, 200); // 悪意リレー対策の上限
+    if (typeof j.picture === 'string' && j.picture.length > 0 && j.picture.length <= 2000) p.picture = j.picture;
+    // 自己紹介・バナーはプロフィール表示で使う（docs/profile-view-spec.md §7）。長さは抑えてメモリ・レイアウトを守る
+    if (typeof j.about === 'string' && j.about.length > 0) p.about = j.about.slice(0, 500);
+    if (typeof j.banner === 'string' && j.banner.length > 0 && j.banner.length <= 2000) p.banner = j.banner;
     return p;
   } catch {
     return {};

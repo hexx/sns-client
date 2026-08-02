@@ -465,8 +465,10 @@ export function mapAuthorFeedItem(f: {
 
 /**
  * アカウント取得不能の判定（削除・ブロック・停止・BAN 等。§9 の 404 マップに使う）。
- * XRPC のエラーコードを厳密照合する（ENOTFOUND や RecordNotFound 等の部分一致による誤判定を防ぐ）。
- * メッセージは語境界のフォールバック（コードが無いエラー形状への保険）。
+ * - 既知の取得不能コードは厳密照合（ENOTFOUND や RecordNotFound 等の部分一致による誤判定を防ぐ）
+ * - 既知の非該当コード（レート制限・インフラ等）は false
+ * - 汎用コード（InvalidRequest 等）とコード無しは、メッセージを語境界で照合する
+ *   （bsky は「Profile not found」を InvalidRequest + message で返すため。§4.2）
  */
 const UNAVAILABLE_CODES = new Set([
   'NotFound',
@@ -481,11 +483,24 @@ const UNAVAILABLE_CODES = new Set([
   'AccountSuspended',
 ]);
 
+/** 取得不能と無関係であることが確定しているコード（メッセージ照合に進ませない） */
+const NOT_UNAVAILABLE_CODES = new Set([
+  'RateLimitExceeded',
+  'UpstreamFailure',
+  'InternalServerError',
+  'AuthRequired',
+  'ExpiredToken',
+  'InvalidToken',
+]);
+
 export function isAccountUnavailable(e: unknown): boolean {
   const code = (e as { error?: string })?.error ?? '';
-  if (code) return UNAVAILABLE_CODES.has(code); // 既知外のコード（RateLimit 等）はメッセージで拾わない
+  if (code) {
+    if (UNAVAILABLE_CODES.has(code)) return true;
+    if (NOT_UNAVAILABLE_CODES.has(code)) return false;
+  }
   const msg = String((e as { message?: string })?.message ?? '');
-  // コードが無いエラー形状のみメッセージで照合（語境界。ENOTFOUND や unblocked 等の誤判定を防ぐ）
+  // 汎用コード・コード無しのエラー形状のみメッセージで照合（語境界。ENOTFOUND や unblocked 等の誤判定を防ぐ）
   return /\b(not ?found|blocked|blocking you|taken? ?down|deactivated|suspended)\b/i.test(msg);
 }
 
@@ -548,15 +563,18 @@ export async function getProfilePosts(
 
 /**
  * フォローを作成し、自分の follow レコード URI を返す（docs/profile-view-spec.md §6）。
- * createRecord（TID rkey）で書く — 公式クライアントと同じ規約。rkey=DID 固定の putRecord は
- * 他クライアントの follow レコードと重複・解除漏れを起こすため使わない。二重送信はクライアント側の
- * followBusy ガードで防ぐ（サーバー側の冪等性は公式 API にも無い）。
+ * 既にフォロー中（viewer.following が取れる）なら既存レコードを返すことで、再実行・二重送信で
+ * レコードが増殖しないようにする（公式 API に冪等性は無いため、先読みで防ぐ）。
  */
 export async function followActor(
   handle: string | undefined,
   appPassword: string | undefined,
   did: string,
 ): Promise<string> {
+  const a = await getAgent(handle, appPassword);
+  // 既存の follow レコードがあればそれを返す（二重フォロー防止の冪等化。取得失敗時は作成に進む）
+  const existing = await a.getProfile({ actor: did }).catch(() => null);
+  if (existing?.data.viewer?.following) return existing.data.viewer.following;
   return createRecord(handle, appPassword, COL_FOLLOW, { subject: did });
 }
 

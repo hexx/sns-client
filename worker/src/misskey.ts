@@ -679,7 +679,7 @@ async function mkApiWithCode<T>(
     const err = await readMisskeyError(res);
     if (res.status === 401 || res.status === 403) {
       // 認証失敗（HTTP 401 は常に認証、403 は kind: 'authentication' または認証系 code）のみ 401 にし、
-      // 業務 code（YOU_ARE_BLOCKED 等、403 に載る）は 409 にする。code も kind も無い素の 401/403（WAF 等）は
+      // 業務 code（YOU_ARE_BLOCKED 等、403 に載る）は 409 にする。code も kind も無い素の 403（WAF 等）は
       // 素の Error のまま投げ、catch-all で 502 にする（恒久認証失敗に誤分類しない）
       const isAuth =
         res.status === 401 ||

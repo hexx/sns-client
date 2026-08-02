@@ -542,6 +542,10 @@ app.delete(API.follow, async (c) => {
     if (typeof body.recordUri !== 'string' || body.recordUri.length === 0) {
       throw new HTTPException(400, { message: 'recordUri required' });
     }
+    // follow レコードの URI 形式を検証（不正な URI で upstream を叩かない）
+    if (!/^at:\/\/did:[A-Za-z0-9._:%-]+\/app\.bsky\.graph\.follow\/[A-Za-z0-9._:~-]+$/.test(body.recordUri)) {
+      throw new HTTPException(400, { message: 'invalid recordUri' });
+    }
     try {
       await bskyUnfollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.recordUri);
     } catch (e) {

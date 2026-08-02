@@ -827,3 +827,17 @@ describe('isAccountUnavailable（docs/profile-view-spec.md §9）', () => {
     expect(isAccountUnavailable({ error: 'RateLimitExceeded', message: 'too many requests' })).toBe(false);
   });
 });
+
+describe('isAccountUnavailable: 汎用コード + メッセージ（docs/profile-view-spec.md §9）', () => {
+  it('bsky の実形状（InvalidRequest + "Profile not found"）も取得不能と判定する', () => {
+    expect(isAccountUnavailable({ error: 'InvalidRequest', message: 'Profile not found' })).toBe(true);
+    expect(isAccountUnavailable({ error: 'InvalidRequest', message: 'Account has been taken down' })).toBe(true);
+  });
+  it('既知の非該当コードはメッセージに「not found」等が含まれても判定しない', () => {
+    expect(isAccountUnavailable({ error: 'RateLimitExceeded', message: 'not found in cache, retry later' })).toBe(false);
+    expect(isAccountUnavailable({ error: 'InternalServerError', message: 'upstream blocked the request' })).toBe(false);
+  });
+  it('ENOTFOUND（DNS 失敗）は判定しない', () => {
+    expect(isAccountUnavailable({ message: 'getaddrinfo ENOTFOUND api.bsky.app' })).toBe(false);
+  });
+});

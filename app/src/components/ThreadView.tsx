@@ -57,9 +57,10 @@ export function ThreadView({
   const [focus, setFocus] = useState<Post>(post);
 
   // post prop の変化でフォーカスを再同期する（App が key で再マウントするケースに加え、
-  // 同一 post の再オープン時も内部ナビゲーションの古い focus を引きずらない。profile-view-spec §8.2）
+  // 同一 post の再オープン時も内部ナビゲーションの古い focus を引きずらない。profile-view-spec §8.2）。
+  // 同一投稿（provider:id 一致）への prop 更新では、スレッド内ナビゲーションを壊さないよう何もしない
   useEffect(() => {
-    setFocus(post);
+    setFocus((f) => (f.provider === post.provider && f.id === post.id ? f : post));
   }, [post]);
   const [thread, setThread] = useState<ThreadResponse | null>(null);
   const [status, setStatus] = useState<Status>('loading');
