@@ -29,30 +29,6 @@ function relTime(iso: string): string {
 /** 対象投稿のコンパクトプレビュー（本文2行クランプ＋先頭サムネ。CW は伏せて警告のみ表示）
  * asButton 時は投稿プレビュー自体が Thread への入口（actor ボタンを持つカードのキーボード操作を確保）。§8.1 */
 function CompactPost({ post, asButton, onOpen }: { post: Post; asButton?: boolean; onOpen?: () => void }) {
-  const inner = (
-    <>
-      <span className="notif-post-author">
-        {post.author.avatarUrl && <img className="avatar-sm" src={post.author.avatarUrl} alt="" />}
-        <span title={post.author.displayName}>{post.author.displayName}</span>
-      </span>
-      {post.cw ? (
-        <span className="cw-pill">
-          <span className="cw-text">{post.cw || 'CW'}</span>
-        </span>
-      ) : (
-        <>
-          {post.rich && post.rich.length > 0 ? (
-            <span className="notif-post-text">
-              <RichText segments={post.rich} inline />
-            </span>
-          ) : (
-            <span className="notif-post-text">{post.text}</span>
-          )}
-          {post.media[0] && <img className="notif-post-thumb" src={post.media[0].url} alt="" />}
-        </>
-      )}
-    </>
-  );
   if (asButton) {
     // ボタン内に <a> を含めない（nested-interactive 回避）。リッチリンクはプレーンな本文で描画する
     return (
@@ -75,7 +51,30 @@ function CompactPost({ post, asButton, onOpen }: { post: Post; asButton?: boolea
       </button>
     );
   }
-  return <div className="notif-post">{inner}</div>;
+  return (
+    <div className="notif-post">
+      <span className="notif-post-author">
+        {post.author.avatarUrl && <img className="avatar-sm" src={post.author.avatarUrl} alt="" />}
+        <span title={post.author.displayName}>{post.author.displayName}</span>
+      </span>
+      {post.cw ? (
+        <span className="cw-pill">
+          <span className="cw-text">{post.cw || 'CW'}</span>
+        </span>
+      ) : (
+        <>
+          {post.rich && post.rich.length > 0 ? (
+            <span className="notif-post-text">
+              <RichText segments={post.rich} inline />
+            </span>
+          ) : (
+            <span className="notif-post-text">{post.text}</span>
+          )}
+          {post.media[0] && <img className="notif-post-thumb" src={post.media[0].url} alt="" />}
+        </>
+      )}
+    </div>
+  );
 }
 
 export function NotificationCard({

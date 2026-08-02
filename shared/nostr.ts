@@ -476,7 +476,10 @@ async function buildFeedPosts(
   for (const e of kind6) {
     const orig = originals.get(eTagId(e) ?? '');
     if (!orig) continue; // 参照先未取得のリポストはスキップ（§6.5）
-    if (seen.has(orig.id)) continue; // 元ノートが既に表示済み（自己リポスト・複数リポスト）ならスキップ
+    // 自己リポスト（元ノートが同一 author の kind:1 として同バッチに存在）は元の投稿と重複するためスキップ。
+    // 他ユーザーのノートのリポストは表示対象（repostedBy を付ける）。単一 author バッチでは
+    // seen に入るのは自分の kind:1 のみなので、実質は自己リポストの判定になる
+    if (seen.has(orig.id) && orig.pubkey === e.pubkey) continue;
     seen.add(orig.id);
     posts.push(buildPost(orig, profiles.get(orig.pubkey), toAuthor(e.pubkey, profiles.get(e.pubkey))));
     rawTimes.push(e.created_at); // リポストは「リポストした生イベント」の日時でページングする

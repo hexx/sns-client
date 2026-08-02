@@ -264,7 +264,7 @@ export function ProfileView({
         try {
           await api.repost('misskey', p.ref);
           patchPostFor(t, id, withRenoteIncrement);
-          setToast('リノートしました');
+          if (targetRef.current === t) setToast('リノートしました');
         } catch {
           if (targetRef.current === t) setToast('リノートに失敗しました');
         } finally {
@@ -358,6 +358,9 @@ export function ProfileView({
     }
   }, [cursor, loadingMore, target]);
 
+  /** 一覧表示の準備ができたか（sentinel のマウント条件。IO の再購読トリガに使う） */
+  const profileReady = profile !== null && status === 'done';
+
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -366,7 +369,7 @@ export function ProfileView({
     });
     io.observe(el);
     return () => io.disconnect();
-  }, [loadMore]);
+  }, [loadMore, profileReady]);
 
   /**
    * 一覧内の別ユーザー入口（リポスト行・quote card の著者行）での置換。

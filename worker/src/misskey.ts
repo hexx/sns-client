@@ -678,11 +678,13 @@ async function mkApiWithCode<T>(
   if (!res.ok) {
     const err = await readMisskeyError(res);
     if (res.status === 401 || res.status === 403) {
-      // 403 でも業務エラー（YOU_ARE_BLOCKED 等）が code 付きで返ることがある。
-      // 認証失敗（kind: 'authentication'）は 401 のままにし、業務 code のみ 409 にする
-      if (err?.code && err.kind !== 'authentication') {
-        throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
-      }
+      // 認証失敗（HTTP 401、kind: 'authentication'、または認証系 code）は 401 のままにし、
+      // 業務 code（YOU_ARE_BLOCKED 等）のみ 409 にする（トークン失効を業務エラーに化けさせない）
+      const isAuth =
+        res.status === 401 ||
+        err?.kind === 'authentication' ||
+        /AUTHENTICATION_FAILED|PERMISSION_DENIED/i.test(err?.code ?? '');
+      if (!isAuth && err?.code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
       const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
       e.status = 401;
       throw e;
@@ -725,11 +727,11 @@ export function mapProfile(
     if (rich.length > 0) profile.descriptionRich = rich;
   }
   if (u.bannerUrl) profile.bannerUrl = u.bannerUrl;
-  if (u.notesCount !== undefined || u.followingCount !== undefined || u.followersCount !== undefined) {
+  if (u.notesCount !== undefined && u.followingCount !== undefined && u.followersCount !== undefined) {
     profile.stats = {
-      posts: u.notesCount ?? 0,
-      following: u.followingCount ?? 0,
-      followers: u.followersCount ?? 0,
+      posts: u.notesCount,
+      following: u.followingCount,
+      followers: u.followersCount,
     };
   }
   if (u.isFollowing !== undefined) profile.viewer = { following: u.isFollowing };

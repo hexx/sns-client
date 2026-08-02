@@ -452,9 +452,12 @@ async function withProfile404<T>(provider: 'bluesky' | 'misskey', bsky: () => Pr
   }
 }
 
-/** misskey の取得不能（NO_SUCH_USER）判定。HTTP 404 と業務コード（mkApiWithCode は 409 に正規化）の両対応 */
+/** misskey の取得不能（NO_SUCH_USER / YOU_ARE_BLOCKED）判定。HTTP 404 と業務コード（mkApiWithCode は 409 に正規化）の両対応 */
 function isMisskeyNotFound(e: unknown): boolean {
-  return (e as { status?: number })?.status === 404 || (e instanceof MisskeyApiError && e.code === 'NO_SUCH_USER');
+  return (
+    (e as { status?: number })?.status === 404 ||
+    (e instanceof MisskeyApiError && (e.code === 'NO_SUCH_USER' || e.code === 'YOU_ARE_BLOCKED'))
+  );
 }
 
 // --- プロフィール（docs/profile-view-spec.md §4/§5。nostr はブラウザ直接のため BFF 非対応） ---

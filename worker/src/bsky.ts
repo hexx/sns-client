@@ -535,13 +535,26 @@ export async function getProfilePosts(
   });
 }
 
-/** フォローを作成し、自分の follow レコード URI を返す（docs/profile-view-spec.md §6） */
+/**
+ * フォローを作成し、自分の follow レコード URI を返す（docs/profile-view-spec.md §6）。
+ * rkey を対象 DID に固定した putRecord（作成/置換）で書くため、二重フォロー・再実行は置換になり
+ * 冪等（blockActor と同じ規約。二重送信で follow レコードが増殖しない）。
+ */
 export async function followActor(
   handle: string | undefined,
   appPassword: string | undefined,
   did: string,
 ): Promise<string> {
-  return createRecord(handle, appPassword, COL_FOLLOW, { subject: did });
+  const a = await getAgent(handle, appPassword);
+  const me = a.session?.did;
+  if (!me) throw new BskyAuthError('no-session');
+  await a.com.atproto.repo.putRecord({
+    repo: me,
+    collection: COL_FOLLOW,
+    rkey: did,
+    record: { subject: did, createdAt: new Date().toISOString() },
+  });
+  return `at://${me}/${COL_FOLLOW}/${did}`;
 }
 
 /** フォローを解除する（自分の follow レコード URI 指定） */

@@ -61,7 +61,7 @@ function HandleProfileButton({
   onOpenProfile?: (provider: Provider, a: Author) => void;
 }) {
   if (!onOpenProfile) {
-    return <span className={`${className ?? ''} handle`}>@{author.handle}</span>;
+    return <span className={className}>@{author.handle}</span>; // className は呼び出し側が .handle を渡す
   }
   return (
     <button
