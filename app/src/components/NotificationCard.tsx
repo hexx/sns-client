@@ -3,10 +3,12 @@
  * - 投稿を伴う通知は対象 Post のプレビューを載せ、クリックで Thread を開く（遷移先は post.ref エコー）。
  * - postUnavailable は案内行のみ（遷移先なし。quote card の unavailable と同一イディオム）。
  * - actor のみ・テキストのみは遷移なし。
+ * - メタ行に帰属バッジ（由来 Provider 名。docs/notifications-spec.md §6）。
  * - カード単位の未読強調は行わない（表示中のものは常に既読。§5）。
  */
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { Notification, Post } from '../../../shared/types';
+import { PROVIDER_LABEL } from '../lib/sourceLabels';
 import { NOTIF_ICON, notifText } from '../lib/notifications';
 import { RichText } from './RichText';
 
@@ -88,6 +90,8 @@ export function NotificationCard({
         <div className="notif-line">
           {n.actor?.avatarUrl && <img className="avatar-sm" src={n.actor.avatarUrl} alt="" />}
           <span className="notif-text">{notifText(n)}</span>
+          {/* 帰属バッジ: 由来 Provider 名のみ（通知 View 内では Source が自明。§6）。色分けなし（deck-view-spec §5） */}
+          <span className="provider-badge">{PROVIDER_LABEL[n.provider]}</span>
           <time className="notif-time" dateTime={n.createdAt}>
             {relTime(n.createdAt)}
           </time>

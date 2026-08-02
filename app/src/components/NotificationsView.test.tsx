@@ -98,6 +98,9 @@ describe('NotificationsView', () => {
       expect(texts[0]).toContain('返信しました');
       expect(texts[1]).toContain('いいねしました');
     });
+    // 帰属バッジ: 各通知に由来 Provider 名を表示する（docs/notifications-spec.md §6）
+    expect(screen.getAllByText('Bluesky')).toHaveLength(1);
+    expect(screen.getAllByText('Misskey')).toHaveLength(1);
     expect(mockNotifications).toHaveBeenCalledWith('bluesky', undefined);
     expect(mockNotifications).toHaveBeenCalledWith('misskey', undefined);
   });

@@ -60,6 +60,10 @@ _Avoid_: attachment, blob, asset
 投稿に添付された Media を拡大して見せる重ね合わせ表示。投稿内の画像を選択すると開き、背景を暗くして、画面に収まる最大サイズで1枚ずつ表示し、同じ投稿内の複数画像を切り替えられる。識別子・正式名が Lightbox で、日本語の「拡大表示」は説明語。
 _Avoid_: MediaViewer, ImageViewer, gallery, modal
 
+**帰属バッジ（attribution badge）**:
+表示中のコンテンツの由来（どこの Provider から来たか）を一見で判別できるようにするバッジ。Post では Provider 名＋由来 Source 名（例:「Misskey · 技術リスト」）、通知カードでは Provider 名のみ（例:「Bluesky」。通知 View 内では Source が自明のため）を表示する。色分けはしない（プロバイダブランドカラーの不採用は ADR-0008 / deck-view-spec §5）。デッキ・通知の時系列合成のようなマージ表示の必須情報。
+_Avoid_: provider badge, platform badge, プロバイダバッジ, プラットフォームバッジ
+
 **Timeline**:
 1つの View に属し、その View を構成する Source 群の投稿を時系列に合成して描画した一覧。無限スクロールで継ぎ足し、新着は自動挿入せずピルで知らせる。
 _Avoid_: feed, home, list, view

@@ -120,6 +120,7 @@ type NotificationsResponse = {
 ## 6. 通知カードの描画
 
 - タイプ別アイコン（mention / reply / quote / like / reaction / repost / follow 等の種別を一見で判別）。
+- **Provider バッジ（帰属バッジ）**: メタ行の相対時刻の左に、由来 Provider のバッジを表示する（例:「Bluesky」「Misskey」。`PROVIDER_LABEL` をそのまま使用）。source 名は付けない（通知 View 内では Source が自明のため）。色分けはしない（[deck-view-spec §5](./deck-view-spec.md) の方針踏襲。プロバイダブランドカラーの不採用は [ADR-0008](./adr/0008-app-icon-static-svg-assets.md)）。3分類すべてのカード（投稿を伴う / actor のみ / テキストのみ）に統一表示する。用語は [CONTEXT.md](../CONTEXT.md) の **帰属バッジ** を参照。
 - **投稿を伴う**: `actor`（アバター＋表示名）＋文言＋対象 `post` のプレビュー（既存 PostCard の縮小表示。CW は既存の折りたたみ流儀を踏襲）。
 - **actor のみ**: `actor` ＋文言のみ。
 - **テキストのみ**: `text` をそのまま表示（例: 「実績を獲得しました」「新しいデバイスからログインしました」）。
@@ -160,6 +161,7 @@ type NotificationsResponse = {
 ## 関連ドキュメント
 
 - [ADR-0019](./adr/0019-notification-unified-model.md) — 通知の統一モデルと bsky 対象投稿の補完取得
+- [card-meta-row-spec.md](./card-meta-row-spec.md) — 帰属バッジの表示形式（§3。通知カードは Provider 名のみに簡略化）
 - [ADR-0020](./adr/0020-notifications-as-view-source.md) — 通知を View/Source 機構に統合
 - [thread-view-spec.md](./thread-view-spec.md) — Thread 遷移先（§7）
 - [unread-divider-spec.md](./unread-divider-spec.md) — タイムラインの新着機構（非対象の確認）
