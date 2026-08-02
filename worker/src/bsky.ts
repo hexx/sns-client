@@ -465,11 +465,6 @@ export function mapAuthorFeedItem(f: {
 
 /**
  * アカウント取得不能の判定（削除・ブロック・停止・BAN 等。§9 の 404 マップに使う）。
- * 既知のエラーコードを先に厳密に照合し、メッセージはフォールバックで見る
- * （getThread の error === 'NotFound' / unblockActor の RecordNotFound と同じ流儀）。
- */
-/**
- * アカウント取得不能の判定（削除・ブロック・停止・BAN 等。§9 の 404 マップに使う）。
  * XRPC のエラーコードを厳密照合する（ENOTFOUND や RecordNotFound 等の部分一致による誤判定を防ぐ）。
  * メッセージは語境界のフォールバック（コードが無いエラー形状への保険）。
  */
@@ -488,10 +483,9 @@ const UNAVAILABLE_CODES = new Set([
 
 export function isAccountUnavailable(e: unknown): boolean {
   const code = (e as { error?: string })?.error ?? '';
-  if (code && UNAVAILABLE_CODES.has(code)) return true;
+  if (code) return UNAVAILABLE_CODES.has(code); // 既知外のコード（RateLimit 等）はメッセージで拾わない
   const msg = String((e as { message?: string })?.message ?? '');
-  // メッセージは語境界で照合する（getaddrinfo ENOTFOUND や unblocked 等の誤判定を防ぐ）。
-  // 「not found」「take(n) down」「blocking you」「suspended」も空白有無どちらでも
+  // コードが無いエラー形状のみメッセージで照合（語境界。ENOTFOUND や unblocked 等の誤判定を防ぐ）
   return /\b(not ?found|blocked|blocking you|taken? ?down|deactivated|suspended)\b/i.test(msg);
 }
 

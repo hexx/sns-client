@@ -1556,15 +1556,17 @@ button.reaction:hover {
   border: none;
   padding: 0;
   margin: 0;
-  /* font ショートカットは font-size/weight もリセットするため font-family と font-size のみにする
-     （.display-name / .repost-name の指定を保ち、button の UA フォントに化けないようにする）。
-     docs/profile-view-spec.md §8.1 */
+  /* font ショートカットは font-size/weight もリセットするため font-family のみにする
+     （.display-name の 15px を保つ。リポスト行の継承サイズは下の専用ルールで補う） */
   font-family: inherit;
-  font-size: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
   min-width: 0;
+}
+/* リポスト行の名前ボタンは .repost-badge の 12px を継承する（button は UA フォントに化けるため明示） */
+.repost-badge .name-btn {
+  font-size: inherit;
 }
 .name-btn:hover {
   color: var(--accent);

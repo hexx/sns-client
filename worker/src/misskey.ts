@@ -684,7 +684,7 @@ async function mkApiWithCode<T>(
       const isAuth =
         res.status === 401 ||
         err?.kind === 'authentication' ||
-        /AUTHENTICATION_FAILED|PERMISSION_DENIED/i.test(err?.code ?? '');
+        /AUTHENTICATION_FAILED/i.test(err?.code ?? ''); // PERMISSION_DENIED は権限不足（認証済み）のため 401 にしない
       if (err?.code && !isAuth) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
       if (isAuth) {
         const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };

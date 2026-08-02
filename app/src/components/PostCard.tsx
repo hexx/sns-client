@@ -27,7 +27,7 @@ function AvatarProfileButton({
   ) : (
     fallback
   );
-  if (!onOpenProfile) return plain;
+  if (!onOpenProfile) return plain ?? null; // undefined を return すると React がクラッシュするため null に縮退
   return (
     <button
       type="button"
