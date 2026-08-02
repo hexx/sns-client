@@ -183,7 +183,7 @@ export function ProfileView({
         await api.react(p.ref, reaction);
       } catch {
         patchPostFor(t, id, () => original);
-        setToast('リアクションに失敗しました');
+        if (targetRef.current === t) setToast('リアクションに失敗しました');
       } finally {
         reactionInflight.current.delete(id);
       }
@@ -212,12 +212,12 @@ export function ProfileView({
           } else {
             // recordUri が返らないとトグル状態を追跡できないため戻す（pending センチネルを残さない）
             patchPostFor(t, id, () => original);
-            setToast('いいねに失敗しました');
+            if (targetRef.current === t) setToast('いいねに失敗しました');
           }
         }
       } catch {
         patchPostFor(t, id, () => original);
-        setToast('いいねに失敗しました');
+        if (targetRef.current === t) setToast('いいねに失敗しました');
       } finally {
         engageInflight.current.delete(id);
       }
@@ -249,12 +249,12 @@ export function ProfileView({
               patchPostFor(t, id, (x) => ({ ...x, viewer: { ...x.viewer, repostUri: res.recordUri } }));
             } else {
               patchPostFor(t, id, () => original);
-              setToast('リポストに失敗しました');
+              if (targetRef.current === t) setToast('リポストに失敗しました');
             }
           }
         } catch {
           patchPostFor(t, id, () => original);
-          setToast('リポストに失敗しました');
+          if (targetRef.current === t) setToast('リポストに失敗しました');
         } finally {
           engageInflight.current.delete(id);
         }
@@ -266,7 +266,7 @@ export function ProfileView({
           patchPostFor(t, id, withRenoteIncrement);
           setToast('リノートしました');
         } catch {
-          setToast('リノートに失敗しました');
+          if (targetRef.current === t) setToast('リノートに失敗しました');
         } finally {
           engageInflight.current.delete(id);
         }
@@ -299,7 +299,7 @@ export function ProfileView({
           const followUri = p.viewer?.followUri;
           if (!followUri) {
             apply(() => original); // 楽観更新を戻す
-            setToast('フォロー解除に失敗しました');
+            if (targetRef.current === t) setToast('フォロー解除に失敗しました');
             return;
           }
           await api.unfollow('bluesky', p.author.id, followUri);
@@ -314,7 +314,7 @@ export function ProfileView({
     } catch {
       // どの操作に失敗したかを正確に伝える（フォロー中 → 解除に失敗、未フォロー → フォローに失敗）
       apply(() => original); // ロールバック
-      setToast(following ? 'フォロー解除に失敗しました' : 'フォローに失敗しました');
+      if (targetRef.current === t) setToast(following ? 'フォロー解除に失敗しました' : 'フォローに失敗しました');
     } finally {
       setFollowBusy(false);
     }
@@ -347,7 +347,8 @@ export function ProfileView({
     try {
       const data = await fetchProfilePosts(t.provider, t.author, cursor);
       if (targetRef.current !== t) return;
-      setPosts((prev) => [...prev, ...data.posts]);
+      // ページ境界の重複（nostr の自己リポスト等）を pid で除いて追記する
+      setPosts((prev) => [...prev, ...data.posts.filter((q) => !prev.some((r) => pid(r) === pid(q)))]);
       setCursor(data.nextCursor);
     } catch {
       if (targetRef.current === t) setToast('追加の読み込みに失敗しました');
@@ -479,7 +480,7 @@ export function ProfileView({
                       {following ? 'フォロー中' : 'フォロー'}
                     </button>
                   )}
-                  {profile.url && (
+                  {profile.url && /^https?:\/\//.test(profile.url) && (
                     <a className="profile-ext" href={profile.url} target="_blank" rel="noopener noreferrer">
                       ↗ プロフィールを開く
                     </a>

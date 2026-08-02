@@ -550,7 +550,13 @@ export async function unfollowActor(
   appPassword: string | undefined,
   recordUri: string,
 ): Promise<void> {
-  return deleteRecord(handle, appPassword, COL_FOLLOW, recordUri);
+  try {
+    await deleteRecord(handle, appPassword, COL_FOLLOW, recordUri);
+  } catch (e) {
+    // 既に解除済み（レコード消失）は成功扱いにして冪等にする（unblockActor の RecordNotFound と同じ流儀）
+    if ((e as { error?: string })?.error === 'RecordNotFound') return;
+    throw e;
+  }
 }
 
 // --- 通知（docs/notifications-spec.md、ADR-0019） ---

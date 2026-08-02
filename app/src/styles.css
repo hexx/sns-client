@@ -1599,9 +1599,9 @@ button.reaction:hover {
   border: none;
   padding: 0;
   margin: 0;
-  /* font ショートカットは font-size もリセットするため font-family のみにする（.handle の指定を保つ） */
+  /* font ショートカットは font-size もリセットするため font-family のみにする。
+     color は .handle（muted）に委ねる（inherit は .handle を上書きしてしまうため指定しない） */
   font-family: inherit;
-  color: inherit;
   cursor: pointer;
   min-width: 0;
 }

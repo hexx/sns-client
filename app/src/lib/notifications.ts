@@ -48,7 +48,7 @@ export const NOTIF_ICON: Partial<Record<NotificationType, string>> = {
  * BFF が text を合成済みのため実データでは n.text 分岐が先に効く（防御的な一元管理）。
  * notifTextBody の完文ケース（pollEnded 等）と対応させること。
  */
-const ACTORLESS_TYPES = new Set<NotificationType>(['pollEnded']);
+const ACTORLESS_TYPES: ReadonlySet<NotificationType> = new Set(['pollEnded']);
 
 /** actor 前置きを持たない文言の通知タイプか（通知カードの actor 要素の非表示判定にも使う。§8.1） */
 export function isActorlessType(type: NotificationType): boolean {

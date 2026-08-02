@@ -46,8 +46,9 @@ type DisplayNameProps = { author: Author; className?: string } & (
   | { provider?: never; onOpenProfile?: never }
 );
 
-/** @handle のプロフィール入口ボタン（docs/profile-view-spec.md §8.1）。
- * onOpenProfile が渡されたときだけ描画する（無ければ null。呼び出し側が素の表示を持つ）。 */
+/** @handle のプロフィール入口（docs/profile-view-spec.md §8.1）。
+ * onOpenProfile があれば button 化し、無ければ素の表示（span）を描画する — どちらの場合も
+ * 同じ見た目を1箇所で持つ（AvatarProfileButton と同じ流儀）。 */
 function HandleProfileButton({
   author,
   provider,
@@ -59,7 +60,9 @@ function HandleProfileButton({
   className?: string;
   onOpenProfile?: (provider: Provider, a: Author) => void;
 }) {
-  if (!onOpenProfile) return null;
+  if (!onOpenProfile) {
+    return <span className={`${className ?? ''} handle`}>@{author.handle}</span>;
+  }
   return (
     <button
       type="button"
@@ -427,7 +430,7 @@ function QuoteCard({
           author={post.author}
           provider={post.provider}
           avatarClass="avatar avatar-sm"
-          fallback={<span className="avatar avatar-sm avatar-fallback" />}
+          fallback={onOpenProfile ? <span className="avatar avatar-sm avatar-fallback" /> : undefined}
           onOpenProfile={onOpenProfile}
         />
         <DisplayName author={post.author} className="display-name" provider={post.provider} onOpenProfile={onOpenProfile} />
@@ -437,7 +440,6 @@ function QuoteCard({
           className="handle"
           onOpenProfile={onOpenProfile}
         />
-        {!onOpenProfile && <span className="handle">@{post.author.handle}</span>}
         {!hasCw && (
           <button
             type="button"
@@ -651,7 +653,6 @@ export function PostCard({
                 className="handle"
                 onOpenProfile={onOpenProfile}
               />
-              {!onOpenProfile && <span>@{post.author.handle}</span>}
               <VisibilityBadge post={post} />
             </span>
           </div>

@@ -56,7 +56,12 @@ function CompactPost({ post, asButton, onOpen }: { post: Post; asButton?: boolea
   if (asButton) {
     // ボタン内に <a> を含めない（nested-interactive 回避）。リッチリンクはプレーンな本文で描画する
     return (
-      <button type="button" className="notif-post notif-post-btn" onClick={onOpen}>
+      <button
+        type="button"
+        className="notif-post notif-post-btn"
+        aria-label={post.text ? undefined : `${post.author.displayName} の投稿を開く`}
+        onClick={onOpen}
+      >
         {post.cw ? (
           <span className="cw-pill">
             <span className="cw-text">{post.cw || 'CW'}</span>
@@ -97,6 +102,8 @@ export function NotificationCard({
   const open = () => {
     if (n.post) onOpenThread?.(n.post);
   };
+  // 注意: actor ボタンを持つカードの Thread 入口は CompactPost ボタンが担う（onOpenThread 必須）。
+  // onOpenProfile だけを渡して onOpenThread を渡さないと、そのカードの Thread 遷移は no-op になる。
   const onKeyDown = (e: ReactKeyboardEvent) => {
     if (openThreadFromCard && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();

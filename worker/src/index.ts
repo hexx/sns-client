@@ -539,10 +539,8 @@ app.delete(API.follow, async (c) => {
     try {
       await bskyUnfollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.recordUri);
     } catch (e) {
-      // 既に解除済み（レコード消失）は目的状態が達成されているため成功扱い（冪等）。
+      // 既に解除済み（レコード消失）は bskyUnfollow 内で成功扱い（冪等）。
       // 削除・ブロック等は POST と同じ 404 に揃える（§9 の一貫性）。
-      const msg = String((e as { message?: string })?.message ?? '');
-      if (/could not locate record/i.test(msg)) return c.json({});
       if (bskyAccountUnavailable(e)) throw new HTTPException(404, { message: 'actor unavailable' });
       throw e;
     }
@@ -550,6 +548,8 @@ app.delete(API.follow, async (c) => {
     try {
       await misskeyUnfollow(c.env, body.actorId);
     } catch (e) {
+      // 既に解除済み（NOT_FOLLOWING）は目的状態が達成されているため成功扱い（冪等。bsky と同じ扱い）
+      if (e instanceof MisskeyApiError && e.code === 'NOT_FOLLOWING') return c.json({});
       // 取得不能（削除済み等）は 409 ではなく 404 に揃える（§9 の一貫性）
       if (isMisskeyNotFound(e)) throw new HTTPException(404, { message: 'actor unavailable' });
       throw e;

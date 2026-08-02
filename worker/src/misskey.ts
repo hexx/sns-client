@@ -647,10 +647,22 @@ export async function getThread(env: MisskeyEnv, noteId: string, cursor?: string
   return { focus: mapNote(focus, registry, inst), ancestors, replies, nextCursor };
 }
 
+/** レスポンスボディから Misskey の業務エラー情報を抽出する（code / kind。JSON でなければ undefined） */
+async function readMisskeyError(res: Response): Promise<{ code?: string; kind?: string } | undefined> {
+  try {
+    const body = (await res.json()) as { error?: { code?: string; kind?: string } };
+    return body?.error ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * 業務エラーコードを抽出する API 呼び出し（follow/unfollow 用）。
- * 認証エラー（401/403）は status=401、code 付き業務エラーは MisskeyApiError(409) に正規化する
- * （react と同じ流儀。mkApi は code を抽出しないため、ALREADY_FOLLOWING 等が 502 に化けるのを防ぐ）。
+ * 認証失敗（401、または 403 + kind: 'authentication' / AUTHENTICATION_FAILED 等）は status=401、
+ * それ以外の code 付き業務エラー（YOU_ARE_BLOCKED / NO_SUCH_USER / NOT_FOLLOWING 等）は
+ * MisskeyApiError(409) に正規化する（react と同じ流儀。mkApi は code を抽出しないため、
+ * 業務エラーが 502 に化けるのを防ぐ）。
  */
 async function mkApiWithCode<T>(
   env: MisskeyEnv,
@@ -664,28 +676,18 @@ async function mkApiWithCode<T>(
     body: JSON.stringify({ i: env.MISSKEY_TOKEN, ...params }),
   });
   if (!res.ok) {
+    const err = await readMisskeyError(res);
     if (res.status === 401 || res.status === 403) {
-      // 403 でも業務エラー（YOU_ARE_BLOCKED 等）が code 付きで返ることがあるため、先に code を確認する
-      let code: string | undefined;
-      try {
-        const body = (await res.json()) as { error?: { code?: string } };
-        code = body?.error?.code;
-      } catch {
-        /* ignore */
+      // 403 でも業務エラー（YOU_ARE_BLOCKED 等）が code 付きで返ることがある。
+      // 認証失敗（kind: 'authentication'）は 401 のままにし、業務 code のみ 409 にする
+      if (err?.code && err.kind !== 'authentication') {
+        throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
       }
-      if (code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, code);
       const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
       e.status = 401;
       throw e;
     }
-    let code: string | undefined;
-    try {
-      const body = (await res.json()) as { error?: { code?: string } };
-      code = body?.error?.code;
-    } catch {
-      /* ignore */
-    }
-    if (code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, code);
+    if (err?.code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, err.code);
     throw new Error(`misskey ${endpoint} ${res.status}`);
   }
   const text = await res.text();
