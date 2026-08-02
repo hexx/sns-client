@@ -858,33 +858,11 @@ export async function createPost(env: MisskeyEnv, input: PostInputWire): Promise
  * 業務エラー（ALREADY_REACTED 等）は MisskeyApiError(409, code)、認証エラーは status=401 に正規化する。
  */
 export async function react(env: MisskeyEnv, noteId: string, reaction?: string): Promise<void> {
-  if (!env.MISSKEY_TOKEN) throw new MisskeyAuthError('missing-secrets');
   const endpoint = reaction ? 'notes/reactions/create' : 'notes/reactions/delete';
   const params: Record<string, unknown> = { noteId };
   if (reaction) params.reaction = reaction;
-  const res = await fetch(`${instanceOf(env)}/api/${endpoint}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ i: env.MISSKEY_TOKEN, ...params }),
-  });
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      const e = new Error(`misskey ${endpoint} ${res.status}`) as Error & { status?: number };
-      e.status = 401;
-      throw e;
-    }
-    let code: string | undefined;
-    try {
-      const body = (await res.json()) as { error?: { code?: string } };
-      code = body?.error?.code;
-    } catch {
-      /* ignore */
-    }
-    // Misskey の業務エラー（code 付き）→ 409。code 無し（5xx 等のシステム障害）は
-    // 素の Error のまま投げ、run() の catch-all で 502 にする（409 で隠蔽しない）。
-    if (code) throw new MisskeyApiError(409, `misskey ${endpoint} ${res.status}`, code);
-    throw new Error(`misskey ${endpoint} ${res.status}`);
-  }
+  // mkApiWithCode が認証エラー（401）・業務エラー（409, code）の正規化を担う（エラー契約の一元化）
+  await mkApiWithCode(env, endpoint, params);
 }
 
 // --- リノート操作（docs/deck-view-spec.md §6。v1 は作成のみ・解除は未対応） ---

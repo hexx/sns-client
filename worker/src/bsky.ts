@@ -465,14 +465,15 @@ export function mapAuthorFeedItem(f: {
 
 /**
  * アカウント取得不能の判定（削除・ブロック・停止・BAN 等。§9 の 404 マップに使う）。
- * エラーコード（NotFound / AccountNotFound / BlockedActor / AccountTakedown / Deactivated）と
- * メッセージの両方を見る（getThread の NotFound 判定と同じ流儀）。
+ * 既知のエラーコードを先に厳密に照合し、メッセージはフォールバックで見る
+ * （getThread の error === 'NotFound' / unblockActor の RecordNotFound と同じ流儀）。
  */
 export function isAccountUnavailable(e: unknown): boolean {
   const code = (e as { error?: string })?.error ?? '';
+  if (/(NotFound|AccountNotFound|RepoNotFound|BlockedActor|AccountTakedown|Deactivated)/i.test(code)) return true;
   const msg = String((e as { message?: string })?.message ?? '');
-  // 「not found」「take(n) down」は空白有無どちらでも（NotFound / AccountNotFound / AccountTakedown / taken down）
-  return /(not ?found|blocked|taken? ?down|deactivated)/i.test(`${code} ${msg}`);
+  // 「not found」「take(n) down」は空白有無どちらでも（not found / taken down）
+  return /(not ?found|blocked|taken? ?down|deactivated)/i.test(msg);
 }
 
 /** 取得不能アカウントを null に縮退するラッパー（getProfile / getProfilePosts の共通処理） */

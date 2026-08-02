@@ -160,27 +160,33 @@ export function ProfileView({
   }, [toast]);
 
   // --- 一覧内ローカル状態への楽観更新（TimelineCore / ThreadView と同じ流儀。§8.2） ---
-  const patchPost = useCallback((id: string, fn: (p: Post) => Post) => {
-    setPosts((prev) => prev.map((p) => (pid(p) === id ? fn(p) : p)));
-  }, []);
+  /** ターゲット置換後の stale 応答で一覧を書き換えないためのガード付きパッチ（§8.2） */
+  const patchPostFor = useCallback(
+    (t: { provider: Provider; author: Author }, id: string, fn: (p: Post) => Post) => {
+      if (targetRef.current !== t) return;
+      setPosts((prev) => prev.map((p) => (pid(p) === id ? fn(p) : p)));
+    },
+    [],
+  );
 
   const toggleReaction = useCallback(
     async (p: Post, reaction?: string, emojiUrl?: string) => {
       const id = pid(p);
+      const t = target;
       if (typeof p.ref !== 'string' || reactionInflight.current.has(id)) return;
       const original = p;
       reactionInflight.current.add(id);
-      patchPost(id, (x) => applyReaction(x, reaction, emojiUrl));
+      patchPostFor(t, id, (x) => applyReaction(x, reaction, emojiUrl));
       try {
         await api.react(p.ref, reaction);
       } catch {
-        patchPost(id, () => original);
+        patchPostFor(t, id, () => original);
         setToast('リアクションに失敗しました');
       } finally {
         reactionInflight.current.delete(id);
       }
     },
-    [patchPost],
+    [patchPostFor, target],
   );
 
   const toggleLike = useCallback(
@@ -188,31 +194,39 @@ export function ProfileView({
       if (p.provider !== 'bluesky') return;
       const postRef = p.ref as { uri?: string; cid?: string } | undefined;
       const id = pid(p);
+      const t = target;
       if (!postRef?.uri || !postRef?.cid || engageInflight.current.has(id)) return;
       engageInflight.current.add(id);
       const original = p;
       const liked = Boolean(p.viewer?.likeUri);
-      patchPost(id, (x) => withLike(x, !liked, liked ? undefined : `pending:${id}`));
+      patchPostFor(t, id, (x) => withLike(x, !liked, liked ? undefined : `pending:${id}`));
       try {
         if (liked) {
           await api.unlike(p.viewer?.likeUri as string);
         } else {
           const res = await api.like(postRef.uri, postRef.cid);
-          if (res.recordUri) patchPost(id, (x) => ({ ...x, viewer: { ...x.viewer, likeUri: res.recordUri } }));
+          if (res.recordUri) {
+            patchPostFor(t, id, (x) => ({ ...x, viewer: { ...x.viewer, likeUri: res.recordUri } }));
+          } else {
+            // recordUri が返らないとトグル状態を追跡できないため戻す（pending センチネルを残さない）
+            patchPostFor(t, id, () => original);
+            setToast('いいねに失敗しました');
+          }
         }
       } catch {
-        patchPost(id, () => original);
+        patchPostFor(t, id, () => original);
         setToast('いいねに失敗しました');
       } finally {
         engageInflight.current.delete(id);
       }
     },
-    [patchPost],
+    [patchPostFor, target],
   );
 
   const toggleRepost = useCallback(
     async (p: Post) => {
       const id = pid(p);
+      const t = target;
       if (engageInflight.current.has(id)) return;
       engageInflight.current.add(id);
       if (p.provider === 'bluesky') {
@@ -223,16 +237,21 @@ export function ProfileView({
         }
         const original = p;
         const reposted = Boolean(p.viewer?.repostUri);
-        patchPost(id, (x) => withRepost(x, !reposted, reposted ? undefined : `pending:${id}`));
+        patchPostFor(t, id, (x) => withRepost(x, !reposted, reposted ? undefined : `pending:${id}`));
         try {
           if (reposted) {
             await api.unrepost(p.viewer?.repostUri as string);
           } else {
             const res = await api.repost('bluesky', postRef);
-            if (res.recordUri) patchPost(id, (x) => ({ ...x, viewer: { ...x.viewer, repostUri: res.recordUri } }));
+            if (res.recordUri) {
+              patchPostFor(t, id, (x) => ({ ...x, viewer: { ...x.viewer, repostUri: res.recordUri } }));
+            } else {
+              patchPostFor(t, id, () => original);
+              setToast('リポストに失敗しました');
+            }
           }
         } catch {
-          patchPost(id, () => original);
+          patchPostFor(t, id, () => original);
           setToast('リポストに失敗しました');
         } finally {
           engageInflight.current.delete(id);
@@ -242,7 +261,7 @@ export function ProfileView({
       if (p.provider === 'misskey' && typeof p.ref === 'string') {
         try {
           await api.repost('misskey', p.ref);
-          patchPost(id, withRenoteIncrement);
+          patchPostFor(t, id, withRenoteIncrement);
           setToast('リノートしました');
         } catch {
           setToast('リノートに失敗しました');
@@ -253,7 +272,7 @@ export function ProfileView({
         engageInflight.current.delete(id);
       }
     },
-    [patchPost],
+    [patchPostFor, target],
   );
 
   // --- follow / unfollow トグル（楽観更新。§6。nostr は非表示・自分のプロフィールでは非表示） ---
@@ -273,9 +292,15 @@ export function ProfileView({
     apply((x) => (x ? { ...x, viewer: { following: !following, followUri: x.viewer?.followUri } } : x));
     try {
       if (following) {
-        // bsky は解除に viewer.followUri（getProfile で必ず取得済み）が必要（api.unfollow の型で強制）
+        // bsky は解除に viewer.followUri が必要（api.unfollow の型で強制。無ければ失敗として戻す）
         if (p.provider === 'bluesky') {
-          await api.unfollow('bluesky', p.author.id, p.viewer?.followUri as string);
+          const followUri = p.viewer?.followUri;
+          if (!followUri) {
+            apply(() => original); // 楽観更新を戻す
+            setToast('フォロー解除に失敗しました');
+            return;
+          }
+          await api.unfollow('bluesky', p.author.id, followUri);
         } else {
           await api.unfollow('misskey', p.author.id);
         }
@@ -340,17 +365,17 @@ export function ProfileView({
   /**
    * 一覧内の別ユーザー入口（リポスト行・quote card の著者行）での置換。
    * 同一オーバーレイ内で引き直し、履歴は積まない（§2）。本人への入口は反応しない。
-   * 一覧の状態（cursor・listDone・listError）は同期リセットする（useEffect は描画後なので、
-   * その間の IntersectionObserver 発火が前ターゲットの cursor で誤ページングするのを防ぐ）。
+   * 一覧の状態（cursor・listDone・listError）は setTarget の外で同期リセットする
+   * （updater は純粋であるべき。また useEffect は描画後なので、その間の IntersectionObserver
+   * 発火が前ターゲットの cursor で誤ページングするのを防ぐ）。
    */
   const openProfile = useCallback((p: Provider, a: Author) => {
-    setTarget((t) => {
-      if (authorKey(p, a) === authorKey(t.provider, t.author)) return t;
-      setCursor(null);
-      setListDone(false);
-      setListError(null);
-      return { provider: p, author: a };
-    });
+    if (authorKey(p, a) === authorKey(targetRef.current.provider, targetRef.current.author)) return;
+    targetRef.current = { provider: p, author: a }; // 再描画前の stale ガードを先に反映
+    setCursor(null);
+    setListDone(false);
+    setListError(null);
+    setTarget({ provider: p, author: a });
   }, []);
 
   /** 一覧のカードへ配線するハンドラ群（nostr は閲覧専用なので操作系は undefined） */

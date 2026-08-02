@@ -35,11 +35,7 @@ function AvatarProfileButton({
       aria-label={`${author.handle} のプロフィールを開く`}
       onClick={() => onOpenProfile(provider, author)}
     >
-      {author.avatarUrl ? (
-        <img className={avatarClass} src={author.avatarUrl} alt="" loading="lazy" />
-      ) : (
-        <span className={`${avatarClass} avatar-fallback`} />
-      )}
+      {plain}
     </button>
   );
 }
@@ -611,7 +607,7 @@ export function PostCard({
           author={post.author}
           provider={post.provider}
           avatarClass="avatar"
-          fallback={<div className="avatar avatar-fallback" />}
+          fallback={<span className="avatar avatar-fallback" />}
           onOpenProfile={onOpenProfile}
         />
         <div className="author">

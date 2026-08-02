@@ -258,7 +258,7 @@ describe('getTimeline', () => {
     expect(res.posts[0].author.displayName).toBe('Alice');
     expect(res.posts[0].author.avatarUrl).toBe('https://x/a.png');
     expect(res.posts[0].stats).toEqual({ replies: 0, reposts: 0, likes: 0 });
-    expect(res.nextCursor).toBe('100'); // 最古の created_at
+    expect(res.nextCursor).toBe('99'); // 最古の生イベント created_at - 1（until は境界を含むため）
   });
 
   it('kind0 未取得時は handle（npub 短縮）に縮退する', async () => {
@@ -534,7 +534,7 @@ describe('getProfilePosts（docs/profile-view-spec.md §7）', () => {
     const ev1 = makeEvent({ content: 'one', created_at: 1000 });
     const ev2 = makeEvent({ content: 'two', created_at: 2000 });
     const res = await getProfilePosts(PUB, { wsFactory: fakeRelay(onAllRelays([ev1, ev2])) });
-    expect(res.nextCursor).toBe('1000'); // 最古（one, created_at 1000）の unix 秒
+    expect(res.nextCursor).toBe('999'); // 最古の生イベント created_at - 1（until は境界を含むため）
     expect(res.posts.map((p) => p.text)).toEqual(['two', 'one']);
     expect(res.posts.every((p) => p.provider === 'nostr')).toBe(true);
   });
@@ -544,8 +544,8 @@ describe('getProfilePosts（docs/profile-view-spec.md §7）', () => {
     const ev1 = makeEvent({ content: 'old', created_at: 1000 });
     const ev2 = makeEvent({ content: 'newer', created_at: 3000 });
     const res = await getProfilePosts(PUB, { wsFactory: fakeRelay(onAllRelays([ev1, ev2])) }, '1000');
-    expect(res.posts.map((p) => p.text)).toEqual(['old']);
-    expect(res.nextCursor).toBe('1000');
+    expect(res.posts.map((p) => p.text)).toEqual(['old']); // until=1000（境界含む）→ created_at 1000 のみ
+    expect(res.nextCursor).toBe('999');
   });
 
   it('投稿が無ければ nextCursor は null', async () => {

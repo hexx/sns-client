@@ -9,7 +9,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { Author, Notification, Post, Provider } from '../../../shared/types';
 import { PROVIDER_LABEL } from '../lib/sourceLabels';
-import { NOTIF_ICON, notifText, notifTextBody } from '../lib/notifications';
+import { NOTIF_ICON, isActorlessType, notifText, notifTextBody } from '../lib/notifications';
 import { RichText } from './RichText';
 
 function relTime(iso: string): string {
@@ -78,8 +78,9 @@ export function NotificationCard({
   const icon = NOTIF_ICON[n.type] ?? '🔔';
   const clickable = Boolean(n.post);
   // actor ボタンは「actor が主体」の通知だけに出す。text のみ通知（verified 等）は BFF 合成の完文が
-  // 表示本体で、actor を前置きすると「◯◯ さん あなたのアカウントが認証されました」のような二重主語になる（§8.1）
-  const actorClickable = Boolean(onOpenProfile && n.actor && !n.text);
+  // 表示本体で、actor を前置きすると「◯◯ さん あなたのアカウントが認証されました」のような二重主語になる。
+  // actor 無し文言の型（pollEnded 等）も同様（§8.1）
+  const actorClickable = Boolean(onOpenProfile && n.actor && !n.text && !isActorlessType(n.type));
   // actor ボタンを持つカードは article を role=button にしない（button のネストは ARIA の
   // nested-interactive 違反）。その場合の Thread 遷移は投稿プレビュー（CompactPost ボタン）が担う（§8.1）
   const openThreadFromCard = clickable && !actorClickable;
@@ -97,7 +98,9 @@ export function NotificationCard({
       className={`notif-card${openThreadFromCard ? ' clickable' : ''}`}
       role={openThreadFromCard ? 'button' : undefined}
       tabIndex={openThreadFromCard ? 0 : undefined}
-      aria-label={notifText(n)}
+      // article 自体が操作要素のときだけラベルを付ける（actor ボタンがあるカードでは
+      // ボタンのアクセシブル名と二重に読み上げられるのを防ぐ。§8.1）
+      aria-label={openThreadFromCard ? notifText(n) : undefined}
       onClick={openThreadFromCard ? open : undefined}
       onKeyDown={openThreadFromCard ? onKeyDown : undefined}
     >

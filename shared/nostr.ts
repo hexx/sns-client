@@ -422,10 +422,9 @@ export async function getTimeline(
     throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
   }
 
-  const posts = await buildFeedPosts(events, urls, opts.wsFactory);
+  const { posts, rawTimes } = await buildFeedPosts(events, urls, opts.wsFactory);
   const page = posts.slice(0, PAGE_SIZE);
-  const nextCursor =
-    page.length > 0 ? String(Math.floor(Date.parse(page[page.length - 1].createdAt) / 1000)) : null;
+  const nextCursor = pageCursor(rawTimes.slice(0, PAGE_SIZE));
   return { posts: page, nextCursor };
 }
 
@@ -433,10 +432,16 @@ export async function getTimeline(
  * kind:1＋kind:6 のイベント列から投稿一覧を組み立てる共通処理（§6.5、docs/profile-view-spec.md §7）。
  * - kind:6 の参照先（元ノート）を ids でバッチ取得し、repostedBy として包む。
  * - 登場する全 pubkey のプロフィールをまとめて解決（§6.4。TTL キャッシュ）。
- * - 自分の投稿の自己リポストは元の投稿と重複するためスキップ（重複表示を防ぐ）。
- * - 時系列降順で返す。getTimeline（pubkey Source）と getProfilePosts が共用する。
+ * - 自分の投稿の自己リポスト・同一元ノートへの複数リポストは元の投稿と重複するためスキップ。
+ * - 時系列降順で返し、各投稿の「生イベントの created_at」も併せて返す（ページング cursor は
+ *   表示日時（リポストは元ノートの日時）ではなく生イベントの日時から求める必要があるため）。
+ *   getTimeline（pubkey Source）と getProfilePosts が共用する。
  */
-async function buildFeedPosts(events: NostrEvent[], urls: string[], factory: WsFactory): Promise<Post[]> {
+async function buildFeedPosts(
+  events: NostrEvent[],
+  urls: string[],
+  factory: WsFactory,
+): Promise<{ posts: Post[]; rawTimes: number[] }> {
   const kind1 = events.filter((e) => e.kind === 1);
   const kind6 = events.filter((e) => e.kind === 6);
 
@@ -457,21 +462,33 @@ async function buildFeedPosts(events: NostrEvent[], urls: string[], factory: WsF
   const profiles = await loadProfiles([...pubkeys], urls, factory);
 
   const posts: Post[] = [];
-  const seen = new Set<string>();
+  const rawTimes: number[] = [];
+  const seen = new Set<string>(); // 元ノート id（同一ノートの重複表示を防ぐ）
   for (const e of kind1) {
     const p = buildPost(e, profiles.get(e.pubkey));
     seen.add(p.id);
     posts.push(p);
+    rawTimes.push(e.created_at);
   }
   for (const e of kind6) {
     const orig = originals.get(eTagId(e) ?? '');
     if (!orig) continue; // 参照先未取得のリポストはスキップ（§6.5）
-    if (seen.has(orig.id)) continue; // 自分の投稿の自己リポストは元の投稿と重複するためスキップ
+    if (seen.has(orig.id)) continue; // 元ノートが既に表示済み（自己リポスト・複数リポスト）ならスキップ
+    seen.add(orig.id);
     posts.push(buildPost(orig, profiles.get(orig.pubkey), toAuthor(e.pubkey, profiles.get(e.pubkey))));
+    rawTimes.push(e.created_at); // リポストは「リポストした生イベント」の日時でページングする
   }
 
-  posts.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  return posts;
+  const order = posts
+    .map((_, i) => i)
+    .toSorted((a, b) => Date.parse(posts[b].createdAt) - Date.parse(posts[a].createdAt));
+  return { posts: order.map((i) => posts[i]), rawTimes: order.map((i) => rawTimes[i]) };
+}
+
+/** ページの cursor（生イベントの最古 created_at - 1。until は境界を含むため、境界イベントの再取得を防ぐ） */
+function pageCursor(rawTimes: number[]): string | null {
+  if (rawTimes.length === 0) return null;
+  return String(Math.min(...rawTimes) - 1);
 }
 
 // --- プロフィール（docs/profile-view-spec.md §7、ADR-0014/0017） ---
@@ -510,10 +527,9 @@ export async function getProfilePosts(
   if (urls.length > 0 && urls.every((u) => outcomes.get(u) === false)) {
     throw new NostrError(502, 'いずれのリレーにも接続できません（ネットワーク接続を確認してください）');
   }
-  const posts = await buildFeedPosts(events, urls, opts.wsFactory);
+  const { posts, rawTimes } = await buildFeedPosts(events, urls, opts.wsFactory);
   const page = posts.slice(0, PAGE_SIZE);
-  const nextCursor =
-    page.length > 0 ? String(Math.floor(Date.parse(page[page.length - 1].createdAt) / 1000)) : null;
+  const nextCursor = pageCursor(rawTimes.slice(0, PAGE_SIZE));
   return { posts: page, nextCursor };
 }
 

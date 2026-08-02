@@ -49,7 +49,7 @@ export type Profile = {
   description?: string; // 自己紹介（プレーンテキスト。フォールバック/検索用）
   /** リッチ自己紹介（Misskey のみ。あれば UI はこちらを描画。name-display-spec と同じイディオム） */
   descriptionRich?: RichSegment[];
-  bannerUrl?: string; // bsky/misskey のみ（nostr は無し）
+  bannerUrl?: string; // bsky/misskey は BFF、nostr は kind:0 の banner（あれば）
   stats?: { posts: number; following: number; followers: number }; // nostr は無し
   url?: string; // Provider 上の permalink（BFF 生成。bsky=bsky.app/profile / misskey=ユーザーページ）
   /** 自分がフォロー中か（bsky/misskey）。followUri は bsky のみ（解除用。Post.viewer.likeUri と同じイディオム） */

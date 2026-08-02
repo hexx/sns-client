@@ -433,44 +433,51 @@ function parseProfileQuery(c: Context<AppEnv>): { provider: 'bluesky' | 'misskey
   return { provider, id, cursor: c.req.query('cursor') ?? undefined };
 }
 
+/**
+ * プロフィール系 GET の取得不能（bsky の null / misskey の 404）を 404 にマップする共通処理。
+ * §9 のプレースホルダ挙動（ステータス・文言）はここに一元化する（docs/profile-view-spec.md §4）。
+ */
+async function withProfile404<T>(provider: 'bluesky' | 'misskey', bsky: () => Promise<T | null>, misskey: () => Promise<T>): Promise<T> {
+  if (provider === 'bluesky') {
+    const v = await bsky();
+    if (!v) throw new HTTPException(404, { message: 'profile unavailable' });
+    return v;
+  }
+  try {
+    return await misskey();
+  } catch (e) {
+    // users/show・users/notes の 404（NO_SUCH_USER）は取得不能として 404 を引き継ぐ（スレッドの focus と同じ扱い）
+    if ((e as { status?: number })?.status === 404) throw new HTTPException(404, { message: 'profile unavailable' });
+    throw e;
+  }
+}
+
 // --- プロフィール（docs/profile-view-spec.md §4/§5。nostr はブラウザ直接のため BFF 非対応） ---
 
 /** id は Author.id（bsky=DID / misskey=userId）。形式検証は parseProfileQuery が担う */
 app.get(API.profile, async (c) => {
   const { provider, id } = parseProfileQuery(c);
   c.set('provider', provider);
-  if (provider === 'bluesky') {
-    const p = await bskyProfile(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, id);
-    // 取得不能（削除・ブロック等）は 404 → クライアントはプレースホルダ表示（docs/profile-view-spec.md §9）
-    if (!p) throw new HTTPException(404, { message: 'profile unavailable' });
-    return c.json(p);
-  }
-  try {
-    return c.json(await misskeyProfile(c.env, id));
-  } catch (e) {
-    // users/show の 404（NO_SUCH_USER）は取得不能として 404 を引き継ぐ（スレッドの focus と同じ扱い）
-    if ((e as { status?: number })?.status === 404) throw new HTTPException(404, { message: 'profile unavailable' });
-    throw e;
-  }
+  return c.json(
+    await withProfile404(
+      provider,
+      () => bskyProfile(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, id),
+      () => misskeyProfile(c.env, id),
+    ),
+  );
 });
 
 /** プロフィールの投稿一覧（概要と別ルート。応答は TimelineResponse と同形状。§5/Q12） */
 app.get(API.profilePosts, async (c) => {
   const { provider, id, cursor } = parseProfileQuery(c);
   c.set('provider', provider);
-  if (provider === 'bluesky') {
-    const t = await bskyProfilePosts(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, id, cursor);
-    // 取得不能アカウントは概要ルートと同じ 404（§9 の一貫性）
-    if (!t) throw new HTTPException(404, { message: 'profile unavailable' });
-    return c.json(t);
-  }
-  try {
-    return c.json(await misskeyProfilePosts(c.env, id, cursor));
-  } catch (e) {
-    // users/notes の 404（NO_SUCH_USER）は取得不能として 404 を引き継ぐ
-    if ((e as { status?: number })?.status === 404) throw new HTTPException(404, { message: 'profile unavailable' });
-    throw e;
-  }
+  return c.json(
+    await withProfile404(
+      provider,
+      () => bskyProfilePosts(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, id, cursor),
+      () => misskeyProfilePosts(c.env, id, cursor),
+    ),
+  );
 });
 
 /** follow 系リクエストの共通検証（provider / actorId の形式。recordUri はあれば保持。不正なら null。docs/profile-view-spec.md §6） */
@@ -504,7 +511,15 @@ app.post(API.follow, async (c) => {
       throw e;
     }
   }
-  await misskeyFollow(c.env, body.actorId);
+  try {
+    await misskeyFollow(c.env, body.actorId);
+  } catch (e) {
+    // misskey も同じ論理条件（取得不能）は 409 ではなく 404 に揃える（§9 の一貫性）
+    if (e instanceof MisskeyApiError && e.code === 'NO_SUCH_USER') {
+      throw new HTTPException(404, { message: 'actor unavailable' });
+    }
+    throw e;
+  }
   return c.json({});
 });
 
@@ -519,7 +534,15 @@ app.delete(API.follow, async (c) => {
     }
     await bskyUnfollow(c.env.BSKY_HANDLE, c.env.BSKY_APP_PASSWORD, body.recordUri);
   } else {
-    await misskeyUnfollow(c.env, body.actorId);
+    try {
+      await misskeyUnfollow(c.env, body.actorId);
+    } catch (e) {
+      // 取得不能（削除済み等）は 409 ではなく 404 に揃える（§9 の一貫性）
+      if (e instanceof MisskeyApiError && e.code === 'NO_SUCH_USER') {
+        throw new HTTPException(404, { message: 'actor unavailable' });
+      }
+      throw e;
+    }
   }
   return c.json({});
 });
