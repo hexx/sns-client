@@ -27,7 +27,7 @@ function makePost(overrides: Partial<Post> = {}): Post {
   return {
     id: 'p1',
     provider: 'bluesky',
-    author: { handle: 'alice.bsky.social', displayName: 'Alice' },
+    author: { id: 'did:plc:alice', handle: 'alice.bsky.social', displayName: 'Alice' },
     text: 'hello',
     createdAt: '2026-07-01T12:00:00Z',
     media: [],

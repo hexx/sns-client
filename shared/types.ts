@@ -29,6 +29,8 @@ export type DestinationOption = { destination: Destination; name: string };
 export type DestinationCatalogEntry = { provider: Provider; options: DestinationOption[]; error?: boolean };
 
 export type Author = {
+  /** Provider 内で安定した opaque なアクター識別子（bsky=DID / misskey=userId / nostr=pubkey。docs/block-mute-spec.md §3.1）。block/mute の対象 */
+  id: string;
   handle: string;
   displayName: string;
   /** 絵文字解決済みの表示名（あれば UI は RichText inline で描画。docs/name-display-spec.md §4） */
@@ -131,6 +133,17 @@ export type EmojiInfo = { name: string; url: string; aliases?: string[] };
 /** リアクション操作リクエスト（ブラウザ → BFF）。reaction あり→付与/置換、なし→解除（docs/misskey-reaction-action-spec.md） */
 export type ReactionRequest = { provider: Provider; postId: string; reaction?: string };
 export type ReactionResponse = { reaction?: string };
+
+/** ブロック・ミュート操作リクエスト（ブラウザ → BFF。docs/block-mute-spec.md §4）。actorId は Author.id */
+export type ModerationRequest = { provider: 'bluesky' | 'misskey'; actorId: string };
+
+/** 自分のアクター識別子（docs/block-mute-spec.md §4.2）。未設定 Provider は null */
+export type MeResponse = {
+  me: {
+    bluesky: { actorId: string } | null;
+    misskey: { actorId: string } | null;
+  };
+};
 
 /** プロバイダの compose 設定（カウンタの単位と上限） */
 export type ComposeConfig = {

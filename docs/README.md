@@ -21,6 +21,7 @@
 - [name-display-spec.md](name-display-spec.md) — 投稿者名表示 仕様書（長い名前の縦伸び解消＋名前絵文字の解決）
 - [card-meta-row-spec.md](card-meta-row-spec.md) — カードメタ行 仕様書（ヘッダー3行化＋公開範囲バッジのアイコン化）
 - [thread-view-spec.md](thread-view-spec.md) — スレッド表示 仕様書（フォーカス投稿の祖先＋子孫をオーバーレイ表示）
+- [block-mute-spec.md](block-mute-spec.md) — ユーザーのブロック・ミュート 仕様（サーバー側ネイティブ方式）
 
 ## PWA / アイコン / 運用
 - [pwa-sw-update-fix-spec.md](pwa-sw-update-fix-spec.md) — PWA Service Worker 更新固定 修正仕様
@@ -46,3 +47,4 @@
 - [0015](adr/0015-quote-card-inline-expand-external-link.md) — 引用カードはインライン展開＋外部リンクとし、アプリ内スレッドビューは持たない（再審決着済み: カードクリックで引用先スレッドへ遷移）
 - [0016](adr/0016-bsky-self-labels-as-cw.md) — Bluesky の self-labels を CW テキストとして解釈する
 - [0017](adr/0017-thread-bff-flattened-depth.md) — スレッドは BFF が平坦化（DFS 順＋depth）して返し、Post に親子フィールドを持たせない
+- [0018](adr/0018-server-side-native-block-mute.md) — ブロック・ミュートはサーバー側（Provider ネイティブ）方式とし、クライアント側フィルタは採用しない

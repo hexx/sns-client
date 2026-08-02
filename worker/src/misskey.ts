@@ -299,6 +299,7 @@ function authorOf(u: MkUser, registry: Record<string, string> = {}): Author {
   const displayName = u.name || u.username;
   const displayNameRich = nameToRich(displayName, registry);
   return {
+    id: u.id,
     handle,
     displayName,
     ...(displayNameRich ? { displayNameRich } : {}),
@@ -630,6 +631,35 @@ export async function react(env: MisskeyEnv, noteId: string, reaction?: string):
 /** ノートを本文無しでリノートする。二重リノート等の業務エラーは mkApi 経由で status 付き Error → run() が 502 転送（v1 はコード抽出しない） */
 export async function renote(env: MisskeyEnv, noteId: string): Promise<void> {
   await mkApi<{ createdNote: MkNote }>(env, 'notes/create', { renoteId: noteId, visibility: 'public' });
+}
+
+// --- ブロック・ミュート操作（docs/block-mute-spec.md。userId は Author.id） ---
+
+/** ユーザーをミュートする（mute/create。相手に通知されず、いつでも解除可） */
+export async function muteUser(env: MisskeyEnv, userId: string): Promise<void> {
+  await mkApi(env, 'mute/create', { userId });
+}
+
+/** ユーザーのミュートを解除する（mute/delete） */
+export async function unmuteUser(env: MisskeyEnv, userId: string): Promise<void> {
+  await mkApi(env, 'mute/delete', { userId });
+}
+
+/** ユーザーをブロックする（blocking/create。相互作用を遮断） */
+export async function blockUser(env: MisskeyEnv, userId: string): Promise<void> {
+  await mkApi(env, 'blocking/create', { userId });
+}
+
+/** ユーザーのブロックを解除する（blocking/delete） */
+export async function unblockUser(env: MisskeyEnv, userId: string): Promise<void> {
+  await mkApi(env, 'blocking/delete', { userId });
+}
+
+/** 自分（ログイン中のアカウント）のユーザー ID。認証未設定時は null */
+export async function getMyUserId(env: MisskeyEnv): Promise<string | null> {
+  if (!env.MISSKEY_TOKEN) return null;
+  const me = await mkApi<MkUser>(env, 'i');
+  return me?.id ?? null;
 }
 
 // --- インスタンス設定（compose の文字上限） ---

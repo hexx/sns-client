@@ -21,11 +21,18 @@ vi.mock('../api', async (importOriginal) => {
   };
 });
 
+// ブロック/ミュートの非表示判定（docs/block-mute-spec.md §5.4）を制御可能にする
+const mod = vi.hoisted(() => ({ isHiddenPost: vi.fn((_p: Post) => false) }));
+vi.mock('../lib/moderation', () => ({
+  isHiddenPost: mod.isHiddenPost,
+  subscribeHidden: () => () => {},
+}));
+
 function makePost(overrides: Partial<Post> = {}): Post {
   return {
     id: 'p1',
     provider: 'bluesky',
-    author: { handle: 'alice', displayName: 'Alice' },
+    author: { id: 'u-alice', handle: 'alice', displayName: 'Alice' },
     text: 'focus text',
     createdAt: '2026-07-01T12:00:00Z',
     media: [],
@@ -50,6 +57,7 @@ const node = (post: Post, depth: number): ThreadNode => ({ post, depth });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mod.isHiddenPost.mockImplementation(() => false);
 });
 
 describe('ThreadView（docs/thread-view-spec.md §6）', () => {
@@ -110,6 +118,27 @@ describe('ThreadView（docs/thread-view-spec.md §6）', () => {
     fireEvent.click(screen.getByText('quoted text'));
     await waitFor(() => expect(fetchThread).toHaveBeenCalledTimes(2));
     expect(vi.mocked(fetchThread).mock.calls[1][0].id).toBe('q1');
+  });
+
+  it('ブロック/ミュート済みユーザーのノードはプレースホルダ化する（docs/block-mute-spec.md §5.4）', async () => {
+    const r1 = makePost({ id: 'r1', text: 'reply1 text' });
+    const focus = makePost();
+    vi.mocked(fetchThread).mockResolvedValue(makeThread({ focus, replies: [node(r1, 1)] }));
+    mod.isHiddenPost.mockImplementation((p: Post) => p.id === 'r1');
+    render(<ThreadView post={focus} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText('focus text')).toBeInTheDocument());
+    // 非表示ユーザーのノードは消え、取得不能プレースホルダに置き換わる（focus は残る）
+    expect(screen.queryByText('reply1 text')).not.toBeInTheDocument();
+    expect(screen.getAllByText('この投稿は取得できません')).toHaveLength(1);
+  });
+
+  it('フォーカス投稿の著者をブロック/ミュートするとフォーカスもプレースホルダ化する', async () => {
+    const focus = makePost({ id: 'focus', text: 'focus text' });
+    vi.mocked(fetchThread).mockResolvedValue(makeThread({ focus }));
+    mod.isHiddenPost.mockImplementation((p: Post) => p.id === 'focus');
+    render(<ThreadView post={focus} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText('この投稿は取得できません')).toBeInTheDocument());
+    expect(screen.queryByText('focus text')).not.toBeInTheDocument();
   });
 
   it('フォーカス取得不能（404）は取得不能案内を表示する', async () => {

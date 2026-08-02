@@ -15,6 +15,7 @@ import type {
 const SERVICE = 'https://bsky.social';
 const COL_LIKE = 'app.bsky.feed.like';
 const COL_REPOST = 'app.bsky.feed.repost';
+const COL_BLOCK = 'app.bsky.graph.block';
 
 // --- セッション管理（単一ユーザー、モジュールスコープキャッシュ） ---
 let agent: AtpAgent | undefined;
@@ -226,7 +227,8 @@ function mapQuotedRecord(rec: unknown): Post {
   const r = rec as {
     uri: string;
     cid: string;
-    author: { handle: string; displayName?: string; avatar?: string };
+    // viewRecord の author は ProfileViewBasic で did が必須（ブロック/ミュートの対象識別子）
+    author: { did: string; handle: string; displayName?: string; avatar?: string };
     value?: { text?: string; facets?: AppBskyRichtextFacet.Main[]; createdAt?: string };
     labels?: { val?: string }[];
     embeds?: unknown[];
@@ -242,9 +244,10 @@ function mapQuotedRecord(rec: unknown): Post {
     id: r.uri,
     provider: 'bluesky',
     author: {
-      handle: r.author?.handle ?? '',
-      displayName: r.author?.displayName || r.author?.handle || '',
-      avatarUrl: r.author?.avatar,
+      id: r.author.did,
+      handle: r.author.handle,
+      displayName: r.author.displayName || r.author.handle,
+      avatarUrl: r.author.avatar,
     },
     text,
     createdAt: r.value?.createdAt ?? r.indexedAt ?? '',
@@ -275,6 +278,7 @@ export function mapPost(pv: AppBskyFeedDefs.PostView): Post {
     id: pv.uri,
     provider: 'bluesky',
     author: {
+      id: pv.author.did,
       handle: pv.author.handle,
       displayName: pv.author.displayName || pv.author.handle,
       avatarUrl: pv.author.avatar,
@@ -537,6 +541,73 @@ export async function unrepostPost(
   return deleteRecord(handle, appPassword, COL_REPOST, recordUri);
 }
 
+// --- ブロック・ミュート操作（docs/block-mute-spec.md。actor は DID で指定） ---
+
+/** ユーザーをミュートする（muteActor。相手に通知されず、いつでも解除可） */
+export async function muteActor(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  actorDid: string,
+): Promise<void> {
+  const a = await getAgent(handle, appPassword);
+  await a.app.bsky.graph.muteActor({ actor: actorDid });
+}
+
+/** ユーザーのミュートを解除する（unmuteActor） */
+export async function unmuteActor(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  actorDid: string,
+): Promise<void> {
+  const a = await getAgent(handle, appPassword);
+  await a.app.bsky.graph.unmuteActor({ actor: actorDid });
+}
+
+/**
+ * ユーザーをブロックする（app.bsky.graph.block レコード）。
+ * 公式クライアントと同じ規約で rkey を対象 DID に固定し、putRecord（作成/置換）で書くため、
+ * 既にブロック済みでも再実行は置換になり冪等。解除時にレコード URI の検索が不要になる。
+ */
+export async function blockActor(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  actorDid: string,
+): Promise<void> {
+  const a = await getAgent(handle, appPassword);
+  const did = a.session?.did;
+  if (!did) throw new BskyAuthError('no-session');
+  await a.com.atproto.repo.putRecord({
+    repo: did,
+    collection: COL_BLOCK,
+    rkey: actorDid,
+    record: { subject: actorDid, createdAt: new Date().toISOString() },
+  });
+}
+
+/**
+ * ユーザーのブロックを解除する（block レコード削除。rkey＝対象 DID）。
+ * 未ブロック（レコード無し）の RecordNotFound は成功扱いにして冪等にする。
+ */
+export async function unblockActor(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  actorDid: string,
+): Promise<void> {
+  try {
+    await deleteRecord(handle, appPassword, COL_BLOCK, `at://${actorDid}/${COL_BLOCK}/${actorDid}`);
+  } catch (e) {
+    if ((e as { error?: string })?.error === 'RecordNotFound') return;
+    throw e;
+  }
+}
+
+/** 自分（ログイン中のアカウント）の DID。認証未設定・未ログイン時は null */
+export async function getMyDid(handle: string | undefined, appPassword: string | undefined): Promise<string | null> {
+  if (!handle || !appPassword) return null;
+  const a = await getAgent(handle, appPassword);
+  return a.session?.did ?? null;
+}
+
 /** 画像をアップロードし blob 参照を返す */
 export async function uploadMedia(
   handle: string | undefined,
@@ -628,6 +699,7 @@ export async function createPost(
     id: res.uri,
     provider: 'bluesky',
     author: {
+      id: sess?.did ?? '',
       handle: sess?.handle ?? handle ?? '',
       displayName: sess?.handle ?? handle ?? '',
     },

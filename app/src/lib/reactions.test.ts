@@ -6,7 +6,7 @@ function makePost(overrides: Partial<Post> = {}): Post {
   return {
     id: 'n1',
     provider: 'misskey',
-    author: { handle: 'alice', displayName: 'Alice' },
+    author: { id: 'u-alice', handle: 'alice', displayName: 'Alice' },
     text: 'hi',
     createdAt: '2026-07-01T12:00:00Z',
     media: [],

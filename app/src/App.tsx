@@ -4,9 +4,12 @@ import { Deck } from './components/Deck';
 import { Compose } from './components/Compose';
 import { ThreadView } from './components/ThreadView';
 import { api } from './api';
+import { subscribeModerationToasts } from './lib/moderation';
 import type { Post, ProviderInfo, View } from '../../shared/types';
 
 const DECK_QUERY = '(min-width: 1024px)';
+/** ミュート/ブロックのトーストに取り消しを出すウィンドウ（docs/block-mute-spec.md §5.3） */
+const MODERATION_TOAST_MS = 10_000;
 
 /** 画面幅がデッキ UI の閾値以上か（docs/deck-view-spec.md §7） */
 function useIsDeckWidth(): boolean {
@@ -22,6 +25,9 @@ function useIsDeckWidth(): boolean {
 
 type ComposeState = { open: boolean; replyTo?: Post; quote?: Post };
 
+/** トースト（msg + 任意の取り消しアクション + 表示時間。docs/block-mute-spec.md §5.3） */
+type ToastState = { msg: string; undo?: () => void; ms: number };
+
 export default function App() {
   const [views, setViews] = useState<View[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -29,16 +35,25 @@ export default function App() {
   const [compose, setCompose] = useState<ComposeState>({ open: false });
   const [threadPost, setThreadPost] = useState<Post | null>(null);
   const [justPosted, setJustPosted] = useState<Post | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [loadTick, setLoadTick] = useState(0);
   const isDeck = useIsDeckWidth();
 
+  // ミュート/ブロックの結果トースト（取り消し付き。10秒で自動消去。docs/block-mute-spec.md §5.3）
+  useEffect(
+    () =>
+      subscribeModerationToasts((t) => {
+        setToast({ msg: t.message, undo: t.undo, ms: MODERATION_TOAST_MS });
+      }),
+    [],
+  );
+
   // デッキ UI での Compose 成功トースト（deck-compose-spec §4。3秒で自動消去）
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
+    const t = setTimeout(() => setToast(null), toast.ms);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -119,7 +134,7 @@ export default function App() {
           onClose={() => setCompose({ open: false })}
           onPosted={(post) => {
             setJustPosted(post);
-            if (isDeck) setToast('投稿しました');
+            if (isDeck) setToast({ msg: '投稿しました', ms: 3000 });
           }}
         />
       )}
@@ -132,7 +147,24 @@ export default function App() {
           onClose={() => setThreadPost(null)}
         />
       )}
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className="toast">
+          {toast.msg}
+          {toast.undo && (
+            <button
+              type="button"
+              className="toast-undo"
+              onClick={() => {
+                // 取り消しは1回だけ（リクエスト中に連打されないようトーストを即時閉じる）
+                setToast(null);
+                toast.undo?.();
+              }}
+            >
+              取り消す
+            </button>
+          )}
+        </div>
+      )}
     </>
   );
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, TouchEvent as ReactTouchEvent } from 'react';
 import type { Author, Media, Post } from '../../../shared/types';
+import { PostMenu } from './PostMenu';
 import { ReactionPicker } from './ReactionPicker';
 import { RichText } from './RichText';
 
@@ -314,8 +315,8 @@ function CwPill({ cw, open, onToggle }: { cw: string; open: boolean; onToggle: (
   );
 }
 
-/** クリック貫通制御: これらに該当する要素はカード / quote card のナビゲーションを発火しない（docs/thread-view-spec.md §6.1 / §7） */
-const NO_NAV_SELECTOR = 'button, a, .lightbox, .picker';
+/** クリック貫通制御: これらに該当する要素はカード / quote card のナビゲーションを発火しない（docs/thread-view-spec.md §6.1 / §7。PostMenu のドロップダウン/確認ダイアログも card-menu-wrap 内に閉じ込める） */
+const NO_NAV_SELECTOR = 'button, a, .lightbox, .picker, .card-menu-wrap';
 
 /** 引用カード（1階層・表示専用。docs/quote-display-spec.md。カード本体クリックで引用先 Thread へ遷移: thread-view-spec.md §7） */
 function QuoteCard({ post, onOpenThread }: { post: Post; onOpenThread?: (p: Post) => void }) {
@@ -566,6 +567,7 @@ export function PostCard({
             </div>
           )}
         </div>
+        <PostMenu post={post} />
       </div>
 
       {hasCw && <CwPill cw={post.cw ?? ''} open={cwOpen} onToggle={() => setCwOpen((v) => !v)} />}

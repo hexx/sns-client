@@ -1,8 +1,43 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from './index';
-import { BskyAuthError, createPost as bskyPost, getThread as bskyThread, getTimeline as bskyTimeline, likePost as bskyLike, listSources as bskySources, repostPost as bskyRepost, resetSession, unlikePost as bskyUnlike, unrepostPost as bskyUnrepost, uploadMedia as bskyUpload } from './bsky';
-import { MisskeyApiError, MisskeyAuthError, createPost as misskeyPost, getComposeCharLimit, getEmojiList as misskeyEmojis, getThread as misskeyThread, getTimeline as misskeyTimeline, listDestinations as misskeyDestinations, listSources as misskeySources, react as misskeyReact, renote as misskeyRenote, uploadMedia as misskeyUpload } from './misskey';
+import {
+  BskyAuthError,
+  blockActor as bskyBlock,
+  createPost as bskyPost,
+  getMyDid as bskyGetMyDid,
+  getThread as bskyThread,
+  getTimeline as bskyTimeline,
+  likePost as bskyLike,
+  listSources as bskySources,
+  muteActor as bskyMute,
+  repostPost as bskyRepost,
+  resetSession,
+  unblockActor as bskyUnblock,
+  unmuteActor as bskyUnmute,
+  unlikePost as bskyUnlike,
+  unrepostPost as bskyUnrepost,
+  uploadMedia as bskyUpload,
+} from './bsky';
+import {
+  MisskeyApiError,
+  MisskeyAuthError,
+  blockUser as misskeyBlock,
+  createPost as misskeyPost,
+  getComposeCharLimit,
+  getEmojiList as misskeyEmojis,
+  getMyUserId as misskeyGetMyUserId,
+  getThread as misskeyThread,
+  getTimeline as misskeyTimeline,
+  listDestinations as misskeyDestinations,
+  listSources as misskeySources,
+  muteUser as misskeyMute,
+  react as misskeyReact,
+  renote as misskeyRenote,
+  unblockUser as misskeyUnblock,
+  unmuteUser as misskeyUnmute,
+  uploadMedia as misskeyUpload,
+} from './misskey';
 
 // モジュール境界でモック（instanceof のため AuthError 系は実物を維持）
 vi.mock('./bsky', async (importOriginal) => {
@@ -19,6 +54,11 @@ vi.mock('./bsky', async (importOriginal) => {
     unlikePost: vi.fn(),
     repostPost: vi.fn(),
     unrepostPost: vi.fn(),
+    muteActor: vi.fn(),
+    unmuteActor: vi.fn(),
+    blockActor: vi.fn(),
+    unblockActor: vi.fn(),
+    getMyDid: vi.fn(),
   };
 });
 vi.mock('./misskey', async (importOriginal) => {
@@ -35,6 +75,11 @@ vi.mock('./misskey', async (importOriginal) => {
     listSources: vi.fn(),
     listDestinations: vi.fn(),
     renote: vi.fn(),
+    muteUser: vi.fn(),
+    unmuteUser: vi.fn(),
+    blockUser: vi.fn(),
+    unblockUser: vi.fn(),
+    getMyUserId: vi.fn(),
   };
 });
 
@@ -778,5 +823,174 @@ describe('GET /api/thread（docs/thread-view-spec.md §4.1）', () => {
       makeEnv(),
     );
     expect(res.status).toBe(502);
+  });
+});
+
+describe('ブロック・ミュート（docs/block-mute-spec.md §4）', () => {
+  it('GET /api/me → 各 Provider の actorId を返す', async () => {
+    vi.mocked(bskyGetMyDid).mockResolvedValue('did:plc:me');
+    vi.mocked(misskeyGetMyUserId).mockResolvedValue('mk-me');
+    const res = await worker.fetch(new Request('https://x/api/me'), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      me: { bluesky: { actorId: 'did:plc:me' }, misskey: { actorId: 'mk-me' } },
+    });
+  });
+
+  it('GET /api/me 片方の失敗は null に縮退する', async () => {
+    vi.mocked(bskyGetMyDid).mockResolvedValue('did:plc:me');
+    vi.mocked(misskeyGetMyUserId).mockRejectedValue(new Error('boom'));
+    const res = await worker.fetch(new Request('https://x/api/me'), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      me: { bluesky: { actorId: 'did:plc:me' }, misskey: null },
+    });
+  });
+
+  it('POST /api/mutes provider=bluesky → bskyMute に dispatch', async () => {
+    vi.mocked(bskyMute).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/mutes', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(bskyMute).toHaveBeenCalledWith('h', 'p', 'did:plc:alice');
+  });
+
+  it('POST /api/mutes provider=misskey → misskeyMute に dispatch', async () => {
+    vi.mocked(misskeyMute).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/mutes', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'misskey', actorId: 'ualice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyMute).toHaveBeenCalledWith(expect.anything(), 'ualice');
+  });
+
+  it('DELETE /api/mutes → bskyUnmute に dispatch', async () => {
+    vi.mocked(bskyUnmute).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/mutes', {
+        method: 'DELETE',
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(bskyUnmute).toHaveBeenCalledWith('h', 'p', 'did:plc:alice');
+  });
+
+  it('DELETE /api/mutes provider=misskey → misskeyUnmute に dispatch', async () => {
+    vi.mocked(misskeyUnmute).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/mutes', {
+        method: 'DELETE',
+        body: JSON.stringify({ provider: 'misskey', actorId: 'ualice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyUnmute).toHaveBeenCalledWith(expect.anything(), 'ualice');
+  });
+
+  it('POST /api/blocks provider=bluesky → bskyBlock に dispatch', async () => {
+    vi.mocked(bskyBlock).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/blocks', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(bskyBlock).toHaveBeenCalledWith('h', 'p', 'did:plc:alice');
+  });
+
+  it('POST /api/blocks provider=misskey → misskeyBlock に dispatch', async () => {
+    vi.mocked(misskeyBlock).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/blocks', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'misskey', actorId: 'ualice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyBlock).toHaveBeenCalledWith(expect.anything(), 'ualice');
+  });
+
+  it('DELETE /api/blocks provider=bluesky → bskyUnblock に dispatch', async () => {
+    vi.mocked(bskyUnblock).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/blocks', {
+        method: 'DELETE',
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'did:plc:alice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(bskyUnblock).toHaveBeenCalledWith('h', 'p', 'did:plc:alice');
+  });
+
+  it('DELETE /api/blocks provider=misskey → misskeyUnblock に dispatch', async () => {
+    vi.mocked(misskeyUnblock).mockResolvedValue(undefined);
+    const res = await worker.fetch(
+      new Request('https://x/api/blocks', {
+        method: 'DELETE',
+        body: JSON.stringify({ provider: 'misskey', actorId: 'ualice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(misskeyUnblock).toHaveBeenCalledWith(expect.anything(), 'ualice');
+  });
+
+  it('provider 不正（nostr）→ 400', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/mutes', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'nostr', actorId: 'x' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('actorId 欠落 → 400', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/blocks', { method: 'POST', body: JSON.stringify({ provider: 'bluesky' }) }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('actorId 不正（bsky の DID 形式でない）→ 400（rkey 注入防止。docs/block-mute-spec.md §4.1）', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/mutes', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'bluesky', actorId: 'not-a-did/../x' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(bskyMute).not.toHaveBeenCalled();
+  });
+
+  it('actorId 不正（misskey のユーザー ID 形式でない）→ 400', async () => {
+    const res = await worker.fetch(
+      new Request('https://x/api/blocks', {
+        method: 'POST',
+        body: JSON.stringify({ provider: 'misskey', actorId: 'u-alice' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(misskeyBlock).not.toHaveBeenCalled();
   });
 });
