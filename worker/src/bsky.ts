@@ -2,6 +2,9 @@ import { AtpAgent, AppBskyFeedDefs, AppBskyRichtextFacet, RichText, type AtpSess
 import type {
   LinkCard,
   Media,
+  Notification,
+  NotificationType,
+  NotificationsResponse,
   Post,
   PostInputWire,
   RichSegment,
@@ -16,6 +19,9 @@ const SERVICE = 'https://bsky.social';
 const COL_LIKE = 'app.bsky.feed.like';
 const COL_REPOST = 'app.bsky.feed.repost';
 const COL_BLOCK = 'app.bsky.graph.block';
+/** 通知一覧の1ページ件数と、対象投稿の補完取得バッチサイズ（docs/notifications-spec.md §4） */
+const NOTIFICATION_LIMIT = 30;
+const POSTS_BATCH = 25;
 
 // --- セッション管理（単一ユーザー、モジュールスコープキャッシュ） ---
 let agent: AtpAgent | undefined;
@@ -405,6 +411,147 @@ export async function getThread(
     if ((e as { error?: string })?.error === 'NotFound') return null;
     throw e;
   }
+}
+
+// --- 通知（docs/notifications-spec.md、ADR-0019） ---
+
+/**
+ * 投稿を伴う reason の対象投稿 URI を決める（mention/reply/quote は通知自身の record、like/repost は reasonSubject）。
+ * 投稿を伴わない reason（follow 等）は undefined。
+ */
+export function bskySubjectUriOf(reason: string, uri: string, reasonSubject?: string): string | undefined {
+  switch (reason) {
+    case 'mention':
+    case 'reply':
+    case 'quote':
+    case 'subscribed-post':
+      return uri;
+    case 'like':
+    case 'repost':
+    case 'like-via-repost':
+    case 'repost-via-repost':
+      return reasonSubject;
+    default:
+      return undefined;
+  }
+}
+
+/** bsky の reason を統一 NotificationType へ写像する（未知 reason は生のまま。UI はフィールドの有無で描画を決める） */
+export function bskyReasonToType(reason: string): NotificationType {
+  switch (reason) {
+    case 'mention':
+    case 'reply':
+    case 'quote':
+    case 'like':
+    case 'repost':
+    case 'follow':
+    case 'like-via-repost':
+    case 'repost-via-repost':
+    case 'subscribed-post':
+    case 'starterpack-joined':
+    case 'contact-match':
+    case 'verified':
+    case 'unverified':
+      return reason;
+    default:
+      return reason as NotificationType;
+  }
+}
+
+/** listNotifications の1通知を統一 Notification に写像する純粋関数（対象投稿は postsByUri で解決。ADR-0019） */
+export function mapBskyNotification(
+  n: {
+    uri: string;
+    reason: string;
+    reasonSubject?: string;
+    indexedAt?: string;
+    isRead?: boolean;
+    author: { did: string; handle: string; displayName?: string; avatar?: string };
+  },
+  postsByUri: Map<string, Post>,
+): Notification {
+  const type = bskyReasonToType(n.reason);
+  const notif: Notification = {
+    id: n.uri,
+    provider: 'bluesky',
+    type,
+    createdAt: n.indexedAt ?? '',
+    isRead: n.isRead ?? false,
+    actor: {
+      id: n.author.did,
+      handle: n.author.handle,
+      displayName: n.author.displayName || n.author.handle,
+      ...(n.author.avatar ? { avatarUrl: n.author.avatar } : {}),
+    },
+  };
+  const subjectUri = bskySubjectUriOf(n.reason, n.uri, n.reasonSubject);
+  if (subjectUri) {
+    const post = postsByUri.get(subjectUri);
+    if (post) notif.post = post;
+    else notif.postUnavailable = true; // 取得不能（削除・ブロック等）は遷移先なし（§7）
+  }
+  if (type === 'verified') notif.text = 'あなたのアカウントが認証されました';
+  if (type === 'unverified') notif.text = 'あなたのアカウントの認証が解除されました';
+  return notif;
+}
+
+/**
+ * 通知一覧（docs/notifications-spec.md §4.1）。like/repost 系は対象投稿がペイロードに無いため
+ * getPosts バッチ（25 URI/回）で補完取得する（ADR-0019）。部分失敗は該当通知を postUnavailable に縮退。
+ */
+export async function getNotifications(
+  handle: string | undefined,
+  appPassword: string | undefined,
+  cursor?: string,
+): Promise<NotificationsResponse> {
+  const a = await getAgent(handle, appPassword);
+  const res = await a.app.bsky.notification.listNotifications({ limit: NOTIFICATION_LIMIT, ...(cursor ? { cursor } : {}) });
+  const notifications = res.data.notifications ?? [];
+  const subjectUris = [
+    ...new Set(
+      notifications
+        .map((n) => bskySubjectUriOf(n.reason, n.uri, n.reasonSubject))
+        .filter((u): u is string => Boolean(u)),
+    ),
+  ];
+  const postsByUri = new Map<string, Post>();
+  const batches: Promise<void>[] = [];
+  for (let i = 0; i < subjectUris.length; i += POSTS_BATCH) {
+    const uris = subjectUris.slice(i, i + POSTS_BATCH);
+    batches.push(
+      a
+        .getPosts({ uris })
+        .then((r) => {
+          for (const pv of r.data.posts ?? []) postsByUri.set(pv.uri, mapPost(pv));
+        })
+        .catch((e) => {
+          console.error('[bsky] getPosts failed (notifications)', e);
+        }),
+    );
+  }
+  await Promise.all(batches);
+  // 未読数は補助データ: 取得失敗でも一覧は返す（未読バッジは 0 に縮退。次回ポーリングで回復）
+  let unreadCount = 0;
+  try {
+    const unread = await a.app.bsky.notification.getUnreadCount();
+    unreadCount = unread.data.count ?? 0;
+  } catch (e) {
+    console.error('[bsky] getUnreadCount failed', e);
+  }
+  return {
+    notifications: notifications.map((n) => mapBskyNotification(n, postsByUri)),
+    unreadCount,
+    nextCursor: res.data.cursor ?? null,
+  };
+}
+
+/** 通知の全既読（updateSeen。docs/notifications-spec.md §4.2） */
+export async function markNotificationsRead(
+  handle: string | undefined,
+  appPassword: string | undefined,
+): Promise<void> {
+  const a = await getAgent(handle, appPassword);
+  await a.app.bsky.notification.updateSeen({ seenAt: new Date().toISOString() });
 }
 
 /**

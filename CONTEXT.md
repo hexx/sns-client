@@ -37,7 +37,7 @@ Nostr におけるユーザー識別子。`npub1...` は同じ公開鍵の人間
 _Avoid_: user ID, account, address
 
 **Source**:
-1つの Provider に属する、投稿の時系列ストリーム1つ。home（ホーム）や、Bluesky の feed、Misskey の antenna などの種別（kind）と、必要に応じて ID を持つ。Timeline は1つ以上の Source を合成して作られる。
+1つの Provider に属する、投稿または通知の時系列ストリーム1つ。home（ホーム）や、Bluesky の feed、Misskey の antenna などの種別（kind）と、必要に応じて ID を持つ。Timeline は1つ以上の Source を合成して作られる。通知（kind: `notifications`）も Source の一実現形態だが、Post ストリームとは合成できない（通知同士の合成のみ許可。docs/notifications-spec.md §2）。
 _Avoid_: feed, antenna, list, channel（これらは特定の Provider における Source の実現形態であり、総称ではない）
 
 **Destination**:
@@ -69,12 +69,16 @@ _Avoid_: feed, home, list, view
 _Avoid_: conversation, 会話, detail view, post detail
 
 **unread（未読）**:
-タイムラインに挿入された投稿のうち、利用者がまだ到達していないもの。新着の発見（ポーリング・手動更新）で挿入された投稿が対象で、追加読み込み（過去遡及）は含まない。区切り線（「新着はここまで」）をスクロールで通過した瞬間（可視領域の上部から完全に外れた瞬間）にすべて既読になる。新しい取り込みで1件以上の新着が挿入されると、既存の未読は差し替えられる（取り込みは利用者の明示的操作に限られるため、最新回の取り込みが新着ラインを更新する。自動挿入を導入した場合は再検討）。セッション内のみで保持され、永続化しない。UI 文言としては「未読」を使わず、既存の語「新着」に統一する（docs/unread-divider-spec.md）。
+タイムラインに挿入された投稿のうち、利用者がまだ到達していないもの。新着の発見（ポーリング・手動更新）で挿入された投稿が対象で、追加読み込み（過去遡及）は含まない。区切り線（「新着はここまで」）をスクロールで通過した瞬間（可視領域の上部から完全に外れた瞬間）にすべて既読になる。新しい取り込みで1件以上の新着が挿入されると、既存の未読は差し替えられる（取り込みは利用者の明示的操作に限られるため、最新回の取り込みが新着ラインを更新する。自動挿入を導入した場合は再検討）。セッション内のみで保持され、永続化しない。UI 文言としては「未読」を使わず、既存の語「新着」に統一する（docs/unread-divider-spec.md）。タイムラインのこの概念と、通知の既読状態（Notification の `isRead`・バッジ。docs/notifications-spec.md §5）は別概念である。
 _Avoid_: read state, 既読フラグ, unread（UI 文言として）
 
 **grapheme**:
 投稿長の计数単位。文字数（コードポイント）ではなくグラフェムで数え、絵文字や結合文字を1単位とする。
 _Avoid_: character, 文字数, length
+
+**Notification（通知）**:
+ある Author の行動（mention・reply・quote・like/reaction・repost/renote・follow 等）を、自分宛に知らせる1件の出来事。統一モデルは `{id, provider, type, createdAt, isRead, actor?, post?, text?}` で、Post とは別概念。UI は3分類（投稿を伴う / actor のみ / テキストのみ）を type でなくフィールドの有無で判定する。タイムラインの「新着（unread）」とは別概念で、既読は「View に表示された瞬間に全既読」される（docs/notifications-spec.md）。
+_Avoid_: activity, event, お知らせ（announcement はサーバー告知で別概念）, notification item
 
 **CW（content warning）**:
 投稿に付けるコンテンツ警告。閲覧前に内容を伏せる。

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { childrenToThreadNodes, createPost, getThread, loadEmojiRegistry, localEmojiName, mapNote, mfmToRich, nameToRich, getEmojiList, getTimeline, listDestinations, listSources, react, renote, muteUser, unmuteUser, blockUser, unblockUser, getMyUserId, MisskeyApiError, MisskeyAuthError } from './misskey';
+import { childrenToThreadNodes, createPost, getThread, loadEmojiRegistry, localEmojiName, mapMisskeyNotification, mapNote, mfmToRich, misskeyNotificationText, nameToRich, getEmojiList, getTimeline, getNotifications, listDestinations, listSources, react, renote, muteUser, unmuteUser, blockUser, unblockUser, getMyUserId, markNotificationsRead, MisskeyApiError, MisskeyAuthError } from './misskey';
 
 type MkNote = Parameters<typeof mapNote>[0];
 
@@ -865,5 +865,110 @@ describe('ブロック・ミュート（docs/block-mute-spec.md §4）', () => {
 
   it('getMyUserId: 認証未設定（トークン欠落）は null', async () => {
     await expect(getMyUserId({})).resolves.toBeNull();
+  });
+});
+
+describe('通知マッピング（docs/notifications-spec.md §3、ADR-0019）', () => {
+  function mkNotif(over: Record<string, unknown> = {}) {
+    return {
+      id: 'n1',
+      createdAt: '2026-07-01T12:00:00Z',
+      type: 'follow',
+      isRead: false,
+      user: user(),
+      ...over,
+    };
+  }
+
+  it('follow: actor のみ（post なし）', () => {
+    const n = mapMisskeyNotification(mkNotif() as never);
+    expect(n).toMatchObject({
+      id: 'n1',
+      provider: 'misskey',
+      type: 'follow',
+      createdAt: '2026-07-01T12:00:00Z',
+      isRead: false,
+      actor: { id: 'u1', handle: 'alice', displayName: 'Alice', avatarUrl: 'https://a.png' },
+    });
+    expect(n.post).toBeUndefined();
+  });
+
+  it('reaction: note を post に載せ、reaction 絵文字キーを保持', () => {
+    const n = mapMisskeyNotification(mkNotif({ type: 'reaction', note: note({ text: '対象ノート' }), reaction: ':kawaii:' }) as never);
+    expect(n.post).toMatchObject({ id: 'n1', text: '対象ノート' });
+    expect(n.reaction).toBe(':kawaii:');
+  });
+
+  it('achievementEarned: テキストのみ（BFF が文言合成）', () => {
+    const n = mapMisskeyNotification(
+      mkNotif({ type: 'achievementEarned', user: null, achievement: { name: '初投稿' } }) as never,
+    );
+    expect(n.text).toBe('実績「初投稿」を獲得しました');
+    expect(n.actor).toBeUndefined();
+  });
+
+  it('login: テキストのみ（actor なし）', () => {
+    const n = mapMisskeyNotification(mkNotif({ type: 'login', user: null }) as never);
+    expect(n.text).toBe('新しいデバイスからログインしました');
+  });
+
+  it('misskeyNotificationText: 対象外タイプは undefined（actor/post 系は UI が文言生成）', () => {
+    expect(misskeyNotificationText('follow')).toBeUndefined();
+    expect(misskeyNotificationText('reaction')).toBeUndefined();
+  });
+
+  it('getNotifications: markAsRead: false で取得し、未読数は i の unreadNotificationsCount から', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(_input);
+      if (url.endsWith('/api/i/notifications')) {
+        return new Response(JSON.stringify([mkNotif({ id: 'n1', type: 'follow' })]), { status: 200 });
+      }
+      if (url.endsWith('/api/i')) {
+        return new Response(JSON.stringify({ unreadNotificationsCount: 5 }), { status: 200 });
+      }
+      if (url.endsWith('/api/emojis')) {
+        return new Response(JSON.stringify({ emojis: [] }), { status: 200 });
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await getNotifications({ MISSKEY_INSTANCE_URL: 'https://m.test', MISSKEY_TOKEN: 't' });
+    expect(res.unreadCount).toBe(5);
+    expect(res.nextCursor).toBeNull();
+    expect(res.notifications).toHaveLength(1);
+    // ポーリングで勝手に既読化しない（docs/notifications-spec.md §4.1）
+    const notifBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(notifBody.markAsRead).toBe(false);
+  });
+
+  it('getNotifications: cursor は untilId に渡り、満ページなら nextCursor を返す', async () => {
+    const items = Array.from({ length: 30 }, (_, i) => mkNotif({ id: `n${i}`, type: 'follow' }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(_input);
+      if (url.endsWith('/api/i/notifications')) {
+        return new Response(JSON.stringify(items), { status: 200 });
+      }
+      if (url.endsWith('/api/i')) {
+        return new Response(JSON.stringify({ unreadNotificationsCount: 0 }), { status: 200 });
+      }
+      if (url.endsWith('/api/emojis')) {
+        return new Response(JSON.stringify({ emojis: [] }), { status: 200 });
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await getNotifications({ MISSKEY_INSTANCE_URL: 'https://m.test', MISSKEY_TOKEN: 't' }, 'cur1');
+    expect(res.nextCursor).toBe('n29');
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.untilId).toBe('cur1');
+  });
+
+  it('markNotificationsRead: markAsRead: true で i/notifications を叩く（サーバー側で全既読）', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response('[]', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await markNotificationsRead({ MISSKEY_INSTANCE_URL: 'https://m.test', MISSKEY_TOKEN: 't' });
+    expect(fetchMock).toHaveBeenCalledWith('https://m.test/api/i/notifications', expect.anything());
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toMatchObject({ limit: 1, markAsRead: true });
   });
 });

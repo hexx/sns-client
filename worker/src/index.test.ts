@@ -6,10 +6,12 @@ import {
   blockActor as bskyBlock,
   createPost as bskyPost,
   getMyDid as bskyGetMyDid,
+  getNotifications as bskyNotifications,
   getThread as bskyThread,
   getTimeline as bskyTimeline,
   likePost as bskyLike,
   listSources as bskySources,
+  markNotificationsRead as bskyMarkNotificationsRead,
   muteActor as bskyMute,
   repostPost as bskyRepost,
   resetSession,
@@ -27,10 +29,12 @@ import {
   getComposeCharLimit,
   getEmojiList as misskeyEmojis,
   getMyUserId as misskeyGetMyUserId,
+  getNotifications as misskeyNotifications,
   getThread as misskeyThread,
   getTimeline as misskeyTimeline,
   listDestinations as misskeyDestinations,
   listSources as misskeySources,
+  markNotificationsRead as misskeyMarkNotificationsRead,
   muteUser as misskeyMute,
   react as misskeyReact,
   renote as misskeyRenote,
@@ -59,6 +63,8 @@ vi.mock('./bsky', async (importOriginal) => {
     blockActor: vi.fn(),
     unblockActor: vi.fn(),
     getMyDid: vi.fn(),
+    getNotifications: vi.fn(),
+    markNotificationsRead: vi.fn(),
   };
 });
 vi.mock('./misskey', async (importOriginal) => {
@@ -80,6 +86,8 @@ vi.mock('./misskey', async (importOriginal) => {
     blockUser: vi.fn(),
     unblockUser: vi.fn(),
     getMyUserId: vi.fn(),
+    getNotifications: vi.fn(),
+    markNotificationsRead: vi.fn(),
   };
 });
 
@@ -107,11 +115,13 @@ describe('health / views / providers', () => {
     expect(((await res.json()) as { session: string }).session).toBe('configured');
   });
 
-  it('views: 固定プリセット（統合ホーム=bsky+misskey）を返す', async () => {
+  it('views: 固定プリセット（ホーム + 通知）を返す', async () => {
     const res = await worker.fetch(new Request('https://x/api/views'), makeEnv());
-    const views = (await res.json()) as { id: string; sources: { provider: string }[] }[];
-    expect(views[0].id).toBe('home');
+    const views = (await res.json()) as { id: string; sources: { provider: string; kind: string }[] }[];
+    expect(views.map((v) => v.id)).toEqual(['home', 'notifications']);
     expect(views[0].sources.map((s) => s.provider)).toEqual(['bluesky', 'misskey']);
+    // 通知 View は通知 Source 同士の合成（docs/notifications-spec.md §2）
+    expect(views[1].sources.map((s) => s.kind)).toEqual(['notifications', 'notifications']);
   });
 
   it('providers: 設定状態と compose 設定を返す（misskey の上限は meta 由来）', async () => {
@@ -217,15 +227,27 @@ describe('views（KV カスタム View）', () => {
     return { env, kv };
   }
 
-  it('KV 未設定 → プリセット', async () => {
+  it('KV 未設定 → プリセット（ホーム + 通知）', async () => {
     const { env } = envWithKv(() => null);
     const res = await worker.fetch(new Request('https://x/api/views'), env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([{ id: 'home', name: 'ホーム', sources: expect.any(Array) }]);
+    const views = (await res.json()) as { id: string }[];
+    expect(views.map((v) => v.id)).toEqual(['home', 'notifications']);
   });
 
-  it('KV に保存済み → そちらを優先', async () => {
+  it('KV に保存済み → そちらを優先（通知 View が無ければ先頭に注入）', async () => {
     const stored = [{ id: 'v1', name: '技術', sources: [{ provider: 'misskey', kind: 'list', id: 'L1' }] }];
+    const { env } = envWithKv(() => stored);
+    const res = await worker.fetch(new Request('https://x/api/views'), env);
+    const views = (await res.json()) as { id: string }[];
+    expect(views.map((v) => v.id)).toEqual(['notifications', 'v1']);
+  });
+
+  it('KV に通知 View が既にあれば注入しない（削除済み状態を尊重）', async () => {
+    const stored = [
+      { id: 'v1', name: '技術', sources: [{ provider: 'misskey', kind: 'list', id: 'L1' }] },
+      { id: 'notifications', name: '通知', sources: [{ provider: 'bluesky', kind: 'notifications' }] },
+    ];
     const { env } = envWithKv(() => stored);
     const res = await worker.fetch(new Request('https://x/api/views'), env);
     expect(await res.json()).toEqual(stored);
@@ -278,9 +300,19 @@ describe('views（KV カスタム View）', () => {
     ['kind 不正', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'misskey', kind: 'feed' }] }])],
     ['id 必須の kind で id 無し', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'bluesky', kind: 'list' }] }])],
     ['misskey channel で id 無し', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'misskey', kind: 'channel' }] }])],
+    ['通知と Post の混在', JSON.stringify([{ id: 'a', name: 'x', sources: [{ provider: 'bluesky', kind: 'notifications' }, { provider: 'bluesky', kind: 'home' }] }])],
   ])('PUT 不正 → 400（%s）', async (_label, body) => {
     const res = await worker.fetch(new Request('https://x/api/views', { method: 'PUT', body }), makeEnv());
     expect(res.status).toBe(400);
+  });
+
+  it('PUT: 通知 Source のみの View → 200（通知同士の合成は許可。docs/notifications-spec.md §2）', async () => {
+    const { env } = envWithKv();
+    const views = [
+      { id: 'n', name: '通知', sources: [{ provider: 'bluesky', kind: 'notifications' }, { provider: 'misskey', kind: 'notifications' }] },
+    ];
+    const res = await worker.fetch(new Request('https://x/api/views', { method: 'PUT', body: JSON.stringify(views) }), env);
+    expect(res.status).toBe(200);
   });
 
   it('PUT: VIEWS 未バインド → 503', async () => {
@@ -323,28 +355,105 @@ describe('timeline dispatch', () => {
     const res = await worker.fetch(new Request('https://x/api/timeline?provider=bluesky&kind=list'), makeEnv());
     expect(res.status).toBe(400);
   });
+
+  it('kind=notifications → 400（専用ルート /api/notifications を使う。docs/notifications-spec.md §4）', async () => {
+    const res = await worker.fetch(new Request('https://x/api/timeline?provider=bluesky&kind=notifications'), makeEnv());
+    expect(res.status).toBe(400);
+    expect(bskyTimeline).not.toHaveBeenCalled();
+  });
+});
+
+describe('notifications API', () => {
+  it('provider=bluesky → bskyNotifications', async () => {
+    vi.mocked(bskyNotifications).mockResolvedValue({ notifications: [], unreadCount: 0, nextCursor: null });
+    const res = await worker.fetch(
+      new Request('https://x/api/notifications?provider=bluesky&cursor=c1'),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ notifications: [], unreadCount: 0, nextCursor: null });
+    expect(bskyNotifications).toHaveBeenCalledWith('h', 'p', 'c1');
+  });
+
+  it('provider=misskey → misskeyNotifications（cursor 無し）', async () => {
+    vi.mocked(misskeyNotifications).mockResolvedValue({ notifications: [], unreadCount: 3, nextCursor: null });
+    const res = await worker.fetch(new Request('https://x/api/notifications?provider=misskey'), makeEnv());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ notifications: [], unreadCount: 3, nextCursor: null });
+    expect(misskeyNotifications).toHaveBeenCalledWith(expect.anything(), undefined);
+  });
+
+  it('provider=nostr → 400（通知は bsky/misskey のみ。docs/notifications-spec.md §1）', async () => {
+    const res = await worker.fetch(new Request('https://x/api/notifications?provider=nostr'), makeEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /api/notifications/read: 両 Provider の既読化を呼ぶ', async () => {
+    vi.mocked(bskyMarkNotificationsRead).mockResolvedValue(undefined);
+    vi.mocked(misskeyMarkNotificationsRead).mockResolvedValue(undefined);
+    const res = await worker.fetch(new Request('https://x/api/notifications/read', { method: 'POST' }), makeEnv());
+    expect(res.status).toBe(200);
+    expect(bskyMarkNotificationsRead).toHaveBeenCalledWith('h', 'p');
+    expect(misskeyMarkNotificationsRead).toHaveBeenCalledWith(expect.anything());
+  });
+
+  it('POST /api/notifications/read: シークレット未設定 Provider はスキップ', async () => {
+    vi.mocked(bskyMarkNotificationsRead).mockResolvedValue(undefined);
+    vi.mocked(misskeyMarkNotificationsRead).mockResolvedValue(undefined);
+    const env = makeEnv();
+    delete env.BSKY_HANDLE;
+    delete env.BSKY_APP_PASSWORD;
+    const res = await worker.fetch(new Request('https://x/api/notifications/read', { method: 'POST' }), env);
+    expect(res.status).toBe(200);
+    expect(bskyMarkNotificationsRead).not.toHaveBeenCalled();
+    expect(misskeyMarkNotificationsRead).toHaveBeenCalledWith(expect.anything());
+  });
+
+  it('POST /api/notifications/read: 片方の失敗はもう片方に影響しない', async () => {
+    vi.mocked(bskyMarkNotificationsRead).mockRejectedValue(new Error('boom'));
+    vi.mocked(misskeyMarkNotificationsRead).mockResolvedValue(undefined);
+    const res = await worker.fetch(new Request('https://x/api/notifications/read', { method: 'POST' }), makeEnv());
+    expect(res.status).toBe(200);
+    expect(misskeyMarkNotificationsRead).toHaveBeenCalled();
+  });
 });
 
 describe('sources catalog', () => {
-  it('両プロバイダの Source 一覧を返す', async () => {
+  it('両プロバイダの Source 一覧を返す（先頭に通知 Source を静的追加）', async () => {
     vi.mocked(bskySources).mockResolvedValue([{ source: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }]);
     vi.mocked(misskeySources).mockResolvedValue([{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }]);
     const res = await worker.fetch(new Request('https://x/api/sources'), makeEnv());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([
-      { provider: 'bluesky', options: [{ source: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' }] },
-      { provider: 'misskey', options: [{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }] },
+      {
+        provider: 'bluesky',
+        options: [
+          { source: { provider: 'bluesky', kind: 'notifications' }, name: '通知' },
+          { source: { provider: 'bluesky', kind: 'home' }, name: 'ホーム' },
+        ],
+      },
+      {
+        provider: 'misskey',
+        options: [
+          { source: { provider: 'misskey', kind: 'notifications' }, name: '通知' },
+          { source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' },
+        ],
+      },
     ]);
   });
 
-  it('片方失敗しても他方は返る（error フラグ付き）', async () => {
+  it('片方失敗しても他方は返る（error フラグ付き。通知 Source は残る）', async () => {
     vi.mocked(bskySources).mockRejectedValue(new Error('boom'));
     vi.mocked(misskeySources).mockResolvedValue([{ source: { provider: 'misskey', kind: 'home' }, name: 'ホーム' }]);
     const res = await worker.fetch(new Request('https://x/api/sources'), makeEnv());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { provider: string; options: unknown[]; error?: boolean }[];
-    expect(body[0]).toEqual({ provider: 'bluesky', options: [], error: true });
-    expect(body[1].options).toHaveLength(1);
+    expect(body[0]).toEqual({
+      provider: 'bluesky',
+      options: [{ source: { provider: 'bluesky', kind: 'notifications' }, name: '通知' }],
+      error: true,
+    });
+    expect(body[1].options).toHaveLength(2);
   });
 
   it('provider=misskey → misskeyTimeline', async () => {

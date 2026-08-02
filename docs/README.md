@@ -22,6 +22,7 @@
 - [card-meta-row-spec.md](card-meta-row-spec.md) — カードメタ行 仕様書（ヘッダー3行化＋公開範囲バッジのアイコン化）
 - [thread-view-spec.md](thread-view-spec.md) — スレッド表示 仕様書（フォーカス投稿の祖先＋子孫をオーバーレイ表示）
 - [block-mute-spec.md](block-mute-spec.md) — ユーザーのブロック・ミュート 仕様（サーバー側ネイティブ方式）
+- [notifications-spec.md](notifications-spec.md) — 通知表示 仕様書（View 統合・既読管理・Thread 遷移）
 
 ## PWA / アイコン / 運用
 - [pwa-sw-update-fix-spec.md](pwa-sw-update-fix-spec.md) — PWA Service Worker 更新固定 修正仕様
@@ -48,3 +49,5 @@
 - [0016](adr/0016-bsky-self-labels-as-cw.md) — Bluesky の self-labels を CW テキストとして解釈する
 - [0017](adr/0017-thread-bff-flattened-depth.md) — スレッドは BFF が平坦化（DFS 順＋depth）して返し、Post に親子フィールドを持たせない
 - [0018](adr/0018-server-side-native-block-mute.md) — ブロック・ミュートはサーバー側（Provider ネイティブ）方式とし、クライアント側フィルタは採用しない
+- [0019](adr/0019-notification-unified-model.md) — 通知は統一 Notification モデルとし、bsky の対象投稿は BFF が補完取得する
+- [0020](adr/0020-notifications-as-view-source.md) — 通知は View/Source 機構に載せ、通知同士の合成のみ許可する

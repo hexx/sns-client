@@ -6,6 +6,8 @@
  * アクティブはピル・取り込み済み未読は区切り線＋強調（docs/unread-divider-spec.md）。
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { isNotificationsView } from '../lib/notifications';
+import { NotificationsView } from './NotificationsView';
 import { TimelineCore, type TimelineCoreHandle } from './TimelineCore';
 import { useBadgeFor } from '../lib/sourceLabels';
 import type { Post, View } from '../../../shared/types';
@@ -150,31 +152,41 @@ export function MobilePager({
   // ページ配列をメモ化: ドラッグ中の再描画で TimelineCore サブツリーを再実行させない
   const pages = useMemo(
     () =>
-      views.map((view) => (
+      views.map((view, vi) => (
         <section className="pager-page" key={view.id} aria-label={view.name}>
           {view.sources.length > 0 ? (
-            <TimelineCore
-              ref={(h) => {
-                if (h) timelineRefs.current.set(view.id, h);
-                else timelineRefs.current.delete(view.id);
-              }}
-              sources={view.sources}
-              justPosted={justPosted}
-              onReply={onReply}
-              onQuote={onQuote}
-              onOpenThread={onOpenThread}
-              interactive
-              badgeFor={badgeFor}
-              pullToRefresh
-              showOfflineBanner
-              onPendingCountChange={pendingFor(view.id)}
-            />
+            isNotificationsView(view) ? (
+              // 通知 View: アクティブタブ = 表示中（既読化は NotificationsView 内で行う。docs/notifications-spec.md §5）
+              <NotificationsView
+                sources={view.sources}
+                active={vi === index}
+                onOpenThread={onOpenThread}
+                onPendingCountChange={pendingFor(view.id)}
+              />
+            ) : (
+              <TimelineCore
+                ref={(h) => {
+                  if (h) timelineRefs.current.set(view.id, h);
+                  else timelineRefs.current.delete(view.id);
+                }}
+                sources={view.sources}
+                justPosted={justPosted}
+                onReply={onReply}
+                onQuote={onQuote}
+                onOpenThread={onOpenThread}
+                interactive
+                badgeFor={badgeFor}
+                pullToRefresh
+                showOfflineBanner
+                onPendingCountChange={pendingFor(view.id)}
+              />
+            )
           ) : (
             <p className="empty">ソースがありません</p>
           )}
         </section>
       )),
-    [views, justPosted, onReply, onQuote, onOpenThread, badgeFor, pendingFor],
+    [views, index, justPosted, onReply, onQuote, onOpenThread, badgeFor, pendingFor],
   );
 
   return (

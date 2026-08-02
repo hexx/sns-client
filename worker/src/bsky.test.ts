@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { RichText } from '@atproto/api';
 import type { AppBskyFeedDefs, AppBskyRichtextFacet } from '@atproto/api';
-import { buildPostRecord, facetsToRich, mapPost, threadViewToResponse } from './bsky';
+import { buildPostRecord, bskyReasonToType, bskySubjectUriOf, facetsToRich, mapBskyNotification, mapPost, threadViewToResponse } from './bsky';
 
 type Facets = AppBskyRichtextFacet.Main[];
 const enc = new TextEncoder();
@@ -651,5 +651,66 @@ describe('threadViewToResponse（スレッド木の解釈。docs/thread-view-spe
     // 連鎖: focus → mid → blocked（打ち切り。blocked の上は辿らない）
     const res = threadViewToResponse(focus as never);
     expect(res?.ancestors.map((p) => p.id)).toEqual(['at://did/app.bsky.feed.post/mid']);
+  });
+});
+
+function bskyNotif(over: Record<string, unknown> = {}) {
+  return {
+    uri: 'at://did/app.bsky.feed.post/n1',
+    reason: 'like',
+    reasonSubject: 'at://did/app.bsky.feed.post/mine',
+    indexedAt: '2026-07-01T12:00:00Z',
+    isRead: false,
+    author: { did: 'did:plc:alice', handle: 'alice.bsky.social', displayName: 'Alice' },
+    ...over,
+  };
+}
+
+describe('通知マッピング（docs/notifications-spec.md §3、ADR-0019）', () => {
+  it('reason 写像: 既知 reason はそのまま、未知 reason は生のまま（UI はフィールドの有無で描画）', () => {
+    expect(bskyReasonToType('like')).toBe('like');
+    expect(bskyReasonToType('quote')).toBe('quote');
+    expect(bskyReasonToType('future-reason')).toBe('future-reason');
+  });
+
+  it('subject URI: like/repost 系は reasonSubject、mention/reply/quote は通知自身、follow は無し', () => {
+    expect(bskySubjectUriOf('like', 'u', 'subj')).toBe('subj');
+    expect(bskySubjectUriOf('repost', 'u', 'subj')).toBe('subj');
+    expect(bskySubjectUriOf('mention', 'u', undefined)).toBe('u');
+    expect(bskySubjectUriOf('quote', 'u', undefined)).toBe('u');
+    expect(bskySubjectUriOf('follow', 'u', undefined)).toBeUndefined();
+  });
+
+  it('like: 対象投稿は postsByUri から解決して post に載せる', () => {
+    const post = { id: 'at://did/app.bsky.feed.post/mine', provider: 'bluesky' } as never;
+    const n = mapBskyNotification(bskyNotif(), new Map([['at://did/app.bsky.feed.post/mine', post]]));
+    expect(n).toMatchObject({
+      id: 'at://did/app.bsky.feed.post/n1',
+      provider: 'bluesky',
+      type: 'like',
+      createdAt: '2026-07-01T12:00:00Z',
+      isRead: false,
+      actor: { id: 'did:plc:alice', handle: 'alice.bsky.social', displayName: 'Alice' },
+      post,
+    });
+  });
+
+  it('like: 対象投稿が取得不能 → postUnavailable（遷移先なし）', () => {
+    const n = mapBskyNotification(bskyNotif(), new Map());
+    expect(n.post).toBeUndefined();
+    expect(n.postUnavailable).toBe(true);
+  });
+
+  it('follow: actor のみ（post も postUnavailable も持たない）', () => {
+    const n = mapBskyNotification(bskyNotif({ reason: 'follow', reasonSubject: undefined }), new Map());
+    expect(n.post).toBeUndefined();
+    expect(n.postUnavailable).toBeUndefined();
+  });
+
+  it('verified / unverified: テキストのみ（BFF が文言合成）', () => {
+    const v = mapBskyNotification(bskyNotif({ reason: 'verified' }), new Map());
+    expect(v.text).toBe('あなたのアカウントが認証されました');
+    const u = mapBskyNotification(bskyNotif({ reason: 'unverified' }), new Map());
+    expect(u.text).toBe('あなたのアカウントの認証が解除されました');
   });
 });

@@ -86,6 +86,68 @@ export type TimelineResponse = { posts: Post[]; nextCursor: string | null };
  * スレッド表示の応答（docs/thread-view-spec.md §3、ADR-0017）。
  * bsky/misskey は BFF（GET /api/thread）が、nostr はブラウザ直接解決（shared/nostr）がこの形状を組み立てる。
  */
+/** 通知タイプ。Provider 生タイプの写像（docs/notifications-spec.md §3.2）。UI の3分類は type でなくフィールドの有無で判定する */
+export type NotificationType =
+  // 投稿を伴う（両 Provider）
+  | 'mention'
+  | 'reply'
+  | 'quote'
+  // 投稿を伴う（Bluesky）
+  | 'like'
+  | 'repost'
+  | 'like-via-repost'
+  | 'repost-via-repost'
+  | 'subscribed-post'
+  // 投稿を伴う（Misskey）
+  | 'reaction'
+  | 'renote'
+  | 'pollVote'
+  | 'pollEnded'
+  | 'note'
+  | 'app'
+  // actor のみ（両 Provider）
+  | 'follow'
+  // actor のみ（Bluesky）
+  | 'starterpack-joined'
+  | 'contact-match'
+  // actor のみ（Misskey）
+  | 'receiveFollowRequest'
+  | 'followRequestAccepted'
+  // テキストのみ（Bluesky）
+  | 'verified'
+  | 'unverified'
+  // テキストのみ（Misskey）
+  | 'achievementEarned'
+  | 'roleAssigned'
+  | 'chatRoomInvitationReceived'
+  | 'exportCompleted'
+  | 'login'
+  | 'createToken'
+  | 'test'
+  | 'scheduledNotePosted'
+  | 'scheduledNotePostFailed';
+
+/** 統一通知モデル。Post とは別概念（docs/notifications-spec.md §3、ADR-0019） */
+export type Notification = {
+  id: string; // bsky: 通知レコードの at-uri / misskey: 通知 id
+  provider: 'bluesky' | 'misskey';
+  type: NotificationType;
+  createdAt: string; // ISO 8601
+  isRead: boolean; // サーバー側の既読状態（UI の未読強調には使わない。§5）
+  actor?: Author; // 誰が（follow / like / reaction / mention / reply / quote 等）
+  post?: Post; // 対象投稿（mention/reply/quote は相手の投稿。like/repost/reaction/renote は「あなたの投稿」）
+  postUnavailable?: boolean; // 対象投稿が取得不能（削除・ブロック等）。post と排他。遷移先は無い
+  text?: string; // テキストのみの通知の表示文（BFF が合成）
+  reaction?: string; // Misskey のリアクション絵文字キー（reaction 通知のみ）
+};
+
+/** 通知一覧の応答（docs/notifications-spec.md §4.1）。unreadCount はプロバイダ別（合成表示時はクライアントが合算） */
+export type NotificationsResponse = {
+  notifications: Notification[];
+  unreadCount: number;
+  nextCursor: string | null;
+};
+
 export type ThreadResponse = {
   focus: Post; // フォーカス投稿
   ancestors: Post[]; // root → focus 直前まで。root 先頭（時系列昇順）
